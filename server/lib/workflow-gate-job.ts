@@ -239,7 +239,7 @@ export async function executeWorkflowGateJob(
   // runs the per-package scans; a concurrent re-delivery loses the CAS and skips
   // here rather than double-running. Early returns above leave the claim unset,
   // so a transient prepare/owner failure stays retryable.
-  const claimed = await claimGateReviewStart(db, gate.id);
+  const claimed = await claimGateReviewStart(db, gate.id, prepared.binding);
   if (!claimed) {
     emitOperationalEvent("info", "github_workflow_gate.job_skipped", {
       organizationId,

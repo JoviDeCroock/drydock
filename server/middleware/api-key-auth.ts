@@ -15,7 +15,7 @@ import {
 } from "../lib/auth/api-keys";
 import { optionalWorkerExecutionContext } from "../lib/platform/execution-context";
 import { describeOperationalError, emitOperationalEvent } from "../lib/platform/observability";
-import { guardRateLimit } from "../lib/rate-limit";
+import { clientRateLimitKey, guardRateLimit } from "../lib/rate-limit";
 import type { Bindings, Variables } from "../types";
 
 type AppContext = Context<{ Bindings: Bindings; Variables: Variables }>;
@@ -55,16 +55,16 @@ export async function authenticateApiKeyRequest(
 ): Promise<Response | null> {
   if (!isWellFormedApiKey(token)) return rejectKey(c);
 
-  const ip =
-    c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
-  if (ip) {
-    const limited = await guardRateLimit(
-      c,
-      { key: `api-key-ip:${ip}`, limit: API_KEY_ATTEMPTS_PER_IP_PER_MINUTE, windowMs: 60_000 },
-      "too many API key requests",
-    );
-    if (limited) return limited;
-  }
+  const limitedIp = await guardRateLimit(
+    c,
+    {
+      key: `api-key-ip:${clientRateLimitKey(c)}`,
+      limit: API_KEY_ATTEMPTS_PER_IP_PER_MINUTE,
+      windowMs: 60_000,
+    },
+    "too many API key requests",
+  );
+  if (limitedIp) return limitedIp;
 
   const db = createDb(c.env.DB);
   const key = await findApiKeyByHash(db, await hashApiKey(token));

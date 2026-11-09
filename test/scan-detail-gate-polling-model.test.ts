@@ -33,6 +33,7 @@ function workflowGate(overrides: Partial<PublicWorkflowGate> = {}): PublicWorkfl
     repositoryFullName: "owner/repo",
     environment: "release",
     runId: 1,
+    runAttempt: 1,
     status: "pending",
     decision: null,
     decisionComment: null,

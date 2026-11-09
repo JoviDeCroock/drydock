@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "1684642c-d4fa-4615-a630-4f03eca2f32a",
+  "id": "ecafa99d-ad99-4042-89ee-5a6250f6a226",
   "prevId": "056001b2-9cbd-4894-b2b3-447734dd7323",
   "tables": {
     "account": {
@@ -1001,6 +1001,27 @@
           "notNull": false,
           "autoincrement": false
         },
+        "run_attempt": {
+          "name": "run_attempt",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reviewed_artifacts_json": {
+          "name": "reviewed_artifacts_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "decision_delivered_at": {
+          "name": "decision_delivered_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "requested_at": {
           "name": "requested_at",
           "type": "integer",
@@ -1059,6 +1080,28 @@
             "scan_id"
           ],
           "isUnique": false
+        },
+        "github_workflow_gates_run_key_idx": {
+          "name": "github_workflow_gates_run_key_idx",
+          "columns": [
+            "installation_row_id",
+            "repository_id",
+            "run_id",
+            "environment"
+          ],
+          "isUnique": false
+        },
+        "github_workflow_gates_deployment_unique_idx": {
+          "name": "github_workflow_gates_deployment_unique_idx",
+          "columns": [
+            "installation_row_id",
+            "repository_id",
+            "run_id",
+            "environment",
+            "deployment_id"
+          ],
+          "isUnique": true,
+          "where": "\"github_workflow_gates\".\"deployment_id\" is not null"
         }
       },
       "foreignKeys": {
@@ -2150,100 +2193,6 @@
             "id"
           ],
           "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "protection_health": {
-      "name": "protection_health",
-      "columns": {
-        "release_target_id": {
-          "name": "release_target_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "snapshot_json": {
-          "name": "snapshot_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "checked_at": {
-          "name": "checked_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "next_check_at": {
-          "name": "next_check_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "lease_id": {
-          "name": "lease_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "lease_until": {
-          "name": "lease_until",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "protection_health_due_idx": {
-          "name": "protection_health_due_idx",
-          "columns": [
-            "next_check_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "protection_health_release_target_id_github_release_targets_id_fk": {
-          "name": "protection_health_release_target_id_github_release_targets_id_fk",
-          "tableFrom": "protection_health",
-          "tableTo": "github_release_targets",
-          "columnsFrom": [
-            "release_target_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "protection_health_organization_id_organizations_id_fk": {
-          "name": "protection_health_organization_id_organizations_id_fk",
-          "tableFrom": "protection_health",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },

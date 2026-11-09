@@ -157,6 +157,42 @@ describe("public package-diff routes", () => {
     expect(pypi.status).toBe(404);
   });
 
+  test("refuses a PyPI project document over the metadata ceiling and caches the failure", async () => {
+    const store = new Map<string, string>();
+    const kv = {
+      async get(key: string, options?: { type?: string }) {
+        const raw = store.get(key);
+        if (raw === undefined) return null;
+        return options?.type === "json" ? JSON.parse(raw) : raw;
+      },
+      async put(key: string, value: string) {
+        store.set(key, value);
+      },
+    } as unknown as KVNamespace;
+    let pulled = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulled += 1;
+          controller.enqueue(new TextEncoder().encode("{"));
+        },
+      });
+      return new Response(body, {
+        status: 200,
+        headers: { "content-length": String(16 * 1024 * 1024 + 1) },
+      });
+    });
+    const requestEnv = { ...env, COMPARE_CACHE: kv } satisfies Cloudflare.Env;
+    const path = "/api/public/v1/package-diff/versions?package=huge-project&ecosystem=pypi";
+
+    const first = await publicDiffFetchWithEnv(path, requestEnv, "10.98.0.1");
+    expect(first.status).toBe(502);
+    expect(pulled).toBeLessThanOrEqual(1);
+    const repeat = await publicDiffFetchWithEnv(path, requestEnv, "10.98.0.2");
+    expect(repeat.status).toBe(502);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   test("rejects an unknown ecosystem", async () => {
     const res = await publicDiffFetch(
       "/api/public/v1/package-diff?package=left-pad&from=1.0.0&to=1.0.1&ecosystem=rubygems",

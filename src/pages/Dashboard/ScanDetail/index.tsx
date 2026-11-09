@@ -14,6 +14,7 @@ import { useAuthedDashboardSession } from "../../../features/account/useAuthedDa
 import { usePinnedOrganization } from "../../../features/account/usePinnedOrganization";
 import { buildQueryUrl } from "../../../lib/query-state";
 import { pinOrganization } from "../../../models/active-organization";
+import { gateReviewIsStale } from "../../../models/github-app";
 import { OrganizationModel } from "../../../models/organization";
 import { ReviewWorkbench } from "../../../features/review/ReviewWorkbench";
 import { RiskSignalsSection } from "../../../features/review/RiskSignalsSection";
@@ -203,7 +204,8 @@ function ScanNotices({ model, view }: SectionProps) {
           lookupStalled={model.gateLookupStalled.value}
           onRetryLookup={() => model.retryGateLookup()}
           canRetry={
-            gate?.status === "pending" && view.gateReviewFailed.value && !detail.scan.decision
+            gate?.status === "pending" &&
+            ((view.gateReviewFailed.value && !detail.scan.decision) || gateReviewIsStale(gate))
           }
           retryStatus={model.gateRetryStatus.value}
           retryError={model.gateRetryError.value}

@@ -48,6 +48,7 @@ Share card path mirrors the page path under `/og/diff/…/card.png` via the shar
 | Unchanged-file sample sub-budget | 2 MiB | `UNCHANGED_SAMPLE_BUDGET_BYTES` |
 | PyPI selected-download budget | 50 MiB advertised across both versions | `PUBLIC_PYPI_DIFF_MAX_SELECTED_BYTES` |
 | PyPI artifacts per side | one sdist + one wheel; prefer a wheel shape both versions publish, then `py3-none-any` | `server/lib/ecosystems/pypi/public-diff.ts` |
+| Registry metadata reads | npm: packument streamed, ≤128 MiB decoded, 100,000 versions, 8 MiB of retained strings (source bytes), else `413` cached 10 min. PyPI: JSON ≤16 MiB, else `502`. Other failures `502` cached 60 s; a `404` is not cached | `MAX_PACKUMENT_BYTES`, `MAX_PACKUMENT_RETAINED_BYTES`, `MAX_PYPI_METADATA_BYTES`, `writeMetadataUnavailable` |
 | Share-card renders | 60 per IP per minute, charged only on a colo-cache miss; `max-age=3600, s-maxage=86400` | `OG_CARD_RATE_LIMIT` |
 | Share-card failure | static `/og-image.png`, `max-age=60` | `STATIC_FALLBACK_PATH` |
 | Cache keys | include ecosystem, deterministic-rules version, risk-schema version; PyPI adds PyPI rules version and the PEP 503 name | `server/lib/public-diff/index.ts` |

@@ -19,6 +19,11 @@ import {
   sendPasswordChangedEmail,
   sendPasswordResetEmail,
 } from "../notify/account-email";
+import {
+  INVALID_USER_NAME_MESSAGE,
+  isAcceptableTypedUserName,
+  normalizeUserName,
+} from "./user-name";
 
 export interface AuthSession {
   userId: string;
@@ -442,6 +447,31 @@ async function takePasswordResetMailBudget(env: Cloudflare.Env, email: string): 
   }
 }
 
+// Verification mails one address may receive per hour, whichever IPs ask:
+// sign-up's own send and every resend draw on the same budget.
+const VERIFICATION_MAILS_PER_ADDRESS = 5;
+const VERIFICATION_ADDRESS_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * `takePasswordResetMailBudget` for verification links. The resend endpoint
+ * takes an address from an anonymous body, so without it anyone could aim
+ * every IP they have at one unverified account's inbox.
+ */
+async function takeVerificationMailBudget(env: Cloudflare.Env, email: string): Promise<boolean> {
+  const digest = await sha256Hex(email.trim().toLowerCase());
+  try {
+    await enforceRateLimit(env, {
+      key: `auth:verification-address:${digest}`,
+      limit: VERIFICATION_MAILS_PER_ADDRESS,
+      windowMs: VERIFICATION_ADDRESS_WINDOW_MS,
+    });
+    return true;
+  } catch (err) {
+    if (err instanceof RateLimitError) return false;
+    throw err;
+  }
+}
+
 // Never rejects: Better Auth revokes the account's sessions only after this
 // hook returns, and a failed flag write must not leave them alive.
 async function markEmailVerified(db: AppDb, userId: string): Promise<void> {
@@ -549,6 +579,11 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
       sendOnSignUp: emailVerificationEnabled,
       expiresIn: VERIFICATION_TOKEN_TTL_SECONDS,
       sendVerificationEmail: async ({ user, url }) => {
+        // Over budget answers exactly like a sent link, as the reset path does.
+        if (!(await takeVerificationMailBudget(env, user.email))) {
+          emitOperationalEvent("warn", "auth.verification_address_limited", {});
+          return;
+        }
         const result = await sendAccountVerificationEmail(env, { email: user.email, url });
         if (!result.ok) {
           throw new Error(`verification email failed: ${result.reason ?? "unknown error"}`);
@@ -660,6 +695,20 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
             message: "OAuth scope overrides are not allowed",
           });
         }
+        // Typed names are refused, not rewritten, so the person sees why; the
+        // `databaseHooks` below normalize every write, GitHub profiles included.
+        if (
+          (ctx.path === "/sign-up/email" || ctx.path === "/update-user") &&
+          ctx.body &&
+          typeof ctx.body === "object" &&
+          typeof (ctx.body as { name?: unknown }).name === "string" &&
+          !isAcceptableTypedUserName((ctx.body as { name: string }).name)
+        ) {
+          throw APIError.from("BAD_REQUEST", {
+            code: "INVALID_NAME",
+            message: INVALID_USER_NAME_MESSAGE,
+          });
+        }
       }),
       after: createAuthMiddleware(async (ctx) => {
         if (ctx.path !== "/verify-email") return;
@@ -682,6 +731,9 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
     databaseHooks: {
       user: {
         create: {
+          before: async (newUser) => ({
+            data: { ...newUser, name: normalizeUserName(newUser.name ?? "") },
+          }),
           after: async (createdUser) => {
             const social = Boolean((createdUser as { emailVerified?: boolean }).emailVerified);
             recordProductEvent(env, {
@@ -690,6 +742,12 @@ export function createAuth(env: Cloudflare.Env, options: CreateAuthOptions = {})
               outcome: social || !emailVerificationEnabled ? "active" : "verification_pending",
             });
           },
+        },
+        update: {
+          before: async (changes) =>
+            typeof changes.name === "string"
+              ? { data: { ...changes, name: normalizeUserName(changes.name) } }
+              : undefined,
         },
       },
     },

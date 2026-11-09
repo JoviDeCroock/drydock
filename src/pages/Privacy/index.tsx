@@ -104,8 +104,9 @@ export default function PrivacyPage() {
           <Prose>
             We share information only as needed to run the service: with infrastructure providers
             that host and operate Drydock, with the registries and code hosts you explicitly connect
-            (to fetch the artifacts you ask us to review and report decisions back), and where we
-            are legally required to. We do not sell or rent your information to third parties.
+            (to fetch the artifacts you ask us to review and report decisions back), with people you
+            invite (the invitation shows your name and email address), and where we are legally
+            required to. We do not sell or rent your information to third parties.
           </Prose>
         </Section>
 

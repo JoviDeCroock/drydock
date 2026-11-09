@@ -1,10 +1,15 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import { type AppDb } from "../../db/client";
+import type { WorkflowGateStatus } from "../../db/enums";
 import { githubWorkflowGates, scans } from "../../db/schema";
+import {
+  type GateReviewBinding,
+  GATE_STALE_REVIEW_REASONS,
+  type GateStaleReviewReason,
+  readGateReviewBinding,
+} from "../workflow-gates/review-binding";
 import type { InstallationRecord, ReleaseTargetRecord } from "./persistence";
 import type { ParsedDeploymentProtectionEvent } from "./webhook";
-
-type WorkflowGateStatus = "pending" | "approved" | "rejected" | "errored";
 
 export interface WorkflowGateRecord {
   id: string;
@@ -31,6 +36,9 @@ export interface WorkflowGateRecord {
   // concurrent re-delivery does not double-run the per-package scans.
   reviewStartedAt: Date | null;
   failureReason: string | null;
+  /** The run attempt and artifacts the review batch saw; null until a batch claims the gate. */
+  reviewBinding: GateReviewBinding | null;
+  decisionDeliveredAt: Date | null;
   requestedAt: Date;
   decidedAt: Date | null;
   createdAt: Date;
@@ -46,8 +54,13 @@ interface RecordGateRequestInput {
 
 /**
  * Persist a pending gate after a `deployment_protection_rule.requested`
- * webhook. Returns the existing row if the same `X-GitHub-Delivery` ID has
- * already been recorded, so retries from GitHub are idempotent.
+ * webhook. Returns the existing row for a delivery already recorded, or for
+ * the same deployment arriving under another delivery id: the signature covers
+ * only the body, so a resent body must not open a second gate.
+ *
+ * GitHub's callback is per run and Environment, not per attempt, so a newer
+ * request for the same run and Environment (a re-run attempt) supersedes every
+ * older pending gate for it; only the newest can release the job.
  */
 export async function recordGateRequest(
   db: AppDb,
@@ -55,30 +68,134 @@ export async function recordGateRequest(
 ): Promise<{ gate: WorkflowGateRecord; created: boolean }> {
   const existing = await getGateByDeliveryId(db, input.deliveryId);
   if (existing) return { gate: existing, created: false };
+  const environment = input.event.environment.toLowerCase();
+  const runKey = gateRunKey({
+    installationRowId: input.installation.id,
+    repositoryId: input.event.repositoryId,
+    runId: input.event.runId,
+    environment,
+  });
+  const sameDeployment = async () => {
+    if (input.event.deploymentId === null) return null;
+    const [row] = await db
+      .select()
+      .from(githubWorkflowGates)
+      .where(and(runKey, eq(githubWorkflowGates.deploymentId, input.event.deploymentId)))
+      .limit(1);
+    return row ? readGateRow(row) : null;
+  };
+  const known = await sameDeployment();
+  if (known) return { gate: known, created: false };
 
   const now = new Date();
   const id = crypto.randomUUID();
-  await db.insert(githubWorkflowGates).values({
-    id,
-    organizationId: input.installation.organizationId,
-    installationRowId: input.installation.id,
-    releaseTargetId: input.releaseTarget.id,
-    deliveryId: input.deliveryId,
-    repositoryId: input.event.repositoryId,
-    repositoryFullName: input.event.repositoryFullName,
-    environment: input.event.environment.toLowerCase(),
-    runId: input.event.runId,
-    deploymentId: input.event.deploymentId,
-    deploymentCallbackUrl: input.event.deploymentCallbackUrl,
-    eventAction: input.event.action,
-    status: "pending",
-    requestedAt: now,
-    createdAt: now,
-    updatedAt: now,
-  });
+  // The delivery and deployment unique indexes make a concurrent duplicate a
+  // no-op insert; it then resolves to the row that won.
+  const inserted = await db
+    .insert(githubWorkflowGates)
+    .values({
+      id,
+      organizationId: input.installation.organizationId,
+      installationRowId: input.installation.id,
+      releaseTargetId: input.releaseTarget.id,
+      deliveryId: input.deliveryId,
+      repositoryId: input.event.repositoryId,
+      repositoryFullName: input.event.repositoryFullName,
+      environment,
+      runId: input.event.runId,
+      deploymentId: input.event.deploymentId,
+      deploymentCallbackUrl: input.event.deploymentCallbackUrl,
+      eventAction: input.event.action,
+      status: "pending",
+      requestedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing()
+    .returning({ id: githubWorkflowGates.id });
+  if (inserted.length === 0) {
+    const winner = (await getGateByDeliveryId(db, input.deliveryId)) ?? (await sameDeployment());
+    if (!winner) throw new Error("workflow gate insert conflicted with no matching row");
+    return { gate: winner, created: false };
+  }
+  await supersedeOlderGateRequests(db, id, runKey);
   const fresh = await getGateByDeliveryId(db, input.deliveryId);
   if (!fresh) throw new Error("workflow gate row vanished immediately after insert");
   return { gate: fresh, created: true };
+}
+
+function gateRunKey(key: {
+  installationRowId: string;
+  repositoryId: number;
+  runId: number;
+  environment: string;
+}) {
+  return and(
+    eq(githubWorkflowGates.installationRowId, key.installationRowId),
+    eq(githubWorkflowGates.repositoryId, key.repositoryId),
+    eq(githubWorkflowGates.runId, key.runId),
+    eq(githubWorkflowGates.environment, key.environment),
+  );
+}
+
+/**
+ * Order two requests for one run and Environment: by deployment id when both
+ * carry distinct ones (GitHub allocates them increasingly), else by arrival,
+ * then id. The order is total, so concurrent deliveries agree and exactly the
+ * newest stays pending.
+ */
+function requestIsOlderThan(gateId: string) {
+  const other = githubWorkflowGates;
+  return sql`(
+    select case
+      when ${other.deploymentId} is not null and mine.deployment_id is not null
+        and ${other.deploymentId} <> mine.deployment_id
+        then ${other.deploymentId} < mine.deployment_id
+      else ${other.createdAt} < mine.created_at
+        or (${other.createdAt} = mine.created_at and ${other.id} < mine.id)
+    end
+    from ${githubWorkflowGates} as mine
+    where mine.id = ${gateId}
+  )`;
+}
+
+async function supersedeOlderGateRequests(
+  db: AppDb,
+  gateId: string,
+  runKey: ReturnType<typeof and>,
+): Promise<void> {
+  const now = new Date();
+  await db
+    .update(githubWorkflowGates)
+    .set({ status: "superseded", updatedAt: now })
+    .where(
+      and(
+        runKey,
+        ne(githubWorkflowGates.id, gateId),
+        eq(githubWorkflowGates.status, "pending"),
+        requestIsOlderThan(gateId),
+      ),
+    );
+  // A delayed delivery of an older attempt arrives after the newer one: it is
+  // recorded (so a replay dedupes) but never reviewable.
+  if (!(await hasNewerGateRequest(db, gateId, runKey))) return;
+  await db
+    .update(githubWorkflowGates)
+    .set({ status: "superseded", updatedAt: now })
+    .where(and(eq(githubWorkflowGates.id, gateId), eq(githubWorkflowGates.status, "pending")));
+}
+
+async function hasNewerGateRequest(
+  db: AppDb,
+  gateId: string,
+  runKey: ReturnType<typeof and>,
+): Promise<boolean> {
+  const newer = await db
+    .select({ id: githubWorkflowGates.id })
+    .from(githubWorkflowGates)
+    .where(and(runKey, ne(githubWorkflowGates.id, gateId), sql`not ${requestIsOlderThan(gateId)}`))
+    .limit(1);
+  return newer.length > 0;
 }
 
 export async function getGateByDeliveryId(
@@ -207,13 +324,27 @@ function readReleaseRisk(riskSummaryJson: unknown): string | null {
  * pending; a concurrent re-delivery loses the claim and skips. A claim that is
  * never finalized (a delivery that fails mid-batch releases it via
  * `releaseGateReviewClaim`; a hard crash leaves the gate pending — safe, never
- * auto-approved).
+ * auto-approved). The claimer's own artifact listing becomes the gate's review
+ * binding, so the binding always describes the batch that is reviewed.
  */
-export async function claimGateReviewStart(db: AppDb, gateId: string): Promise<boolean> {
+export async function claimGateReviewStart(
+  db: AppDb,
+  gateId: string,
+  binding: GateReviewBinding,
+): Promise<boolean> {
   const now = new Date();
   const updated = await db
     .update(githubWorkflowGates)
-    .set({ reviewStartedAt: now, updatedAt: now })
+    .set({
+      reviewStartedAt: now,
+      runAttempt: binding.runAttempt,
+      reviewedArtifactsJson: {
+        artifactName: binding.artifactName,
+        artifactNamePrefix: binding.artifactNamePrefix,
+        artifacts: binding.artifacts,
+      },
+      updatedAt: now,
+    })
     .where(
       and(
         eq(githubWorkflowGates.id, gateId),
@@ -248,7 +379,9 @@ export async function releaseGateReviewClaim(db: AppDb, gateId: string): Promise
  * Reopen a failed, still-pending review batch so the next gate job can discard
  * the failed package scans and re-run the whole set. This refuses to run once a
  * package decision has been recorded, because retrying would otherwise replace
- * already-reviewed package state.
+ * already-reviewed package state — unless the review went stale (the run's
+ * attempt or artifacts changed since it), when those decisions describe bytes
+ * the job would no longer publish.
  */
 export async function resetGateReviewForRetry(
   db: AppDb,
@@ -261,6 +394,8 @@ export async function resetGateReviewForRetry(
       scanId: null,
       reviewStartedAt: null,
       failureReason: null,
+      runAttempt: null,
+      reviewedArtifactsJson: null,
       updatedAt: now,
     })
     .where(
@@ -268,20 +403,22 @@ export async function resetGateReviewForRetry(
         eq(githubWorkflowGates.id, input.gateId),
         eq(githubWorkflowGates.organizationId, input.organizationId),
         eq(githubWorkflowGates.status, "pending"),
-        sql`exists (
-          select 1
-          from ${scans}
-          where ${scans.gateId} = ${input.gateId}
-            and ${scans.organizationId} = ${input.organizationId}
-            and ${scans.status} = 'failed'
-        )`,
-        sql`not exists (
-          select 1
-          from ${scans}
-          where ${scans.gateId} = ${input.gateId}
-            and ${scans.organizationId} = ${input.organizationId}
-            and ${scans.decision} is not null
-        )`,
+        sql`(${staleReviewCondition()} or (
+          exists (
+            select 1
+            from ${scans}
+            where ${scans.gateId} = ${input.gateId}
+              and ${scans.organizationId} = ${input.organizationId}
+              and ${scans.status} = 'failed'
+          )
+          and not exists (
+            select 1
+            from ${scans}
+            where ${scans.gateId} = ${input.gateId}
+              and ${scans.organizationId} = ${input.organizationId}
+              and ${scans.decision} is not null
+          )
+        ))`,
       ),
     )
     .returning({ id: githubWorkflowGates.id });
@@ -404,7 +541,11 @@ export async function markGateDecidedForPackageAggregate(
         eq(githubWorkflowGates.id, input.gateId),
         eq(githubWorkflowGates.organizationId, input.organizationId),
         eq(githubWorkflowGates.status, "pending"),
-        input.decision === "approved" ? sql`${githubWorkflowGates.scanId} is not null` : sql`1 = 1`,
+        input.decision === "approved"
+          ? sql`${githubWorkflowGates.scanId} is not null
+              and ${githubWorkflowGates.runAttempt} is not null
+              and not ${staleReviewCondition()}`
+          : sql`1 = 1`,
         packageDecisionCondition,
       ),
     )
@@ -416,6 +557,155 @@ export async function markGateDecidedForPackageAggregate(
     .where(eq(githubWorkflowGates.id, input.gateId))
     .limit(1);
   return row ? readGateRow(row) : null;
+}
+
+function staleReviewCondition() {
+  return sql`coalesce(${githubWorkflowGates.failureReason} in (${sql.join(
+    GATE_STALE_REVIEW_REASONS.map((reason) => sql`${reason}`),
+    sql`, `,
+  )}), 0)`;
+}
+
+/**
+ * Record on a pending gate that its review no longer matches the run, so the
+ * workbench offers a re-review. Approval re-checks GitHub on every attempt;
+ * this flag is what the reader sees, not the guarantee.
+ */
+export async function markGateReviewStale(
+  db: AppDb,
+  gateId: string,
+  reason: GateStaleReviewReason,
+): Promise<void> {
+  await db
+    .update(githubWorkflowGates)
+    .set({ failureReason: reason, updatedAt: new Date() })
+    .where(and(eq(githubWorkflowGates.id, gateId), eq(githubWorkflowGates.status, "pending")));
+}
+
+/** Drop a stale flag once GitHub again reports exactly the reviewed run state. */
+export async function clearGateReviewStale(db: AppDb, gateId: string): Promise<void> {
+  await db
+    .update(githubWorkflowGates)
+    .set({ failureReason: null, updatedAt: new Date() })
+    .where(
+      and(
+        eq(githubWorkflowGates.id, gateId),
+        eq(githubWorkflowGates.status, "pending"),
+        staleReviewCondition(),
+      ),
+    );
+}
+
+/**
+ * Undo an approval GitHub has not yet received because the run changed after
+ * the decision. The gate returns to pending with the stale reason and its
+ * package approvals are cleared, so a maintainer can reject or re-review; the
+ * held job is never told to continue. A newer request for the same run already
+ * owns the callback, so then the gate is superseded instead of reopened.
+ * Returns the cleared approvals for the audit record.
+ */
+export async function withdrawUndeliveredGateApproval(
+  db: AppDb,
+  gate: WorkflowGateRecord,
+  reason: GateStaleReviewReason,
+) {
+  const now = new Date();
+  const g = githubWorkflowGates;
+  // Decided in the write itself, so a request recorded just before it is seen
+  // and two gates for one run never end up pending together.
+  const reopenedAs = sql<WorkflowGateStatus>`case when exists (
+      select 1 from ${g} as newer
+      where newer.installation_row_id = ${g.installationRowId}
+        and newer.repository_id = ${g.repositoryId}
+        and newer.run_id = ${g.runId}
+        and newer.environment = ${g.environment}
+        and newer.id <> ${g.id}
+        and case
+          when newer.deployment_id is not null and ${g.deploymentId} is not null
+            and newer.deployment_id <> ${g.deploymentId}
+            then newer.deployment_id > ${g.deploymentId}
+          else newer.created_at > ${g.createdAt}
+            or (newer.created_at = ${g.createdAt} and newer.id > ${g.id})
+        end
+    ) then 'superseded' else 'pending' end`;
+  const [, cleared] = await db.batch([
+    db
+      .update(githubWorkflowGates)
+      .set({
+        status: reopenedAs,
+        decision: null,
+        decisionComment: null,
+        reportUrl: null,
+        decidedAt: null,
+        failureReason: reason,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(githubWorkflowGates.id, gate.id),
+          eq(githubWorkflowGates.status, "approved"),
+          isNull(githubWorkflowGates.decisionDeliveredAt),
+        ),
+      )
+      .returning({ id: githubWorkflowGates.id }),
+    // Runs after the gate update in the same batch; it only clears approvals
+    // when that update reopened (or superseded) the gate with this reason.
+    db
+      .update(scans)
+      .set({
+        decision: null,
+        decisionReason: null,
+        decidedByUserId: null,
+        decidedAt: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(scans.gateId, gate.id),
+          eq(scans.organizationId, gate.organizationId),
+          eq(scans.decision, "publish"),
+          sql`exists (
+            select 1 from ${githubWorkflowGates}
+            where ${githubWorkflowGates.id} = ${gate.id}
+              and ${githubWorkflowGates.status} in ('pending', 'superseded')
+              and ${githubWorkflowGates.decision} is null
+              and ${githubWorkflowGates.failureReason} = ${reason}
+          )`,
+        ),
+      )
+      .returning({
+        packageName: scans.packageName,
+        version: scans.stagedVersion,
+        decidedByUserId: scans.decidedByUserId,
+      }),
+  ]);
+  return cleared;
+}
+
+/**
+ * Stamp the decision GitHub just accepted. Only stamps while the gate still
+ * holds that decision; false means it changed meanwhile (a concurrent delivery
+ * withdrew the approval, or already stamped it).
+ */
+export async function markGateDecisionDelivered(
+  db: AppDb,
+  gateId: string,
+  decision: "approved" | "rejected",
+): Promise<boolean> {
+  const now = new Date();
+  const updated = await db
+    .update(githubWorkflowGates)
+    .set({ decisionDeliveredAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(githubWorkflowGates.id, gateId),
+        eq(githubWorkflowGates.status, decision),
+        eq(githubWorkflowGates.decision, decision),
+        isNull(githubWorkflowGates.decisionDeliveredAt),
+      ),
+    )
+    .returning({ id: githubWorkflowGates.id });
+  return updated.length > 0;
 }
 
 export async function markGateErrored(
@@ -459,6 +749,8 @@ function readGateRow(row: typeof githubWorkflowGates.$inferSelect): WorkflowGate
     scanId: row.scanId,
     reviewStartedAt: row.reviewStartedAt ? new Date(row.reviewStartedAt) : null,
     failureReason: row.failureReason,
+    reviewBinding: readGateReviewBinding(row.runAttempt, row.reviewedArtifactsJson),
+    decisionDeliveredAt: row.decisionDeliveredAt ? new Date(row.decisionDeliveredAt) : null,
     requestedAt: new Date(row.requestedAt),
     decidedAt: row.decidedAt ? new Date(row.decidedAt) : null,
     createdAt: new Date(row.createdAt),
@@ -467,7 +759,14 @@ function readGateRow(row: typeof githubWorkflowGates.$inferSelect): WorkflowGate
 }
 
 function normalizeGateStatus(value: string): WorkflowGateStatus {
-  if (value === "approved" || value === "rejected" || value === "errored") return value;
+  if (
+    value === "approved" ||
+    value === "rejected" ||
+    value === "errored" ||
+    value === "superseded"
+  ) {
+    return value;
+  }
   return "pending";
 }
 

@@ -86,6 +86,25 @@ test("enrolls a public package without an existing scan or npm connection", asyn
   expect((await request(owner, "GET", `/${watch.id}`)).status).toBe(404);
 });
 
+test("an unverified caller cannot start a watch where verification is enforced", async () => {
+  const owner = await seedOwner();
+  const response = await call(
+    buildTestApp(mountPublicationWatches, { userId: owner.userId, emailVerified: false }),
+    "POST",
+    "/api/v1/publication-watches",
+    {
+      body: { packageName: "preact", confirmPersonalOrganization: true },
+      envOverride: {
+        SEND_EMAIL: {} as Bindings["SEND_EMAIL"],
+        BETTER_AUTH_URL: "https://drydock.test",
+      },
+    },
+  );
+  expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({ code: "email_verification_required" });
+  expect(await (await request(owner, "GET")).json()).toMatchObject({ watches: [] });
+});
+
 test("watch IDs and organization selectors never grant access to another organization", async () => {
   const owner = await seedOwner();
   const outsider = await seedOwner();

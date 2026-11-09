@@ -1,4 +1,6 @@
 import {
+  assertZipUnicodePath,
+  decodeZipName,
   findZipEndOfCentralDirectory,
   inflateRawBounded,
   normalizeZipPath,
@@ -61,9 +63,23 @@ export async function extractOuterZipEntries(zip: Uint8Array): Promise<Extracted
     if (fileNameEnd > zip.byteLength) {
       throw new WorkflowArtifactError("bundle_unavailable", "truncated zip filename");
     }
-    const rawPath = new TextDecoder("utf-8", { fatal: false }).decode(
-      zip.subarray(fileNameStart, fileNameEnd),
-    );
+    if (fileNameEnd + extraLength > zip.byteLength) {
+      throw new WorkflowArtifactError("bundle_unavailable", "truncated zip extra field");
+    }
+    const nameBytes = zip.subarray(fileNameStart, fileNameEnd);
+    const rawPath = decodeZipName(nameBytes, readUint16Le(zip, offset + 8));
+    try {
+      assertZipUnicodePath(
+        nameBytes,
+        rawPath,
+        zip.subarray(fileNameEnd, fileNameEnd + extraLength),
+      );
+    } catch (err) {
+      throw new WorkflowArtifactError(
+        "bundle_unavailable",
+        err instanceof Error ? err.message : "invalid zip extra field",
+      );
+    }
     offset = fileNameEnd + extraLength + commentLength;
 
     // Directory entries / paths that fail normalization → reject hard. Path

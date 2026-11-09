@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { RateLimitError, enforceRateLimit } from "../lib/rate-limit";
+import { RateLimitError, clientRateLimitKey, enforceRateLimit } from "../lib/rate-limit";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { PUBLIC_NPM_REGISTRY } from "../lib/ecosystems/npm/public-diff";
 import { coloCache } from "../lib/platform/http";
@@ -216,7 +216,7 @@ ogRoutes.get("/diff/*", async (c) => {
   // charged against the native limiter.
   try {
     await enforceRateLimit(c.env, {
-      key: `og-card:${c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "unknown"}`,
+      key: `og-card:${clientRateLimitKey(c)}`,
       limit: OG_CARD_RATE_LIMIT,
       windowMs: OG_CARD_RATE_WINDOW_MS,
     });

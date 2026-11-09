@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { guardRateLimit } from "../lib/rate-limit";
+import { clientRateLimitKey, guardRateLimit } from "../lib/rate-limit";
 import { escapeHtmlText } from "../lib/platform/html-escape";
 import { getPublicDiffAdapter } from "../lib/ecosystems";
 import { canonicalOrigin } from "../lib/platform/http";
@@ -57,14 +57,6 @@ publicDiffRoutes.use("*", async (c, next) => {
   await next();
 });
 
-function clientIp(c: PublicDiffContext): string {
-  return (
-    c.req.header("cf-connecting-ip") ||
-    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "unknown"
-  );
-}
-
 async function enforcePublicRateLimit(
   c: PublicDiffContext,
   bucket: string,
@@ -72,7 +64,7 @@ async function enforcePublicRateLimit(
 ): Promise<Response | null> {
   return guardRateLimit(
     c,
-    { key: `public-diff:${bucket}:${clientIp(c)}`, limit, windowMs: 60 * 1000 },
+    { key: `public-diff:${bucket}:${clientRateLimitKey(c)}`, limit, windowMs: 60 * 1000 },
     "rate limit exceeded",
   );
 }

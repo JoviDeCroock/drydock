@@ -92,6 +92,29 @@ describe("rate limiting has one owner", () => {
   });
 });
 
+describe("per-client keys have one derivation", () => {
+  // A limiter keyed on the raw header lets one IPv6 client rotate through its
+  // /64, and `x-forwarded-for` is whatever the client sent. The MCP transport
+  // forwards the header untouched into the public router; Better Auth's own
+  // (unrelied-on) limiter is configured with header names.
+  const ADDRESS_READERS = new Set([
+    APP_LIMITER,
+    "server/routes/public-mcp.ts",
+    "server/lib/auth/index.ts",
+  ]);
+
+  test("only clientRateLimitKey reads the client address headers", () => {
+    const offenders = sources().filter(
+      (file) => !ADDRESS_READERS.has(file) && /cf-connecting-ip|x-forwarded-for/i.test(read(file)),
+    );
+    expect(
+      offenders,
+      `Key per-client limits with clientRateLimitKey(c) from ${APP_LIMITER}.`,
+    ).toEqual([]);
+    expect(read("server/routes/public-mcp.ts")).not.toMatch(/x-forwarded-for/i);
+  });
+});
+
 describe("native tiers stay declared everywhere they are needed", () => {
   test("every tier is declared as an optional binding in server/env.d.ts", () => {
     const env = read("server/env.d.ts");
