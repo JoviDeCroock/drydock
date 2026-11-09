@@ -1,5 +1,5 @@
 import { diffChars, diffLines, type ChangeObject } from "diff";
-import { addedLineNumbers } from "../platform/text-utils";
+import { movedOrAddedLineNumbers } from "../platform/text-utils";
 
 // Where a modified file changed, for release-delta classification.
 //
@@ -41,15 +41,15 @@ const REFINE_MAX_EDITS = 64;
 
 // Myers line diffing costs about D² for D edits (measured on jsdiff 9: ~1 s at
 // D = 4,500 whatever the line count or how many lines repeat), so a release
-// that rewrites a many-line file costs its line count squared. Each diff gets
-// an edit bound whose square stays under LINE_DIFF_FILE_WORK, and one
-// annotation pass shares LINE_DIFF_TOTAL_WORK across files so many such files
-// cannot add up. A rebuilt bundle with a few thousand changed hunks still
-// diffs. Past either bound a staged line counts as changed when its text occurs
-// more often than before (`addedLineNumbers`, linear): new and duplicated text
-// still counts, a moved line does not, and long lines are not narrowed.
+// that rewrites a many-line file costs its line count squared. Each file's diff
+// is bounded at LINE_DIFF_FILE_WORK on its own, so one file's rewrite never
+// shrinks another's; past it the file falls back to `movedOrAddedLineNumbers`
+// (linear). Every diff, failed or not, is charged to LINE_DIFF_TOTAL_WORK for
+// the pass. Once that is spent, files are not diffed: a small one counts as
+// wholly changed, a larger one falls back as above.
 const LINE_DIFF_FILE_WORK = 2_000 * 2_000;
 const LINE_DIFF_TOTAL_WORK = 5 * LINE_DIFF_FILE_WORK;
+const WHOLE_FILE_MAX_LINES = 1_000;
 
 export interface LineDiffBudget {
   remaining: number;
@@ -59,20 +59,22 @@ export function lineDiffBudget(): LineDiffBudget {
   return { remaining: LINE_DIFF_TOTAL_WORK };
 }
 
+/** A line diff, or the staged lines a fallback counts as changed. */
+export type LineChanges = { parts: ChangeObject<string>[] } | { fallback: Set<number> };
+
 // `diffLines(previous, staged)` with the common leading and trailing lines
 // split off first (linear, and most edits leave most of a file alone), then
-// the middle diffed under the budget. Null when the middle needs more edits
-// than the budget allows.
-export function boundedDiffLines(
+// the middle diffed under the budget.
+export function lineChanges(
   previous: string,
   staged: string,
   budget: LineDiffBudget = lineDiffBudget(),
-): ChangeObject<string>[] | null {
+): LineChanges {
   const shorter = Math.min(previous.length, staged.length);
   let prefix = 0;
   while (prefix < shorter && previous.charCodeAt(prefix) === staged.charCodeAt(prefix)) prefix += 1;
   if (prefix === previous.length && prefix === staged.length) {
-    return previous ? [unchangedPart(previous)] : [];
+    return { parts: previous ? [unchangedPart(previous)] : [] };
   }
   prefix = previous.lastIndexOf("\n", prefix - 1) + 1;
   let suffix = 0;
@@ -92,14 +94,22 @@ export function boundedDiffLines(
   ) {
     suffix -= 1;
   }
+  if (budget.remaining < LINE_DIFF_FILE_WORK) {
+    const lineCount = countLines(staged);
+    return {
+      fallback:
+        lineCount <= WHOLE_FILE_MAX_LINES
+          ? new Set(Array.from({ length: lineCount }, (_, index) => index + 1))
+          : movedOrAddedLineNumbers(previous, staged),
+    };
+  }
   const previousMiddle = previous.slice(prefix, previous.length - suffix);
   const stagedMiddle = staged.slice(prefix, staged.length - suffix);
-  const maxEditLength = Math.floor(Math.sqrt(Math.min(LINE_DIFF_FILE_WORK, budget.remaining)));
-  if (maxEditLength < 1) return null;
+  const maxEditLength = Math.floor(Math.sqrt(LINE_DIFF_FILE_WORK));
   const middle = diffLines(previousMiddle, stagedMiddle, { maxEditLength });
   if (!middle) {
-    budget.remaining -= maxEditLength * maxEditLength;
-    return null;
+    budget.remaining -= LINE_DIFF_FILE_WORK;
+    return { fallback: movedOrAddedLineNumbers(previous, staged) };
   }
   let edits = 0;
   for (const part of middle) if (part.added || part.removed) edits += part.count ?? 1;
@@ -108,7 +118,7 @@ export function boundedDiffLines(
   if (prefix) parts.push(unchangedPart(previous.slice(0, prefix)));
   parts.push(...middle);
   if (suffix) parts.push(unchangedPart(previous.slice(previous.length - suffix)));
-  return parts;
+  return { parts };
 }
 
 function unchangedPart(value: string): ChangeObject<string> {
@@ -132,11 +142,9 @@ export function changedRegions(
   staged: string,
   budget?: LineDiffBudget,
 ): ChangedRegions {
-  const parts = boundedDiffLines(previous, staged, budget);
-  // Past the budget, lines are matched as multisets instead (see
-  // LINE_DIFF_FILE_WORK).
-  if (!parts)
-    return { lines: addedLineNumbers(previous, staged), refinedLines: new Set(), spans: [] };
+  const changes = lineChanges(previous, staged, budget);
+  if ("fallback" in changes) return { lines: changes.fallback, refinedLines: new Set(), spans: [] };
+  const { parts } = changes;
   const lines = new Set<number>();
   const regions: ChangedRegions = { lines, refinedLines: new Set(), spans: [] };
   let stagedOffset = 0;

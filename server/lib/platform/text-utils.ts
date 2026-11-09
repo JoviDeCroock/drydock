@@ -126,3 +126,43 @@ export function addedLineNumbers(previous: string, staged: string): Set<number> 
   });
   return added;
 }
+
+/**
+ * `addedLineNumbers`, plus every line beside a neighbour it did not have
+ * before: a line whose (previous, line) or (line, next) pair occurs more often
+ * than in the previous version. A line moved on its own changes both pairs, so
+ * moving a call out of a function that never ran still counts; a line beside an
+ * insertion counts too. Interior lines of a block moved whole keep their pairs.
+ * Linear, like `addedLineNumbers`.
+ */
+export function movedOrAddedLineNumbers(previous: string, staged: string): Set<number> {
+  const changed = addedLineNumbers(previous, staged);
+  const lines = (text: string) => [
+    "\n^",
+    ...text.split("\n").map((line) => line.replace(/\r$/, "")),
+    "\n$",
+  ];
+  // A line holds no newline, so a pair joined on one is unambiguous.
+  const counts = new Map<string, number>();
+  const before = lines(previous);
+  for (let index = 1; index < before.length; index += 1) {
+    const pair = `${before[index - 1]}\n${before[index]}`;
+    counts.set(pair, (counts.get(pair) ?? 0) + 1);
+  }
+  const after = lines(staged);
+  const pairs: string[] = [];
+  for (let index = 1; index < after.length; index += 1) {
+    const pair = `${after[index - 1]}\n${after[index]}`;
+    pairs.push(pair);
+    counts.set(pair, (counts.get(pair) ?? 0) - 1);
+  }
+  // Pair `index` joins sentinel-padded lines index and index + 1, which are
+  // staged lines index and index + 1 (1-based; 0 and length + 1 are sentinels).
+  const last = after.length - 2;
+  pairs.forEach((pair, index) => {
+    if ((counts.get(pair) ?? 0) >= 0) return;
+    if (index >= 1) changed.add(index);
+    if (index + 1 <= last) changed.add(index + 1);
+  });
+  return changed;
+}

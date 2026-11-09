@@ -1,6 +1,5 @@
 import { isRootGypPath, normalizeStringRecord } from "../../tar-parser.js";
-import { boundedDiffLines } from "../changed-regions";
-import { addedLineNumbers } from "../../platform/text-utils";
+import { lineChanges, lineDiffBudget, type LineDiffBudget } from "../changed-regions";
 import type { DiffEntry } from "../diff";
 import type { PackageJsonSummary } from "../serialize";
 import type { CodePatternSet, FileRecord } from "../types";
@@ -48,6 +47,10 @@ export interface RuleContext {
   patterns: typeof JS_PATTERN_SET;
   codePatternSet: CodePatternSet | undefined;
   entrypointResolution: EntrypointResolution | null;
+  /** One line-diff budget for every rule family's diffs in this pass. */
+  lineDiffBudget: LineDiffBudget;
+  /** Changed staged lines per modified path, so a file is diffed once. */
+  changedLinesByPath: Map<string, Set<number>>;
 }
 
 export function buildRuleContext(
@@ -107,16 +110,38 @@ export function buildRuleContext(
     patterns: codePatternsFor(options.codePatternSet),
     codePatternSet: options.codePatternSet,
     entrypointResolution: options.entrypointResolution ?? null,
+    lineDiffBudget: lineDiffBudget(),
+    changedLinesByPath: new Map(),
   };
 }
 
-// Past the diff budget, lines are matched as multisets (see boundedDiffLines).
-export function changedStagedLines(previous: string, staged: string): Set<number> {
-  const parts = boundedDiffLines(previous, staged);
-  if (!parts) return addedLineNumbers(previous, staged);
+// A modified file's changed staged lines, diffed once per pass under the
+// pass's budget.
+export function changedLinesFor(
+  ctx: RuleContext,
+  path: string,
+  previous: string,
+  staged: string,
+): Set<number> {
+  let changed = ctx.changedLinesByPath.get(path);
+  if (!changed) {
+    changed = changedStagedLines(previous, staged, ctx.lineDiffBudget);
+    ctx.changedLinesByPath.set(path, changed);
+  }
+  return changed;
+}
+
+// Past the diff budget, see `lineChanges`.
+export function changedStagedLines(
+  previous: string,
+  staged: string,
+  budget: LineDiffBudget = lineDiffBudget(),
+): Set<number> {
+  const changes = lineChanges(previous, staged, budget);
+  if ("fallback" in changes) return changes.fallback;
   const changed = new Set<number>();
   let stagedLine = 0;
-  for (const part of parts) {
+  for (const part of changes.parts) {
     const lines = splitComparableLines(part.value);
     if (part.added) {
       for (const _line of lines) {

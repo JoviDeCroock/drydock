@@ -10,10 +10,11 @@ import {
   isTypeDeclarationPath,
 } from "./file-types";
 import { loadedAsCode } from "./load-calls";
-import { codeViewsForScanning } from "./normalize";
+import { codeViewsForScanning, normalizeCodeForScanning } from "./normalize";
 
-// Code that loads a file no static reference names. While any shipped file has
-// one, load grading cannot prove a file is never run, so nothing is demoted.
+// The clear shapes of code that loads a file no static reference names, for
+// the `code.dynamic-load` finding. Whether load grading may demote anything is
+// the separate allowlist in `static-loads.ts`: this list cannot be complete.
 
 type DynamicLoaderKind = "computed-load" | "compiled-file" | "loader-hook";
 
@@ -31,24 +32,35 @@ const RANK: Record<DynamicLoaderKind, number> = {
   "computed-load": 2,
 };
 
-// Call names whose first argument names a module or script to run. The argument
+// Call names whose first argument names a module or script to run, on any
+// receiver (`require.main.require`, `cp.fork`, `new wt.Worker`). The argument
 // is checked separately: a single plain string literal is a static load.
 const SPECIFIER_CALL =
-  /(?<![\w$.])(?:require|import|createRequire|importScripts)\s*\(|\bmodule\s*\.\s*require\s*\(|\bnew\s+Worker\s*\(|(?<![\w$.])fork\s*\(/g;
+  /(?<![\w$])(?:require|import|createRequire|importScripts|fork|dlopen)\s*\(|\bnew\s+(?:[\w$]+\s*\.\s*)?Worker\s*\(|(?:\)|\bModule|\bconstructor)\s*\.\s*_load\s*\(/g;
 // Compile a string as module code. Only `compiled-file` when a file read sits
 // beside it; alone these are jsdom/vite-node style contexts.
 const CODE_COMPILER =
-  /\brunIn(?:This|New)?Context\s*\(|\bcompileFunction\s*\(|\bnew\s+(?:vm\s*\.\s*)?(?:Script|SourceTextModule)\s*\(|\._compile\s*\(|\b(?:Module|module\s*\.\s*constructor)\s*\.\s*_load\s*\(|\b(?:spawn|execFile|fork)(?:Sync)?\s*\(\s*process\s*\.\s*execPath\b/g;
+  /\brunIn(?:This|New)?Context\s*\(|\bcompileFunction\s*\(|\bnew\s+(?:vm\s*\.\s*)?(?:Script|SourceTextModule)\s*\(|\._compile\s*\(|\b(?:Module|module\s*\.\s*constructor)\s*\.\s*_load\s*\(|\b(?:spawn|execFile|fork)(?:Sync)?\s*\(\s*process\s*\.\s*(?:execPath\b|argv\s*\[\s*0\s*\])/g;
+// A `node` command runs its script argument; read on the view with strings.
+const NODE_COMMAND =
+  /\b(?:spawn|execFile|exec|fork)(?:Sync)?\s*\(\s*["'`]node(?:\.exe)?(?=["'`\s])/g;
+// eval and the Function constructor are ordinary in bundles; only beside a
+// file read are they a loader.
+const EVALUATOR =
+  /(?<![\w$.])(?:eval|Function)\s*\(|\bnew\s+Function\s*\(|(?<![\w$.])eval\s*\)\s*\(/g;
 // Extension hooks change how every later `require` compiles a file. Only the
 // loader's own objects: `this._extensions` is a WebSocket or plugin table.
 const LOADER_HOOK =
   /\brequire\s*\.\s*extensions\b|\b(?:Module|module\s*\.\s*constructor)\s*(?:\.\s*_extensions\b|\[\s*["']_extensions["']\s*\])/g;
-// `require` handed on as a value is a load nothing here can follow.
-const REQUIRE_AS_VALUE = /(?:[^=!<>]=|[:,(?]|\breturn)\s*require\s*(?=[;,)\]}\n]|$)/g;
+// `require` or `module` handed on as a value (`{require}`, `[require]`,
+// `require.call`, `const {require: r} = module`) is a load nothing here can
+// follow.
+const REQUIRE_AS_VALUE =
+  /(?:[^=!<>]=|[:,(?{[]|\breturn)\s*(?:require|module)\s*(?=[;,)\]}\n]|$)|(?<![\w$.])module\s*\[|(?<![\w$.])require\s*\.\s*(?:call|apply|bind)\b/g;
 const FILE_READ = /\b(?:readFileSync|readFile|createReadStream|readSync)\s*\(/g;
 const COMPILED_FILE_WINDOW = 300;
 const PREFILTER =
-  /require|import|Worker|fork|runIn|compileFunction|Script|_compile|_load|extensions|execPath/;
+  /require|import|module|Worker|fork|dlopen|runIn|compileFunction|Script|_compile|_load|extensions|execPath|argv|node|eval|Function/;
 
 // Python: text run as code without the import system's `.py` check.
 const PYTHON_LOADER =
@@ -93,7 +105,7 @@ function firstLoader(
 
 // Files that run when something loads the package. A file load grading would
 // itself demote is not one: its loader would only matter once it is loaded.
-function loaderCandidate(ctx: RuleContext, path: string): boolean {
+export function loaderCandidate(ctx: RuleContext, path: string): boolean {
   if (isDocumentationPath(path) || isTypeDeclarationPath(path) || isJsonDataPath(path)) {
     return false;
   }
@@ -116,11 +128,24 @@ function firstPythonLoader(sample: string): Omit<DynamicLoader, "path" | "introd
   return null;
 }
 
+// The text as written and with literal keys and concatenations folded
+// (`module['req'+'uire']` reads as `module.require`; lines are kept).
 function firstJavaScriptLoader(
   path: string,
   sample: string,
 ): Omit<DynamicLoader, "path" | "introduced"> | null {
   if (!PREFILTER.test(sample)) return null;
+  const written = firstLoaderIn(path, sample);
+  const normalized = normalizeCodeForScanning(sample);
+  const folded = normalized === sample ? null : firstLoaderIn(path, normalized);
+  if (!written || !folded) return written ?? folded;
+  return RANK[folded.kind] < RANK[written.kind] ? folded : written;
+}
+
+function firstLoaderIn(
+  path: string,
+  sample: string,
+): Omit<DynamicLoader, "path" | "introduced"> | null {
   // `code` keeps string bodies, which the literal-argument check reads;
   // `codeNoStrings` hides calls that exist only inside a string.
   const { code, codeNoStrings } = codeViewsForScanning(path, sample);
@@ -145,6 +170,18 @@ function firstJavaScriptLoader(
     if (compilers === 0) offsets.push([match.index, "computed-load"]);
     // Bounded: a bundle can hold thousands of compiler calls.
     if (++compilers >= 64) break;
+  }
+  for (const match of code.matchAll(NODE_COMMAND)) {
+    offsets.push([match.index, "computed-load"]);
+    break;
+  }
+  let evaluators = 0;
+  for (const match of codeNoStrings.matchAll(EVALUATOR)) {
+    if (reads.some((read) => Math.abs(read - match.index) <= COMPILED_FILE_WINDOW)) {
+      offsets.push([match.index, "compiled-file"]);
+      break;
+    }
+    if (++evaluators >= 64) break;
   }
   for (const match of codeNoStrings.matchAll(LOADER_HOOK)) {
     offsets.push([match.index, "loader-hook"]);

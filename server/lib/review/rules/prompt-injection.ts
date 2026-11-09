@@ -6,12 +6,7 @@ import {
   stripPromptInjectionEvasion,
 } from "./patterns";
 import { tag, testScope } from "./helpers";
-import {
-  changedPrefix,
-  changedStagedLines,
-  isUnreachableTestFile,
-  type RuleContext,
-} from "./context";
+import { changedPrefix, changedLinesFor, isUnreachableTestFile, type RuleContext } from "./context";
 
 // LLM prompt-injection rules. Package bytes are read by LLMs in two places we
 // care about: Drydock's own AI reviewer, and consumers' coding
@@ -124,7 +119,7 @@ function shouldDemoteTestMatch(ctx: RuleContext, path: string, patterns: RegExp[
   if (previous.flags.includes("binary") || staged.flags.includes("binary")) return false;
   return !promptInjectionPatternsMatchChangedLines(
     staged.textSample,
-    changedStagedLines(previous.textSample, staged.textSample),
+    changedLinesFor(ctx, path, previous.textSample, staged.textSample),
     patterns,
     patterns === PROMPT_INJECTION_PATTERN_SET ? REVIEW_MANIPULATION_PATTERN_SET : [],
   );

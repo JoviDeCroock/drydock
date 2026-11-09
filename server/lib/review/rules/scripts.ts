@@ -18,6 +18,7 @@ import {
 import { firstJsonPropertyLine, loadScope, tag, testScope } from "./helpers";
 import { isLifecycleScriptFile, loadedAsCode as loadedAsCodeInPackage } from "./load-calls";
 import { dynamicLoaders, type DynamicLoader } from "./dynamic-loaders";
+import { loadsOnlyNamedFiles } from "./static-loads";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
 import {
   isBuildInfrastructurePath,
@@ -123,8 +124,10 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
   }
 
   // A file loaded through a path nothing here spells out could be any file, so
-  // while such a loader ships, no file is graded as unloaded.
+  // unless every runnable file provably loads only what it names, no file is
+  // graded as unloaded.
   const loaders = dynamicLoaders(ctx);
+  const namedLoadsOnly = loadsOnlyNamedFiles(ctx);
   let unprovenWithFindings = false;
   for (const file of ctx.files) {
     if (
@@ -142,10 +145,10 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     const loadable = minified || isLoadableDataPath(file.path);
     const loadedAsCode =
       (loadable || isMarkupPath(file.path)) &&
-      (loaders.length > 0 || loadedAsCodeInPackage(ctx, file.path));
+      (!namedLoadsOnly || loadedAsCodeInPackage(ctx, file.path));
     const loadUnproven = loadable && !loadedAsCode;
     const reachedOnlyDynamically =
-      loaders.length > 0 && loadable && !loadedAsCodeInPackage(ctx, file.path);
+      !namedLoadsOnly && loadable && !loadedAsCodeInPackage(ctx, file.path);
     const firstFinding = findings.length;
 
     // Character references that spell code in a script-capable attribute are

