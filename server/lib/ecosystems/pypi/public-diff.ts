@@ -25,7 +25,12 @@ import {
   type PyPiReleaseManifest,
   type PyPiRemoteArtifact,
 } from "./types";
-import { compareParsedPyPiVersions, parsePyPiVersion } from "./version";
+import {
+  compareParsedPyPiVersions,
+  findPyPiReleaseVersion,
+  parsePyPiVersion,
+  pyPiVersionsEquivalent,
+} from "./version";
 import {
   computeCompareMetadataCacheKey,
   readCompareMetadataCache,
@@ -88,6 +93,7 @@ export const pypiPublicDiff: PublicDiffAdapter = {
   // agree — "Django" and "django" must share one entry AND one purge tag.
   normalizePackageName: normalizePyPiProjectName,
   isValidVersion: (version) => SAFE_VERSION_RE.test(version),
+  versionsEquivalent: pyPiVersionsEquivalent,
   cacheTag: (packageName) => `public-diff:pypi:${packageName}`,
 
   async listVersions(env, ctx, packageName) {
@@ -276,6 +282,22 @@ interface PublicPyPiDiffSelection {
 interface PublicPyPiDiffPlan extends PublicPyPiDiffSelection {
   omittedKinds: Set<PyPiRemoteArtifact["kind"]>;
   notices: string[];
+}
+
+// Maps requested spellings to PyPI's release keys (see findPyPiReleaseVersion)
+// before anything else reads the release, so artifact selection, provenance
+// lineage, and the diff payload all name the release PyPI serves.
+export function resolvePublicPyPiVersionPair(
+  metadata: PyPiProjectMetadata,
+  fromVersion: string,
+  toVersion: string,
+): { fromVersion: string; toVersion: string } {
+  const releaseVersions = Object.keys(metadata.releases ?? {});
+  const from = findPyPiReleaseVersion(releaseVersions, fromVersion);
+  const to = findPyPiReleaseVersion(releaseVersions, toVersion);
+  if (from === null || to === null) throw new PublicDiffError("unknown version", 404);
+  if (from === to) throw new PublicDiffError("from and to must differ", 400);
+  return { fromVersion: from, toVersion: to };
 }
 
 // A PyPI release can carry dozens of platform wheels; downloading them all for
@@ -547,8 +569,13 @@ async function acquirePublicPyPiDiff(
   input: { packageName: string; fromVersion: string; toVersion: string },
 ): Promise<PublicDiffAcquiredSources> {
   const metadata = await fetchPublicPyPiProjectMetadata(env, ctx, input.packageName);
+  const { fromVersion, toVersion } = resolvePublicPyPiVersionPair(
+    metadata,
+    input.fromVersion,
+    input.toVersion,
+  );
   const selection = limitPublicPyPiDiffArtifacts(
-    selectPublicPyPiDiffArtifacts(metadata, input.fromVersion, input.toVersion),
+    selectPublicPyPiDiffArtifacts(metadata, fromVersion, toVersion),
   );
   const projectName =
     typeof metadata.info?.name === "string" ? metadata.info.name : input.packageName;
@@ -557,8 +584,8 @@ async function acquirePublicPyPiDiff(
     pypiProvenanceContinuity({
       metadata,
       projectName,
-      fromVersion: input.fromVersion,
-      toVersion: input.toVersion,
+      fromVersion,
+      toVersion,
       fromFilenames: selection.from.map((artifact) => artifact.filename),
       toFilenames: selection.to.map((artifact) => artifact.filename),
     }),
@@ -570,14 +597,14 @@ async function acquirePublicPyPiDiff(
     ...resolved.notices,
     ...unreadPublicPyPiWheelNotice(
       metadata,
-      input.toVersion,
+      toVersion,
       selection.to.filter((artifact) => !omittedKinds.has(artifact.kind)),
     ),
   ];
   const sources = buildPublicPyPiDiffSources({
     packageName: metadata.info?.name ?? input.packageName,
-    fromVersion: input.fromVersion,
-    toVersion: input.toVersion,
+    fromVersion,
+    toVersion,
     from: resolved.from,
     to: resolved.to,
     // The synthetic release manifest must describe only the artifacts the

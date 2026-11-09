@@ -15,8 +15,13 @@ function entry(path: string, name: string | null, version: string | null): Entry
   return { path, name, version };
 }
 
-function group(entries: Entry[], allowMultiplePerGroup: boolean) {
+function group(
+  entries: Entry[],
+  allowMultiplePerGroup: boolean,
+  sameVersion?: (a: string, b: string) => boolean,
+) {
   return groupReleaseCandidates(entries, {
+    sameVersion,
     identity(item) {
       if (!item.name || !item.version) {
         throw new WorkflowArtifactError(
@@ -80,6 +85,19 @@ describe("groupReleaseCandidates", () => {
         message: "b.tgz version 1.0.1 disagrees with 1.0.0 for pkg",
       }),
     );
+  });
+
+  test("accepts versions the ecosystem's comparator calls one release", () => {
+    const sameRelease = (a: string, b: string) =>
+      a.replace(/(\.0)+$/, "") === b.replace(/(\.0)+$/, "");
+    const candidates = group(
+      [entry("a.tar.gz", "pkg", "1.0"), entry("a.whl", "pkg", "1.0.0")],
+      true,
+      sameRelease,
+    );
+    expect(candidates.map((candidate) => candidate.package)).toEqual([
+      { name: "pkg", version: "1.0" },
+    ]);
   });
 
   test("rejects a second artifact per group when only one is allowed", () => {

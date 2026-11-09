@@ -106,4 +106,44 @@ describe("published-pair adapter", () => {
       artifactDigest: { sha1: "a".repeat(40), sha256: null },
     });
   });
+
+  test("resolves a requested spelling to the listed release it is equivalent to", async () => {
+    const listVersions = vi.fn(async () => ({
+      packageName: "Demo",
+      versions: [
+        { version: "1.1", distTags: [] },
+        { version: "1.0", distTags: [] },
+      ],
+      suggested: null,
+    }));
+    const base = {
+      ecosystem: "pypi",
+      registryUrl: "https://pypi.org/pypi",
+      rulesVersionSegment: "test",
+      payloadVersion: "test",
+      isValidPackageName: () => true,
+      normalizePackageName: (name: string) => name.toLowerCase(),
+      isValidVersion: () => true,
+      cacheTag: () => "test",
+      listVersions,
+      acquire: vi.fn(),
+    } satisfies PublicDiffAdapter;
+    const request = { packageName: "demo", version: "1.1.0" };
+    const env = {} as Cloudflare.Env;
+    const ctx = {} as ExecutionContext;
+
+    const exactOnly = await publishedPairAdapter(base).resolvePair(env, ctx, request);
+    expect(exactOnly).toMatchObject({ ok: false, status: 404 });
+
+    const sameRelease = (a: string, b: string) =>
+      a.replace(/(\.0)+$/, "") === b.replace(/(\.0)+$/, "");
+    const adapter = publishedPairAdapter({ ...base, versionsEquivalent: sameRelease });
+    expect(await adapter.resolvePair(env, ctx, request)).toEqual({
+      ok: true,
+      pair: { ecosystem: "pypi", packageName: "Demo", version: "1.1", baselineVersion: "1.0" },
+    });
+    expect(
+      await adapter.resolvePair(env, ctx, { ...request, baselineVersion: "1.0.0" }),
+    ).toMatchObject({ ok: true, pair: { version: "1.1", baselineVersion: "1.0" } });
+  });
 });

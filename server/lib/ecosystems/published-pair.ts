@@ -124,16 +124,19 @@ export function publishedPairAdapter(diff: PublicDiffAdapter): PublishedPairAdap
         packageName,
         diff.publishedRegistryUrl?.(env) ?? diff.registryUrl,
       );
-      const index = listing.versions.findIndex((entry) => entry.version === version);
+      const listed = listing.versions.map((entry) => entry.version);
+      const index = listedVersionIndex(diff, listed, version);
       if (index < 0) {
         return { ok: false, error: "that version is not published", status: 404 };
       }
-      if (requested !== null && !listing.versions.some((entry) => entry.version === requested)) {
+      const requestedIndex = requested === null ? -1 : listedVersionIndex(diff, listed, requested);
+      if (requested !== null && requestedIndex < 0) {
         return { ok: false, error: "that baseline version is not published", status: 404 };
       }
       // Listings are newest-first in every ecosystem that implements them, so
       // the next entry is the release this one shipped on top of.
-      const baselineVersion = requested ?? listing.versions[index + 1]?.version ?? null;
+      const baselineVersion =
+        requestedIndex >= 0 ? listed[requestedIndex] : (listed[index + 1] ?? null);
       if (!baselineVersion) {
         return {
           ok: false,
@@ -146,7 +149,7 @@ export function publishedPairAdapter(diff: PublicDiffAdapter): PublishedPairAdap
         pair: {
           ecosystem: diff.ecosystem,
           packageName: listing.packageName,
-          version,
+          version: listed[index],
           baselineVersion,
         },
       };
@@ -271,4 +274,14 @@ const PLAIN_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
 
 function isPlainVersion(diff: PublicDiffAdapter, version: string): boolean {
   return PLAIN_VERSION_RE.test(version) && diff.isValidVersion(version);
+}
+
+// An exact spelling wins; otherwise the one listed release the ecosystem calls
+// equivalent. More than one equivalent entry is ambiguous and matches nothing.
+function listedVersionIndex(diff: PublicDiffAdapter, listed: string[], version: string): number {
+  const exact = listed.indexOf(version);
+  const equivalent = diff.versionsEquivalent;
+  if (exact >= 0 || !equivalent) return exact;
+  const matches = listed.flatMap((entry, i) => (equivalent(entry, version) ? [i] : []));
+  return matches.length === 1 ? matches[0] : -1;
 }

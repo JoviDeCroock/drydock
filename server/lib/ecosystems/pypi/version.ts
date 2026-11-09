@@ -83,6 +83,22 @@ export function pyPiVersionsEquivalent(a: string, b: string): boolean {
   return pyPiVersionEquivalenceKey(a) === pyPiVersionEquivalenceKey(b);
 }
 
+// PyPI keys a release by the spelling first uploaded, while lockfiles, pins,
+// and artifact filenames may carry any PEP 440-equivalent spelling ("1.0.0",
+// "v1.0", "0!1.0" for release "1.0"). An exact-string lookup misses those and
+// lets the release skip review. PyPI refuses a second equivalent release, so
+// more than one equivalent key is malformed metadata and resolves to nothing.
+export function findPyPiReleaseVersion(
+  releaseVersions: Iterable<string>,
+  version: string,
+): string | null {
+  const candidates = [...releaseVersions];
+  if (candidates.includes(version)) return version;
+  const key = pyPiVersionEquivalenceKey(version);
+  const matches = candidates.filter((candidate) => pyPiVersionEquivalenceKey(candidate) === key);
+  return matches.length === 1 ? matches[0] : null;
+}
+
 // PEP 440 ordering: X.devN < X.aN < X.bN < X.rcN < X < X.postN. Local
 // segments are ignored. Returns null when either side is unparseable.
 export function comparePyPiVersions(a: string, b: string): number | null {

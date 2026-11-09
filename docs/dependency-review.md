@@ -132,6 +132,9 @@ make it required.
    diff can't serve (`not-found`, `unsupported`, `failed`). A deployment with a
    custom `NPM_REGISTRY` diffs nothing (`publicDiffEgressAllowed`, the same
    killswitch as the anonymous `/diff` surface), so every bump is unreviewed.
+   PyPI names are PEP 503-normalized and lockfile versions resolve to PyPI's
+   release key by PEP 440 equivalence, so a lockfile `1.0.0` reviews release
+   `1.0` instead of falling to `not-found`.
 7. **Decide.** `server/lib/dependency-review/policy.ts` reads the release delta
    only. Context findings describe code the previous version already shipped,
    and this bump does not introduce them. The organization's policy decides

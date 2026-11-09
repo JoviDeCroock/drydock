@@ -25,7 +25,7 @@ PyPI has no registry-staged artifact; this gate is its only review-before-publis
 | Recognized files | Every `.whl`, `.tar.gz`, `.tgz` in selected upload/family is reviewed; `SHA256SUMS` is ignored |
 | Identity | Wheel `METADATA` / sdist `PKG-INFO`, parsed in credentials-free sandbox |
 | Grouping | PEP 503 normalized package name; one scan per package against its own baseline |
-| Version consistency | Every file exposes Name/Version; files in one normalized-name group agree on version; distinct names form separate candidates |
+| Version consistency | Every file exposes Name/Version; files in one normalized-name group agree on version under PEP 440 equivalence (`1.0` = `1.0.0`); distinct names form separate candidates |
 | Internal manifest | Synthesized `drydock.release-artifacts.v1`, `ecosystem: "pypi"`, parsed identities and recomputed digests |
 | Provenance | Reviewed SHA-256 in report Provenance, scan-detail API (`summary.stagedPublish`) and `report.json` (`provenance.artifacts[].sha256`) |
 | Decision | Every package needs approval; rejecting one blocks the whole deployment |

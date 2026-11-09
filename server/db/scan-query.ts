@@ -1,4 +1,4 @@
-import { inArray, isNull, notInArray, or, sql } from "drizzle-orm";
+import { inArray, isNull, notInArray, or, type SQL, sql } from "drizzle-orm";
 import {
   NPM_RELEASE_OUTCOME_FAILURE_CODES,
   SETTLED_NPM_VERSION_STATUSES,
@@ -33,6 +33,26 @@ export const scanEcosystemSql = sql<string | null>`case
     json_extract(${scans.summaryJson}, '$.stagedPublish.ecosystem')
   )
 end`;
+
+/**
+ * `scans.package_name` names `packageName` in `ecosystem`. A PyPI gate row
+ * records the artifact's own METADATA spelling, which the release bytes choose
+ * ("Acme_SDK" and "acme-sdk" are one project), so PyPI compares PEP 503 forms
+ * on both sides; otherwise a respelled release escapes its own history. Other
+ * ecosystems match exactly and keep `scans_package_idx`.
+ */
+export function scanPackageNameMatches(ecosystem: string, packageName: string): SQL {
+  if (ecosystem !== "pypi") return sql`${scans.packageName} = ${packageName}`;
+  return sql`${pep503NameSql(sql`${scans.packageName}`)} = ${pep503NameSql(sql`${packageName}`)}`;
+}
+
+function pep503NameSql(name: SQL): SQL {
+  let normalized = sql`replace(replace(lower(${name}), '_', '-'), '.', '-')`;
+  // SQLite has no regex replace. Each pass halves a run of separators, and
+  // eight passes collapse the longest run a 214-character name can hold.
+  for (let pass = 0; pass < 8; pass++) normalized = sql`replace(${normalized}, '--', '-')`;
+  return normalized;
+}
 
 /** npm shipped the version, or shipped it and later removed it. */
 export function publishedReleaseOutcomeCondition() {

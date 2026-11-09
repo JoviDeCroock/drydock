@@ -8,6 +8,7 @@ import {
   type PyPiArtifactInput,
   type PyPiPreparedArtifact,
 } from "./";
+import { pyPiVersionsEquivalent } from "./version";
 import { erasePackageAdapter } from "../package-adapter";
 import { WorkflowArtifactError } from "../../github-app/artifacts";
 import { buildManifestOrFail, groupReleaseCandidates } from "../../workflow-gates/group-candidates";
@@ -88,6 +89,7 @@ export const pypiWorkflowGateAdapter: WorkflowGateAdapter = {
         };
       },
       allowMultiplePerGroup: true,
+      sameVersion: pyPiVersionsEquivalent,
       buildManifest: (identity, group) =>
         buildManifestOrFail(
           () =>

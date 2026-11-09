@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   comparePyPiVersions,
+  findPyPiReleaseVersion,
   parsePyPiVersion,
   pyPiVersionsEquivalent,
 } from "../server/lib/ecosystems/pypi/version";
@@ -19,6 +20,10 @@ describe("pyPiVersionsEquivalent", () => {
       // (the CherryPy "2.0.0-final" release key vs its PKG-INFO "2.0.0").
       ["2.0.0-final", "2.0.0"],
       ["1.0_beta", "1.0-beta"],
+      ["1.0.0.0.0", "1.0"],
+      ["01.0", "1.0"],
+      ["1.00", "1.0"],
+      ["V1.0", "1.0"],
     ]) {
       expect(pyPiVersionsEquivalent(a, b), `${a} ≡ ${b}`).toBe(true);
     }
@@ -57,5 +62,37 @@ describe("comparePyPiVersions", () => {
   test("returns null for unparseable legacy versions", () => {
     expect(comparePyPiVersions("2004-06-18", "1.0")).toBeNull();
     expect(parsePyPiVersion("not a version")).toBeNull();
+  });
+});
+
+describe("findPyPiReleaseVersion", () => {
+  const releases = ["0.9", "1.0", "1.1rc1"];
+
+  test("resolves every PEP 440 spelling of a release to PyPI's key", () => {
+    for (const spelling of [
+      "1.0",
+      "1.0.0",
+      "1.0.0.0",
+      "1.0.0.0.0",
+      "01.0",
+      "1.00",
+      "v1.0",
+      "V1.0",
+      "0!1.0",
+    ]) {
+      expect(findPyPiReleaseVersion(releases, spelling), spelling).toBe("1.0");
+    }
+    expect(findPyPiReleaseVersion(releases, "1.1.0-rc.1")).toBe("1.1rc1");
+  });
+
+  test("matches nothing for a different release", () => {
+    for (const spelling of ["1.0.post0", "1!1.0", "1.0.1", "1.0rc1"]) {
+      expect(findPyPiReleaseVersion(releases, spelling), spelling).toBeNull();
+    }
+  });
+
+  test("prefers the exact key and refuses an ambiguous equivalent match", () => {
+    expect(findPyPiReleaseVersion(["1.0", "1.0.0"], "1.0.0")).toBe("1.0.0");
+    expect(findPyPiReleaseVersion(["1.0", "1.0.0"], "v1.0")).toBeNull();
   });
 });

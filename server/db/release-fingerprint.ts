@@ -1,7 +1,7 @@
 import { and, desc, eq, ne } from "drizzle-orm";
 import type { PackageScanHistoryRow } from "../lib/release-fingerprint";
 import type { AppDb } from "./client";
-import { scanEcosystemSql } from "./scan-query";
+import { scanEcosystemSql, scanPackageNameMatches } from "./scan-query";
 import { githubWorkflowGates, scans } from "./schema";
 
 // History reads for the release-process fingerprint rules. Every query is
@@ -71,7 +71,7 @@ export async function loadReleaseFingerprintHistory(
           .where(
             and(
               eq(scans.organizationId, args.organizationId),
-              eq(scans.packageName, args.packageName),
+              scanPackageNameMatches(args.ecosystem, args.packageName),
               eq(scans.status, "complete"),
               ne(scans.id, args.scanId),
               // A completed gate row whose summary predates the provenance

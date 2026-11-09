@@ -24,6 +24,12 @@ export interface GroupReleaseCandidatesOptions<TEntry extends { path: string }, 
   allowMultiplePerGroup: boolean;
   duplicateMessage?(identity: ReleaseCandidateIdentity): string;
   /**
+   * Whether two artifact versions name one release. Defaults to string
+   * equality; PyPI passes PEP 440 equivalence because an sdist and a wheel of
+   * one release may legitimately spell it differently ("1.0" and "1.0.0").
+   */
+  sameVersion?(a: string, b: string): boolean;
+  /**
    * Build and validate the ecosystem's release manifest for one group. Throw
    * `WorkflowArtifactError("artifact_identity_missing", …)` when the derived
    * identity is not a valid release.
@@ -55,6 +61,7 @@ export function groupReleaseCandidates<TEntry extends { path: string }, TManifes
   options: GroupReleaseCandidatesOptions<TEntry, TManifest>,
 ): PreparedReleaseCandidate[] {
   const groups = new Map<string, { identity: ReleaseCandidateIdentity; entries: TEntry[] }>();
+  const sameVersion = options.sameVersion ?? ((a: string, b: string) => a === b);
   for (const entry of artifacts) {
     const identity = options.identity(entry);
     const group = groups.get(identity.key);
@@ -62,7 +69,7 @@ export function groupReleaseCandidates<TEntry extends { path: string }, TManifes
       groups.set(identity.key, { identity, entries: [entry] });
       continue;
     }
-    if (identity.version !== group.identity.version) {
+    if (!sameVersion(identity.version, group.identity.version)) {
       throw new WorkflowArtifactError(
         "artifact_identity_inconsistent",
         `${entry.path} version ${identity.version} disagrees with ${group.identity.version} for ${group.identity.name}`,

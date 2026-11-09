@@ -505,4 +505,55 @@ describe("release-process fingerprint (workers)", () => {
     expect(await historyIds("pypi")).toEqual([pypiGate, pypiPublished]);
     expect(await historyIds("vscode")).toEqual([vscodeGate]);
   });
+
+  test("PyPI history matches every PEP 503 spelling of the project; npm stays exact", async () => {
+    const { db, userId, organizationId } = await seedUser();
+    const now = new Date();
+    const gateId = await seedGateChain(db, organizationId, "acme/sdk-py", "pypi");
+    const at = (days: number) => new Date(now.getTime() - days * DAY_MS);
+    const pypiRows: string[] = [];
+    for (const [i, packageName] of ["acme-sdk", "Acme_SDK", "acme.__sdk"].entries()) {
+      pypiRows.push(
+        await seedScan(db, {
+          organizationId,
+          ownerUserId: userId,
+          packageName,
+          source: "workflow_gate",
+          gateId,
+          summaryJson: gateSummary("pypi"),
+          createdAt: at(i + 1),
+        }),
+      );
+    }
+    await seedScan(db, {
+      organizationId,
+      ownerUserId: userId,
+      packageName: "acme-sdk-extra",
+      source: "workflow_gate",
+      gateId,
+      summaryJson: gateSummary("pypi"),
+      createdAt: at(4),
+    });
+    const npmRow = await seedScan(db, {
+      organizationId,
+      ownerUserId: userId,
+      packageName: "acme-sdk",
+      source: "manual",
+      createdAt: at(5),
+    });
+
+    const historyIds = async (ecosystem: string, packageName: string) =>
+      (
+        await loadReleaseFingerprintHistory(db, {
+          organizationId,
+          scanId: "scan_current",
+          packageName,
+          ecosystem,
+        })
+      ).packageHistory.map((row) => row.id);
+
+    expect(await historyIds("pypi", "ACME--Sdk")).toEqual(pypiRows);
+    expect(await historyIds("npm", "acme-sdk")).toEqual([npmRow]);
+    expect(await historyIds("npm", "acme_sdk")).toEqual([]);
+  });
 });

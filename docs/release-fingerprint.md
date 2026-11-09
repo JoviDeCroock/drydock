@@ -46,7 +46,7 @@ Not a content rule: the security corpus and detection eval replay package bytes 
 | Current package name | Staged manifest (the current scan may not have a persisted row yet). |
 | Current ecosystem | Pipeline adapter id (`npm`, `pypi`, `vscode`), never a manifest field. |
 | Stored row ecosystem | `scanEcosystemSql` (`server/db/scan-query.ts`): `npm` for `manual`/`auto_discovery`, else the gate provenance or published-pair ecosystem the summary recorded. |
-| Name matching | Exact as recorded; PyPI names are not PEP 503-normalized (`Acme_SDK` ≠ `acme-sdk`). |
+| Name matching | npm and VS Code: exact as recorded. PyPI: PEP 503 forms on both sides (`Acme_SDK` = `acme-sdk`), because a gate row records the artifact's own METADATA spelling and a respelled release must not escape its history (`scanPackageNameMatches`, `server/db/scan-query.ts`). |
 
 ## Invariants
 

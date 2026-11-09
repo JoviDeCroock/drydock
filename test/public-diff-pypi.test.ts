@@ -11,6 +11,7 @@ import {
   listPublicPyPiVersions,
   pypiPublicDiff,
   resolvePublicPyPiDownloads,
+  resolvePublicPyPiVersionPair,
   selectPublicPyPiDiffArtifacts,
   unreadPublicPyPiWheelNotice,
   type PublicPyPiArtifactDownload,
@@ -100,6 +101,27 @@ describe("listPublicPyPiVersions", () => {
 
     expect(versions.map((entry) => entry.version)).toEqual(["2.5.0", "2.4.0", "1.26.9"]);
     expect(suggested).toEqual({ from: "2.4.0", to: "2.5.0" });
+  });
+});
+
+describe("resolvePublicPyPiVersionPair", () => {
+  test("maps equivalent spellings to PyPI's release keys", () => {
+    expect(resolvePublicPyPiVersionPair(metadata, "1.0", "v1.1.0.0")).toEqual({
+      fromVersion: "1.0.0",
+      toVersion: "1.1.0",
+    });
+  });
+
+  test("404s a version with no equivalent release", () => {
+    expect(() => resolvePublicPyPiVersionPair(metadata, "1.0.0", "1.1.0.post1")).toThrowError(
+      expect.objectContaining({ message: "unknown version", status: 404 }),
+    );
+  });
+
+  test("rejects two spellings of the same release", () => {
+    expect(() => resolvePublicPyPiVersionPair(metadata, "1.1", "1.1.0")).toThrowError(
+      expect.objectContaining({ message: "from and to must differ", status: 400 }),
+    );
   });
 });
 

@@ -113,6 +113,12 @@ export interface PublicDiffAdapter {
   isValidPackageName(name: string): boolean;
   normalizePackageName(name: string): string;
   isValidVersion(version: string): boolean;
+  /**
+   * Whether two spellings name one release. Absent means exact string
+   * equality; PyPI needs PEP 440 equivalence, or a request spelled differently
+   * from the registry's release key misses the release.
+   */
+  versionsEquivalent?(a: string, b: string): boolean;
   cacheTag(packageName: string): string;
 
   // Mutable sources must still exist before a computed cache hit is served.

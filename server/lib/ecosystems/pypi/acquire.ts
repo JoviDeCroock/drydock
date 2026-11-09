@@ -12,6 +12,7 @@ import { isAllowedPyPiArtifactUrl, type PyPiBroker } from "./broker";
 export { isAllowedPyPiArtifactUrl };
 import { summarizePyPiArtifact, namespacedPath } from "./findings";
 import { inferPyPiArtifactKind, normalizePyPiProjectName } from "./manifest";
+import { pyPiVersionsEquivalent } from "./version";
 import {
   type PyPiAdapterDetails,
   type PyPiAdapterInput,
@@ -246,7 +247,13 @@ export function pickPyPiBaselineRelease(
 ): PyPiBaselineSelection {
   const releases = metadata.releases ?? {};
   const latest = metadata.info?.version ?? null;
-  if (latest && latest !== candidateVersion && hasUsableReleaseFiles(releases[latest])) {
+  // Equivalence, not string equality: a gated "1.0.0" whose release PyPI
+  // already holds as "1.0" must not be diffed against its own release.
+  if (
+    latest &&
+    !pyPiVersionsEquivalent(latest, candidateVersion) &&
+    hasUsableReleaseFiles(releases[latest])
+  ) {
     return {
       version: latest,
       source: "latest-published",
@@ -255,7 +262,10 @@ export function pickPyPiBaselineRelease(
   }
 
   const byUploadTime = Object.entries(releases)
-    .filter(([version, files]) => version !== candidateVersion && hasUsableReleaseFiles(files))
+    .filter(
+      ([version, files]) =>
+        !pyPiVersionsEquivalent(version, candidateVersion) && hasUsableReleaseFiles(files),
+    )
     .map(([version, files]) => ({
       version,
       uploadedAt: newestUploadTimestamp(files),

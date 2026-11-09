@@ -1094,6 +1094,29 @@ describe("PyPI registry metadata helpers", () => {
     });
   });
 
+  test("never picks the candidate's own release under another PEP 440 spelling", () => {
+    const release = (version, uploaded) => [
+      {
+        filename: `demo-${version}.tar.gz`,
+        url: `https://files.pythonhosted.org/packages/demo-${version}.tar.gz`,
+        upload_time_iso_8601: uploaded,
+      },
+    ];
+    const metadata = {
+      info: { version: "1.0" },
+      releases: {
+        0.9: release("0.9", "2026-01-01T00:00:00.000Z"),
+        "1.0": release("1.0", "2026-02-01T00:00:00.000Z"),
+      },
+    };
+
+    expect(pickPyPiBaselineRelease(metadata, "1.0.0")).toEqual({
+      version: "0.9",
+      source: "upload-time",
+      reason: "newest-uploaded-release",
+    });
+  });
+
   test("falls back to upload time and selects wheel/sdist artifact metadata", () => {
     const metadata = {
       info: { version: "2.0.0" },
