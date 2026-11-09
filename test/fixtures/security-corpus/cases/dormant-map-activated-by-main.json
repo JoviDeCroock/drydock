@@ -1,0 +1,68 @@
+{
+  "id": "dormant-map-activated-by-main",
+  "title": "A release retargets main at a source map shipped unreferenced before",
+  "category": "obfuscated-dropper",
+  "intent": "The previous version already shipped dist/store.js.map, unreferenced and unchanged. The release only changes main to it. Node runs main as JavaScript whatever its extension, and source maps are never sampled, so the activated bytes are unreviewed. file.unsampled-entrypoint grades it high and release-scoped because it is newly loaded, though its bytes did not change.",
+  "previousPackageJson": {
+    "name": "lite-store",
+    "version": "3.0.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "lite-store",
+    "version": "3.0.1",
+    "main": "dist/store.js.map"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 60,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\": \"lite-store\", \"version\": \"3.0.0\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 30,
+      "sha256": "index-v300",
+      "flags": [],
+      "textSample": "module.exports = new Map();\n"
+    },
+    {
+      "path": "dist/store.js.map",
+      "size": 4096,
+      "sha256": "store-map",
+      "flags": ["text-sample-skipped"]
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 70,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\": \"lite-store\", \"version\": \"3.0.1\", \"main\": \"dist/store.js.map\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 30,
+      "sha256": "index-v300",
+      "flags": [],
+      "textSample": "module.exports = new Map();\n"
+    },
+    {
+      "path": "dist/store.js.map",
+      "size": 4096,
+      "sha256": "store-map",
+      "flags": ["text-sample-skipped"]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "file.unsampled-entrypoint",
+      "severity": "high",
+      "file": "dist/store.js.map"
+    }
+  ]
+}

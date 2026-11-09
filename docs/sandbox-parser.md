@@ -87,6 +87,22 @@ Bulk demotions (budget spent, tier full) produce one `retention-tier` suspicious
 
 The first 64 bytes of every skipped body are kept and sniffed (`sniffNativeArtifact`) into `native-elf`, `native-macho`, `native-pe`, `native-wasm`, so extensionless platform binaries still raise `file.native-artifact`.
 
+## Text classification
+
+| Body | Flag | Text sample |
+| --- | --- | --- |
+| UTF-8 with no NUL and C0 controls ≤ max(5, 2% of length) | none | decoded as is |
+| Otherwise, empty | `binary` | none |
+| Otherwise, script source (`isScriptSourcePath`: JS/TS, Python, `.pth`, `.gyp`, shell, PowerShell, batch) or a `#!` file, native magic or not | `control-bytes` | decoded, controls other than tab/LF/VT/FF/CR shown as U+FFFD |
+| Otherwise, native magic or `.node` (Node loads it with dlopen); or an inert asset (`isInertAssetPath`: images, fonts, audio/video, PDF), packed archive (`isPackedArchivePath`: zip/gzip/tar/jar/wasm and similar) or `.dll`/`.so`/`.dylib`/`.exe` whose first byte Node cannot run (`mayStartScript`) | `binary` | none |
+| Otherwise (unknown extension, `.txt`, `.dat`, extensionless) | `binary`, `control-bytes` | decoded as above for the deterministic rules only |
+
+Source maps (`*.map`) alone are hashed but never sampled (`text-sample-skipped`, `shouldSkipTextSample`); minified bundles are sampled like any file. `decodeBodyText` decides the rest. Node runs whatever a manifest or `require()` names, whatever its extension, so an extension alone never decides whether a body is decoded: a media or archive name with a scriptable first byte may be a polyglot and is decoded. Interpreters ignore control bytes in comments and strings, so a byte-level binary verdict would hide code from the rules.
+
+A `binary` body's decoded text never leaves memory: `withoutOpaqueSample` drops it from stored scan files, the public diff payload, the compare cache and the AI reviewer's input, and display, line diffing and the injection screen treat `binary` as opaque. Where the package loads such a body, `file.control-bytes` reports it; a loaded file with no sample at all (source map, hash-only) raises `file.unsampled-entrypoint` ([rules](./detection-rule-behavior.md)).
+
+Two container flags ride beside the classification. `packed` marks a `binary` body whose leading magic is a compressed or archive container (gzip, zip, bzip2, xz, zstd, 7z, rar, lzip, cab, ustar; `sniffPackedContainer`), whatever its name. `zip-trailer` marks any sampled body with a zip end-of-central-directory record in its last 64 KiB + 22 bytes (`hasZipDirectoryTrailer`), where Python's zipimport looks for one. Dependency review counts both, and any `binary` archive-named body, as uninspected; `file.embedded-zip` reads `zip-trailer` for PyPI.
+
 ## Archive digests (`digestArchiveStream`)
 
 | Ecosystem | Algorithms requested | Checked against |

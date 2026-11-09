@@ -26,6 +26,7 @@ import {
   type PackageJsonSummary,
 } from "../review";
 import { computeScanRiskBreakdown, type ScanRiskBreakdown } from "../review/risk";
+import { withoutOpaqueSample } from "../sample-retention";
 
 export { PublicDiffError } from "./error";
 export { publicDiffEgressAllowed } from "./egress";
@@ -181,8 +182,8 @@ export async function loadPublicPackageDiff(
     toVersion: input.toVersion,
     fromPackageJson: redactJson(sources.from.packageJson),
     toPackageJson: redactJson(sources.to.packageJson),
-    fromFiles: redactedFromFiles,
-    toFiles: redactedToFiles,
+    fromFiles: redactedFromFiles.map(withoutOpaqueSample),
+    toFiles: redactedToFiles.map(withoutOpaqueSample),
     diff: fileDiff,
     packageJsonDiff: manifestDiff,
     findings,

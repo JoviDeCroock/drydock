@@ -1,4 +1,5 @@
-import { diffChars, diffLines } from "diff";
+import { diffChars, diffLines, type ChangeObject } from "diff";
+import { movedOrAddedLineNumbers } from "../platform/text-utils";
 
 // Where a modified file changed, for release-delta classification.
 //
@@ -38,9 +39,114 @@ const SINGLE_SPAN_CHARS = 4096;
 const REFINE_MAX_CHARS = 256 * 1024;
 const REFINE_MAX_EDITS = 64;
 
-export function changedRegions(previous: string, staged: string): ChangedRegions {
-  const regions: ChangedRegions = { lines: new Set(), refinedLines: new Set(), spans: [] };
-  const parts = diffLines(previous, staged);
+// Myers line diffing costs about D² for D edits (measured on jsdiff 9: ~1 s at
+// D = 4,500 whatever the line count or how many lines repeat), so a release
+// that rewrites a many-line file costs its line count squared. Each file's diff
+// is bounded at LINE_DIFF_FILE_WORK on its own, so one file's rewrite never
+// shrinks another's; past it the file falls back to `movedOrAddedLineNumbers`
+// (linear). Every diff, failed or not, is charged to LINE_DIFF_TOTAL_WORK for
+// the pass. Once that is spent, files are not diffed: a small one counts as
+// wholly changed, a larger one falls back as above.
+const LINE_DIFF_FILE_WORK = 2_000 * 2_000;
+const LINE_DIFF_TOTAL_WORK = 5 * LINE_DIFF_FILE_WORK;
+const WHOLE_FILE_MAX_LINES = 1_000;
+
+export interface LineDiffBudget {
+  remaining: number;
+}
+
+export function lineDiffBudget(): LineDiffBudget {
+  return { remaining: LINE_DIFF_TOTAL_WORK };
+}
+
+/** A line diff, or the staged lines a fallback counts as changed. */
+export type LineChanges = { parts: ChangeObject<string>[] } | { fallback: Set<number> };
+
+// `diffLines(previous, staged)` with the common leading and trailing lines
+// split off first (linear, and most edits leave most of a file alone), then
+// the middle diffed under the budget.
+export function lineChanges(
+  previous: string,
+  staged: string,
+  budget: LineDiffBudget = lineDiffBudget(),
+): LineChanges {
+  const shorter = Math.min(previous.length, staged.length);
+  let prefix = 0;
+  while (prefix < shorter && previous.charCodeAt(prefix) === staged.charCodeAt(prefix)) prefix += 1;
+  if (prefix === previous.length && prefix === staged.length) {
+    return { parts: previous ? [unchangedPart(previous)] : [] };
+  }
+  prefix = previous.lastIndexOf("\n", prefix - 1) + 1;
+  let suffix = 0;
+  while (
+    suffix < shorter - prefix &&
+    previous.charCodeAt(previous.length - 1 - suffix) ===
+      staged.charCodeAt(staged.length - 1 - suffix)
+  ) {
+    suffix += 1;
+  }
+  // Keep the suffix to whole lines on both sides.
+  while (
+    suffix > 0 &&
+    !(
+      isLineStart(previous, previous.length - suffix) && isLineStart(staged, staged.length - suffix)
+    )
+  ) {
+    suffix -= 1;
+  }
+  if (budget.remaining < LINE_DIFF_FILE_WORK) {
+    const lineCount = countLines(staged);
+    return {
+      fallback:
+        lineCount <= WHOLE_FILE_MAX_LINES
+          ? new Set(Array.from({ length: lineCount }, (_, index) => index + 1))
+          : movedOrAddedLineNumbers(previous, staged),
+    };
+  }
+  const previousMiddle = previous.slice(prefix, previous.length - suffix);
+  const stagedMiddle = staged.slice(prefix, staged.length - suffix);
+  const maxEditLength = Math.floor(Math.sqrt(LINE_DIFF_FILE_WORK));
+  const middle = diffLines(previousMiddle, stagedMiddle, { maxEditLength });
+  if (!middle) {
+    budget.remaining -= LINE_DIFF_FILE_WORK;
+    return { fallback: movedOrAddedLineNumbers(previous, staged) };
+  }
+  let edits = 0;
+  for (const part of middle) if (part.added || part.removed) edits += part.count ?? 1;
+  budget.remaining -= Math.max(1, edits * edits);
+  const parts: ChangeObject<string>[] = [];
+  if (prefix) parts.push(unchangedPart(previous.slice(0, prefix)));
+  parts.push(...middle);
+  if (suffix) parts.push(unchangedPart(previous.slice(previous.length - suffix)));
+  return { parts };
+}
+
+function unchangedPart(value: string): ChangeObject<string> {
+  return { value, count: countLines(value), added: false, removed: false };
+}
+
+function isLineStart(text: string, offset: number): boolean {
+  return offset === 0 || text.charCodeAt(offset - 1) === 10;
+}
+
+function countLines(text: string): number {
+  let lines = 0;
+  for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) {
+    lines += 1;
+  }
+  return text && !text.endsWith("\n") ? lines + 1 : lines;
+}
+
+export function changedRegions(
+  previous: string,
+  staged: string,
+  budget?: LineDiffBudget,
+): ChangedRegions {
+  const changes = lineChanges(previous, staged, budget);
+  if ("fallback" in changes) return { lines: changes.fallback, refinedLines: new Set(), spans: [] };
+  const { parts } = changes;
+  const lines = new Set<number>();
+  const regions: ChangedRegions = { lines, refinedLines: new Set(), spans: [] };
   let stagedOffset = 0;
   let stagedLine = 0;
   for (let index = 0; index < parts.length; index += 1) {
@@ -66,7 +172,7 @@ export function changedRegions(previous: string, staged: string): ChangedRegions
     } else {
       for (const _line of partLines) {
         stagedLine += 1;
-        regions.lines.add(stagedLine);
+        lines.add(stagedLine);
       }
     }
     stagedOffset += part.value.length;

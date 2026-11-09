@@ -24,6 +24,8 @@ export interface Finding {
   ruleVersion?: string;
   obfuscated?: boolean;
   testScoped?: boolean;
+  /** In a minified bundle or data file nothing provably loads; scored like `testScoped`. */
+  loadUnproven?: boolean;
   /** AI rows the injection screen added; risk scores them as a manual-review floor only. */
   source?: "injection-screen";
 }

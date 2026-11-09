@@ -12,6 +12,7 @@ import {
   REVIEW_MANIPULATION_PATTERN_SET,
   SHELL_DOWNLOAD_EXECUTE_PATTERN_SET,
 } from "./rules/patterns";
+import { NEWLY_LOADED_EVIDENCE } from "./rules/binaries";
 import { promptInjectionPatternsMatchChangedLines } from "./rules/prompt-injection";
 import {
   codeViewsForScanning,
@@ -27,6 +28,8 @@ import {
 } from "./rules/reachability";
 import {
   changedRegions,
+  lineDiffBudget,
+  type LineDiffBudget,
   changedRegionTexts,
   patternsTouchChangedRegions,
   type ChangedRegions,
@@ -110,8 +113,16 @@ function annotateFindings<
     predecessors,
   );
   const changesCache = new Map<string, FileChanges | null>();
+  const diffBudget = lineDiffBudget();
   const changesFor = (path: string) =>
-    fileChangesForPath(path, comparedByPath, stagedByPath, changesCache, options.codePatternSet);
+    fileChangesForPath(
+      path,
+      comparedByPath,
+      stagedByPath,
+      changesCache,
+      options.codePatternSet,
+      diffBudget,
+    );
   // Both readers of the baseline finding set ask only about modified files, so
   // the rules re-run over those and the manifests that give them context.
   // Fewer baseline files can only mean fewer baseline fingerprints, which
@@ -143,10 +154,12 @@ function annotateFindings<
       diffStatus,
       releaseDelta:
         lifecycleCommandReleaseDelta(finding, previousByPath, stagedByPath) ??
+        dynamicLoadReleaseDelta(finding) ??
         (isReleaseScopedFinding(finding) ||
           isNewlyEnabledImplicitNodeGypFinding(finding, previousByPath, stagedByPath) ||
           ((CAPABILITY_RULE_IDS.has(finding.ruleId ?? "") ||
             finding.ruleId === DETERMINISTIC_RULE_IDS.fileNativeArtifact ||
+            UNREADABLE_CODE_RULE_IDS.has(finding.ruleId ?? "") ||
             finding.ruleId?.startsWith("propagation.")) &&
             newlyInstallReachable().has(normalizeReachabilityPath(finding.file))) ||
           isFindingOnReleaseDelta(
@@ -332,15 +345,29 @@ export function withoutFindingLine<T extends { line?: number | null }>(
   return rest;
 }
 
+// Rules about code the review cannot read as written.
+const UNREADABLE_CODE_RULE_IDS = new Set<string>([
+  DETERMINISTIC_RULE_IDS.fileControlBytes,
+  DETERMINISTIC_RULE_IDS.fileUnsampledEntrypoint,
+]);
+
 function isReleaseScopedFinding(finding: {
   ruleId?: string | null;
   severity?: string | null;
+  evidence?: string | null;
 }): boolean {
   // Only the regression variant is about this release: a manifest that has
   // always over-claimed an entrypoint (medium) is package context, and scoping
   // it to the release would raise release risk on every rescan of that package.
   if (finding.ruleId === DETERMINISTIC_RULE_IDS.packageJsonEntrypointMissing) {
     return finding.severity === "high";
+  }
+  // The bytes can be unchanged: what this release changed is that it loads them.
+  if (
+    UNREADABLE_CODE_RULE_IDS.has(finding.ruleId ?? "") &&
+    finding.evidence?.startsWith(NEWLY_LOADED_EVIDENCE)
+  ) {
+    return true;
   }
   return Boolean(
     finding.ruleId?.startsWith("stage.") ||
@@ -358,6 +385,17 @@ function isReleaseScopedFinding(finding: {
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffLargeNewFile ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.tarSuspiciousEntry,
   );
+}
+
+// The rule compares the loader with the file's previous version and grades a
+// new one high, so the line diff (a rebuilt bundle changes every line) is not
+// asked again.
+function dynamicLoadReleaseDelta(finding: {
+  ruleId?: string | null;
+  severity?: string | null;
+}): boolean | null {
+  if (finding.ruleId !== DETERMINISTIC_RULE_IDS.codeDynamicLoad) return null;
+  return finding.severity === "high";
 }
 
 function isNewlyEnabledImplicitNodeGypFinding(
@@ -426,6 +464,7 @@ function fileChangesForPath(
   stagedByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
   cache: Map<string, FileChanges | null>,
   codePatternSet: CodePatternSet | undefined,
+  budget: LineDiffBudget,
 ): FileChanges | null {
   if (cache.has(path)) return cache.get(path) ?? null;
   const previous = previousByPath.get(path);
@@ -454,7 +493,7 @@ function fileChangesForPath(
       return view;
     },
     stagedText,
-    raw: changedRegions(previousText, stagedText),
+    raw: changedRegions(previousText, stagedText, budget),
     folded: () => {
       if (folded !== undefined) return folded;
       if (!foldable) return (folded = null);
@@ -463,7 +502,7 @@ function fileChangesForPath(
       folded =
         text === stagedText && previousFolded === previousText
           ? null
-          : { text, regions: changedRegions(previousFolded, text) };
+          : { text, regions: changedRegions(previousFolded, text, budget) };
       return folded;
     },
   };

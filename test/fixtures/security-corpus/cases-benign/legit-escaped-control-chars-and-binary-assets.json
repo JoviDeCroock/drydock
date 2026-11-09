@@ -1,0 +1,84 @@
+{
+  "id": "legit-escaped-control-chars-and-binary-assets",
+  "title": "Source writes control characters as escapes and ships binary assets nothing loads",
+  "category": "control",
+  "verdict": "benign",
+  "source": "synthetic",
+  "ecosystem": "npm",
+  "intent": "Hard negative for file.control-bytes. Terminal libraries write NUL and ESC as `\\x00`/`\\u001b` escapes, which are printable bytes; a legacy file with two raw ESC bytes stays under the parser's control threshold and keeps its sample; a font, an image the entrypoint requires (a bundler asset import) and a test data file are binary, but no manifest entrypoint or install script names them. None of these reads as hidden source. Samples are inert FileRecord strings.",
+  "expectMinRisk": "low",
+  "previousPackageJson": {
+    "name": "terminal-asset-kit",
+    "version": "4.1.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "terminal-asset-kit",
+    "version": "4.1.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 70,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\": \"terminal-asset-kit\", \"version\": \"4.1.0\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 96,
+      "sha256": "ansi-v410",
+      "flags": [],
+      "textSample": "const ESC = '\\u001b[';\nconst NUL = '\\x00';\nexports.reset = () => ESC + '0m';\nexports.sep = NUL;\n"
+    },
+    {
+      "path": "assets/glyphs.woff2",
+      "size": 18432,
+      "sha256": "glyphs-v410",
+      "flags": ["binary"]
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 70,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\": \"terminal-asset-kit\", \"version\": \"4.1.1\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 193,
+      "sha256": "ansi-v411",
+      "flags": [],
+      "textSample": "const ESC = '\\u001b[';\nconst NUL = '\\x00';\nexports.reset = () => ESC + '0m';\nexports.sep = NUL;\nexports.bold = (s) => ESC + '1m' + s + ESC + '22m';\nexports.logo = require('./assets/logo.png');\n"
+    },
+    {
+      "path": "lib/legacy-banner.js",
+      "size": 54,
+      "sha256": "legacy-banner",
+      "flags": [],
+      "textSample": "// legacy banner: \u001b[1m\u001b[0m\nmodule.exports = 'banner';\n"
+    },
+    {
+      "path": "assets/glyphs.woff2",
+      "size": 18432,
+      "sha256": "glyphs-v411",
+      "flags": ["binary"]
+    },
+    {
+      "path": "assets/logo.png",
+      "size": 4096,
+      "sha256": "logo",
+      "flags": ["binary"]
+    },
+    {
+      "path": "test/fixtures/frame.bin",
+      "size": 512,
+      "sha256": "frame",
+      "flags": ["binary"]
+    }
+  ],
+  "threatClass": "legit-byte-codec"
+}

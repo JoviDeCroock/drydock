@@ -34,6 +34,25 @@ export function testScope(testScoped: boolean, obfuscated: boolean, finding: Fin
   };
 }
 
+// Demote a finding in a minified bundle or data file that nothing provably
+// loads, the way `testScope` demotes one in an unreachable test file: lower,
+// and out of capability co-occurrence. The file is scanned either way; the
+// load-call scan cannot follow a path assembled at runtime, so this grades
+// rather than drops. A minified bundle is code and drops one step; a data
+// format (`.txt`, `.css`, ...) drops two, since docs such as `llms.txt` quote
+// API calls as text. Obfuscated matches and test-scoped findings keep theirs.
+export function loadScope(finding: Finding, steps: 1 | 2): Finding {
+  if (finding.testScoped || finding.obfuscated) return finding;
+  let severity = DEMOTED_SEVERITY[finding.severity] ?? finding.severity;
+  if (steps === 2) severity = DEMOTED_SEVERITY[severity] ?? severity;
+  return {
+    ...finding,
+    severity,
+    evidence: `not provably loaded; ${finding.evidence}`,
+    loadUnproven: true,
+  };
+}
+
 interface SecretTextOptions {
   highConfidenceOnly?: boolean;
 }

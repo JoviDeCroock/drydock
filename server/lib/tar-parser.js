@@ -52,6 +52,84 @@ export function decodeText(bytes) {
   return text;
 }
 
+// Interpreters run these despite raw control bytes in a comment or string
+// (Node, CPython, `.pth` line processing, shells), so they stay text for every
+// reviewer, not only the rules.
+export function isScriptSourcePath(path) {
+  const normalized = String(path || "")
+    .replaceAll("\\", "/")
+    .toLowerCase();
+  const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
+  return /\.(?:[cm]?[jt]sx?|pyw?|pth|gypi?|sh|bash|zsh|ps1|psm1|bat|cmd)$/.test(basename);
+}
+
+// Media and font formats: no runtime executes them and no rule reads them.
+// Also the dependency-review policy's "inert, not uninspected" list.
+export function isInertAssetPath(path) {
+  return /\.(?:png|jpe?g|gif|webp|avif|bmp|ico|icns|cur|tiff?|psd|woff2?|ttf|otf|eot|mp3|mp4|m4a|aac|flac|ogg|oga|opus|wav|webm|mov|avi|mkv|pdf)$/i.test(
+    String(path || ""),
+  );
+}
+
+// Compressed containers: decoding them shows a regex nothing, but what they
+// pack was never inspected.
+export function isPackedArchivePath(path) {
+  return /\.(?:zip|whl|egg|jar|war|ear|aar|apk|xpi|vsix|nupkg|crx|gz|tgz|bz2|xz|lz|lz4|lzma|zst|br|7z|rar|cab|tar|wasm)$/i.test(
+    String(path || ""),
+  );
+}
+
+// Whether a body's first byte could begin a script Node runs. False only for
+// bytes V8 rejects before any token: C0 controls other than whitespace, DEL,
+// bytes that cannot begin UTF-8 (they decode to U+FFFD), and ASCII that cannot
+// start a statement. A UTF-8 lead byte may begin an identifier, whitespace or
+// a BOM, and `<`/`-` may begin an HTML-like comment, so those count.
+export function mayStartScript(body) {
+  if (!body.length) return false;
+  const b = body[0];
+  if (b >= 0x09 && b <= 0x0d) return true;
+  if (b >= 0x20 && b <= 0x7e) return !"%)]}*&|^=>?:,@".includes(String.fromCharCode(b));
+  return b >= 0xc2 && b <= 0xf4;
+}
+
+// Text sample and classification flags for a retained body. A body
+// decodeText rejects is decoded anyway, with the control bytes (other than
+// whitespace: tab, LF, VT, FF, CR) shown as U+FFFD so offsets and lines stay
+// put, and flagged `control-bytes`. Node runs any extension a manifest or
+// `require()` names, so a name never decides that alone: a body stays opaque
+// (`binary`, no sample) only when it is a native artifact (by magic, which the
+// native rule reports, or `.node`, which Node loads with dlopen), or an inert
+// asset, archive or native-named file whose first byte proves Node cannot run
+// it (`mayStartScript`), so a polyglot with a scriptable prefix is still read.
+// Script source (by extension or shebang) is always decoded; a native-looking
+// magic prefix does not exempt it, since `MZ` is also a JS identifier and a
+// shell skips a failing first line. Any other decoded body also keeps
+// `binary`, so display, diffing and AI evidence treat it as opaque while the
+// deterministic rules read the text.
+export function decodeBodyText(path, body) {
+  const text = decodeText(body);
+  if (text) return { text, flags: [] };
+  if (!body.length) return { text: "", flags: ["binary"] };
+  const script = (body[0] === 0x23 && body[1] === 0x21) || isScriptSourcePath(path);
+  if (!script) {
+    const name = String(path || "");
+    const opaqueFormat =
+      isInertAssetPath(name) || isPackedArchivePath(name) || /\.(?:dll|so|dylib|exe)$/i.test(name);
+    if (
+      sniffNativeArtifact(body) ||
+      /\.node$/i.test(name) ||
+      (opaqueFormat && !mayStartScript(body))
+    ) {
+      return { text: "", flags: ["binary"] };
+    }
+  }
+  const visible = new TextDecoder("utf-8", { fatal: false })
+    .decode(body)
+    // eslint-disable-next-line no-control-regex -- replacing control bytes is the point
+    .replace(/[\0-\x08\x0e-\x1f]/g, "\uFFFD");
+  return { text: visible, flags: script ? ["control-bytes"] : ["binary", "control-bytes"] };
+}
+
 export function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -908,6 +986,54 @@ export function sniffNativeArtifact(bytes) {
   return null;
 }
 
+// Compressed and archive containers by leading magic, whatever the name: the
+// rules read their bytes, but what they pack was never unpacked. Self-contained
+// for the sandbox (see sniffNativeArtifact).
+export function sniffPackedContainer(bytes) {
+  if (!bytes || bytes.byteLength < 4) return false;
+  const b0 = bytes[0];
+  const b1 = bytes[1];
+  const b2 = bytes[2];
+  const b3 = bytes[3];
+  if (b0 === 0x1f && b1 === 0x8b) return true; // gzip
+  if (b0 === 0x50 && b1 === 0x4b && b2 < 0x09 && b3 < 0x09) return true; // zip
+  if (b0 === 0x42 && b1 === 0x5a && b2 === 0x68 && b3 >= 0x31 && b3 <= 0x39) return true; // bzip2
+  if (b0 === 0xfd && b1 === 0x37 && b2 === 0x7a && b3 === 0x58) return true; // xz
+  if (b0 === 0x28 && b1 === 0xb5 && b2 === 0x2f && b3 === 0xfd) return true; // zstd
+  if (b0 === 0x37 && b1 === 0x7a && b2 === 0xbc && b3 === 0xaf) return true; // 7z
+  if (b0 === 0x52 && b1 === 0x61 && b2 === 0x72 && b3 === 0x21) return true; // rar
+  if (b0 === 0x4c && b1 === 0x5a && b2 === 0x49 && b3 === 0x50) return true; // lzip
+  if (b0 === 0x4d && b1 === 0x53 && b2 === 0x43 && b3 === 0x46) return true; // cab
+  // ustar, at its fixed header offset.
+  return (
+    bytes.byteLength > 262 &&
+    bytes[257] === 0x75 &&
+    bytes[258] === 0x73 &&
+    bytes[259] === 0x74 &&
+    bytes[260] === 0x61 &&
+    bytes[261] === 0x72
+  );
+}
+
+// A zip end-of-central-directory record where a reader looks for one: the last
+// 22 bytes plus at most a 64 KiB comment. Python's zipimport opens a zip from
+// its end, so such a file imports as a zip whatever bytes lead it.
+export function hasZipDirectoryTrailer(bytes) {
+  if (!bytes || bytes.byteLength < 22) return false;
+  const stop = Math.max(0, bytes.byteLength - 22 - 0xffff);
+  for (let i = bytes.byteLength - 22; i >= stop; i--) {
+    if (
+      bytes[i] === 0x50 &&
+      bytes[i + 1] === 0x4b &&
+      bytes[i + 2] === 0x05 &&
+      bytes[i + 3] === 0x06
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Retain the first `limit` bytes flowing through a discard sink so a
 // content-skipped body can still be magic-byte sniffed without buffering the
 // body. Must stay self-contained: serialized into the sandbox worker via
@@ -934,6 +1060,7 @@ export async function summarizeFile(path, body, maxTextSampleChars = 0) {
   if (skipTextSample) flags.push("text-sample-skipped");
   const native = sniffNativeArtifact(body);
   if (native) flags.push("native-" + native);
+  if (hasZipDirectoryTrailer(body)) flags.push("zip-trailer");
   const hash = await sha256Hex(body);
   if (skipTextSample) {
     return {
@@ -959,8 +1086,10 @@ export async function summarizeFile(path, body, maxTextSampleChars = 0) {
   // meaning. Binary/control-character classification always reads the full body,
   // so the `binary` flag and the hash stay identical to an uncapped parse; only
   // how much of the decoded text is carried changes.
-  const text = decodeText(body);
-  if (!text) flags.push("binary");
+  const decoded = decodeBodyText(path, body);
+  const text = decoded.text;
+  flags.push(...decoded.flags);
+  if (decoded.flags.includes("binary") && sniffPackedContainer(body)) flags.push("packed");
   const limit = maxTextSampleChars > 0 && !isRetainedManifestPath(path) ? maxTextSampleChars : 0;
   const clipped = limit > 0 && text.length > limit ? clipTextSample(text, limit) : text;
   // Deliberately NOT the `truncated` flag the persistence layer adds to a
@@ -993,13 +1122,14 @@ export function shouldSkipTextSample(path) {
     .toLowerCase();
   const basename = normalized.slice(normalized.lastIndexOf("/") + 1);
 
-  // Source maps and minified bundles are generated, large, and hostile to a
-  // human diff, so we keep their metadata/hashes but skip the text sample.
+  // Source maps are generated and their `sourcesContent` is not what runs, so
+  // we keep their metadata/hashes but skip the text sample. Minified bundles
+  // are sampled like any file: Node runs whatever a manifest or `require()`
+  // names, and a skipped sample hid that code from every reviewer.
   // TypeScript declaration files (.d.ts) are deliberately NOT skipped: they are
   // small, human-readable, and describe the package's public API surface, which
   // is exactly what supply-chain review needs to diff.
   if (basename.endsWith(".map")) return true;
-  if (/\.min\.(?:js|mjs|cjs|css)$/.test(basename)) return true;
 
   return false;
 }

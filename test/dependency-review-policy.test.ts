@@ -119,20 +119,42 @@ describe("extractBumpEvidence", () => {
     });
   });
 
-  test("treats minified code, skipped bodies, and unknown binaries as uninspected, not images or maps", () => {
+  test("treats skipped bodies, archives and undecoded binaries as uninspected, not decoded bodies, minified code, images or maps", () => {
     const evidence = extractBumpEvidence(
       diffWith({
         diff: [
-          { path: "dist/app.min.js", status: "modified", flags: ["text-sample-skipped"] },
+          { path: "dist/app.min.js", status: "modified", flags: [] },
           { path: "dist/app.js.map", status: "modified", flags: ["text-sample-skipped"] },
           { path: "vendor/huge.js", status: "added", flags: ["content-skipped"] },
           { path: "assets/logo.png", status: "added", flags: ["binary"] },
+          { path: "vendor/bundle.tgz", status: "added", flags: ["binary"] },
           { path: "payload.bin", status: "added", flags: ["binary"] },
-          { path: "unchanged.min.js", status: "unchanged", flags: ["text-sample-skipped"] },
+          // Decoded for the rules, so read even though display treats it as opaque.
+          { path: "lib/table.dat", status: "added", flags: ["binary", "control-bytes"] },
+          { path: "unchanged.min.js", status: "unchanged", flags: [] },
         ],
       }),
     );
     expect(evidence.uninspectedFiles).toBe(3);
+  });
+
+  test("decoded archives and compressed bodies stay uninspected by name or content", () => {
+    const decoded = ["binary", "control-bytes"];
+    const evidence = extractBumpEvidence(
+      diffWith({
+        diff: [
+          { path: "vendor/lib.zip", status: "added", flags: decoded },
+          { path: "vendor/tool.jar", status: "added", flags: decoded },
+          { path: "wheels/dep.whl", status: "added", flags: decoded },
+          { path: "eggs/dep.egg", status: "added", flags: decoded },
+          { path: "data/dump.bz2", status: "added", flags: decoded },
+          { path: "data/blob.bin", status: "added", flags: [...decoded, "packed"] },
+          { path: "assets/logo.png", status: "added", flags: ["zip-trailer", "binary"] },
+          { path: "lib/table.dat", status: "added", flags: decoded },
+        ],
+      }),
+    );
+    expect(evidence.uninspectedFiles).toBe(7);
   });
 
   test("a coverage notice from the diff holds like an uninspected file", () => {

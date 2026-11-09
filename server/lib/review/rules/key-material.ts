@@ -1,11 +1,6 @@
 import type { Finding } from "../types";
 import { jsTokenText, tokenizeJsWithinBudget, type JsToken } from "../../platform/js-lexer";
-import {
-  changedPrefix,
-  changedStagedLines,
-  isUnreachableTestFile,
-  type RuleContext,
-} from "./context";
+import { changedPrefix, changedLinesFor, isUnreachableTestFile, type RuleContext } from "./context";
 import { isDocumentationPath, isJsonDataPath, isTypeDeclarationPath } from "./file-types";
 import { tag, testScope } from "./helpers";
 import { normalizeCodeForScanning } from "./normalize";
@@ -592,7 +587,7 @@ function reportedLine(
 ): number {
   const previous = ctx.previousByPath.get(path)?.textSample;
   if (ctx.diffByPath.get(path)?.status !== "modified" || !previous) return flow.lines[0];
-  const changed = changedStagedLines(previous, staged);
+  const changed = changedLinesFor(ctx, path, previous, staged);
   return flow.lines.find((line) => changed.has(line)) ?? flow.lines[0];
 }
 

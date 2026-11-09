@@ -423,6 +423,41 @@ describe("ai review orchestration", () => {
     expect(usage.outputTokens).toBe(10);
   });
 
+  test.each([
+    [["control-bytes"], true],
+    [["binary", "control-bytes"], false],
+  ])("a %j body's decoded text reaches the reviewer: %s", async (flags, shown) => {
+    const marker = "decoded-body-marker";
+    const prompts = [];
+    const model = mockModel(async (call) => {
+      prompts.push(JSON.stringify(call.prompt));
+      return generateResult(
+        [
+          {
+            type: "tool-call",
+            toolCallId: "submit-1",
+            toolName: "submit_review",
+            input: JSON.stringify(VALID_REVIEW),
+          },
+        ],
+        "tool-calls",
+      );
+    });
+    const file = { path: "lib/blob.dat", size: 64, sha256: "b", flags, textSample: marker };
+    await analyzeWithAi(
+      {},
+      "mock-reviewer",
+      {
+        ...BASE_OPTIONS,
+        files: [file],
+        diff: [{ path: file.path, status: "added", stagedSha256: "b", stagedSize: 64 }],
+      },
+      model,
+    );
+    expect(prompts.length).toBeGreaterThan(0);
+    expect(prompts.join("").includes(marker)).toBe(shown);
+  });
+
   test("a high/critical finding raises package risk", async () => {
     const { review: ai } = await analyzeWithAi(
       {},

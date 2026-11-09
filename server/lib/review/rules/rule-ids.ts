@@ -54,6 +54,9 @@ export const DETERMINISTIC_RULES = {
   codeNetworkAccess: { id: "code.network-access", risk: "capability" },
   codeDynamicEvaluation: { id: "code.dynamic-evaluation", risk: "capability" },
   codeCredentialAccess: { id: "code.credential-access", risk: "capability" },
+  // An anchor: it explains why files nothing names were graded at full
+  // severity, and the files it can reach carry their own capabilities.
+  codeDynamicLoad: { id: "code.dynamic-load", risk: "anchor" },
   // An anchor, not a capability: it is a traced source-to-sink flow of wallet
   // key material into a network call, not a capability that needs a second
   // signal beside it to mean anything.
@@ -69,9 +72,13 @@ export const DETERMINISTIC_RULES = {
     risk: "anchor",
     standingDanger: true,
   },
+  fileControlBytes: { id: "file.control-bytes", risk: "anchor" },
   fileLargeBinary: { id: "file.large-binary", risk: "anchor" },
   fileNativeArtifact: { id: "file.native-artifact", risk: "anchor" },
   fileOutsideFilesList: { id: "file.outside-files-list", risk: "anchor" },
+  filePythonSourceEncoding: { id: "file.python-source-encoding", risk: "anchor" },
+  fileEmbeddedZip: { id: "file.embedded-zip", risk: "anchor" },
+  fileUnsampledEntrypoint: { id: "file.unsampled-entrypoint", risk: "anchor" },
   installScriptImplicitNodeGyp: {
     id: "install-script.implicit-node-gyp",
     risk: "anchor",

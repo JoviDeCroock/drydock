@@ -165,13 +165,13 @@ Invariants (report detail in [public reports](./public-reports.md), badge detail
 |---|---|
 |Body over the per-file inspection limit|`content-skipped` medium finding: path, declared size, streamed sha256, native-format flag sniffed from the first 64 bytes; no text|
 |Retention budget spent or `SANDBOX_MAX_FILES` tier filled|Hash-only bodies; one aggregate `retention-tier` finding per cause: info when every hash-only body is byte-identical to the baseline, medium when any was added or modified|
-|Hash-only body that would carry no sample anyway|No escalation for a sniffed native binary (`file.native-artifact` reports it) or a never-sampled source map / minified bundle, unless a manifest entrypoint names it or shipped code refers to it by file name|
+|Hash-only body that would carry no sample anyway|No escalation for a sniffed native binary (`file.native-artifact`) or a source map unless the package loads it|
 |Baseline stored hash-only, release inspected|Not a gap: the reviewed side's record decides|
 |More than `SANDBOX_MAX_ENTRIES` entries|Parse fails|
 |Oversized baseline (previous-version) archive|Degrades to a no-baseline scan; the staged review does not fail|
 |PyPI artifact over a cap on the anonymous public diff|Dropped from both sides of the pair, never one, and disclosed as a notice; transient download failures stay fatal|
 
-Streamed hashes prove skipped bodies equal baseline bytes; verify changed uninspected bytes out of band. An extensionless Linux/macOS binary raises the same `file.native-artifact` finding as a Windows `.exe`.
+Streamed hashes prove skipped bodies equal baseline bytes; verify changed uninspected bytes out of band. Extensionless ELF/Mach-O binaries raise `file.native-artifact` like a `.exe`. All but native, media, font and archive bodies are decoded for the rules ([parser](./sandbox-parser.md#text-classification)).
 
 **npm install hooks.** Consumer install lifecycle hooks for npm tarballs are `preinstall`, `install`, and `postinstall`. `prepare`, `prepack`, `postpack`, and publish/prepublish hooks are packaging-time and are not consumer-install evidence unless other evidence shows they changed the shipped artifact.
 

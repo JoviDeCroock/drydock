@@ -1,0 +1,70 @@
+{
+  "id": "unsampled-entrypoint-hash-only",
+  "title": "A release points a new bin command at a file recorded hash-only",
+  "category": "obfuscated-dropper",
+  "intent": "The release adds a bin command and enough files ahead of its target that the target lands past the parser's retention limits, so its body is hashed but never read. npm links the bin onto the consumer's PATH and Node runs it, so file.unsampled-entrypoint reports the unread file it loads; diff.bin-added reports the new command. The body is represented only by its FileRecord metadata.",
+  "previousPackageJson": {
+    "name": "ops-runner",
+    "version": "0.4.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "ops-runner",
+    "version": "0.4.1",
+    "main": "index.js",
+    "bin": {
+      "ops-runner": "bin/runner.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 62,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\": \"ops-runner\", \"version\": \"0.4.0\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 37,
+      "sha256": "index-v040",
+      "flags": [],
+      "textSample": "module.exports = { version: '0.4' };\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 103,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\": \"ops-runner\", \"version\": \"0.4.1\", \"main\": \"index.js\", \"bin\": {\"ops-runner\": \"bin/runner.js\"}}"
+    },
+    {
+      "path": "index.js",
+      "size": 37,
+      "sha256": "index-v040",
+      "flags": [],
+      "textSample": "module.exports = { version: '0.4' };\n"
+    },
+    {
+      "path": "bin/runner.js",
+      "size": 2048,
+      "sha256": "runner-js",
+      "flags": ["content-skipped"]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "diff.bin-added",
+      "severity": "medium",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "file.unsampled-entrypoint",
+      "severity": "high",
+      "file": "bin/runner.js"
+    }
+  ]
+}

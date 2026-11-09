@@ -10,7 +10,7 @@ import {
 } from "./types";
 import { type DiffEntry, type FileRecord } from "../../review";
 import { describeOperationalError, emitOperationalEvent } from "../../platform/observability";
-import { SCAN_FILE_SAMPLE_LIMIT } from "../../sample-retention";
+import { SCAN_FILE_SAMPLE_LIMIT, withoutOpaqueSample } from "../../sample-retention";
 import { sha256Hex } from "../../platform/crypto-utils";
 import { canonicalJson } from "../../platform/canonical-json";
 
@@ -21,7 +21,8 @@ export function scanFileRowsForArtifacts(
   const diffByPath = new Map(diff.map((entry) => [entry.path, entry]));
   return files.map((file) => {
     const entry = diffByPath.get(file.path);
-    const { textSample, flags } = clipDisplaySample(file.textSample, file.flags);
+    const displayed = withoutOpaqueSample(file);
+    const { textSample, flags } = clipDisplaySample(displayed.textSample, displayed.flags);
     return {
       path: file.path,
       status: entry?.status || "unknown",

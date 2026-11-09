@@ -37,9 +37,9 @@ export interface TarEntryFindingOptions {
 // recorded hash-only. Bodies that would carry no text sample even if retained
 // do not count, because the tier hid nothing the content rules would have
 // read: a sniffed native binary (which `file.native-artifact` already reports
-// from the same magic-byte flag), and the source maps / minified bundles the
-// parser never samples. A never-sampled bundle that a manifest entrypoint
-// names or shipped code refers to still counts: it is the code that runs.
+// from the same magic-byte flag), and the source maps the parser never
+// samples. A never-sampled file that a manifest entrypoint names or shipped
+// code refers to still counts: Node runs it whatever its extension.
 function hasChangedUninspectedContent(options: TarEntryFindingOptions): boolean {
   const stagedFlags = options.stagedFiles
     ? new Map(options.stagedFiles.map((file) => [file.path, file.flags]))

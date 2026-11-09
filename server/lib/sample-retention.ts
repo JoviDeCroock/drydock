@@ -36,3 +36,17 @@ export const SCAN_FILE_SAMPLE_LIMIT = 128 * 1024;
  * files are exempt in the parser — manifest diffing is structural.
  */
 export const BASELINE_TEXT_SAMPLE_LIMIT = 8 * SCAN_FILE_SAMPLE_LIMIT;
+
+/**
+ * Drops the decoded text the parser keeps for a `binary` body (one that is not
+ * an inert asset or native artifact). The deterministic rules read that text in
+ * memory; no display surface shows a binary body, so stored and served records
+ * keep the shape they had before such bodies were decoded.
+ */
+export function withoutOpaqueSample<T extends { flags: string[]; textSample?: string }>(
+  file: T,
+): T {
+  if (!file.textSample || !file.flags.includes("binary")) return file;
+  const { textSample: _omitted, ...rest } = file;
+  return rest as T;
+}

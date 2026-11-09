@@ -2,6 +2,7 @@ import { sha256Hex } from "./platform/crypto-utils";
 import { readKvJson, writeKvJson } from "./platform/kv-json-cache";
 import { downloadPublishedTarball } from "./ecosystems/npm/published-tarball";
 import { redactFileRecords, redactJson, type FileRecord, type PackageJsonSummary } from "./review";
+import { withoutOpaqueSample } from "./sample-retention";
 
 export interface CachedCompare {
   version: string;
@@ -80,7 +81,7 @@ export async function loadCompare(
 
   const payload: CachedCompare = {
     version,
-    files: redactFileRecords(downloaded.files),
+    files: redactFileRecords(downloaded.files).map(withoutOpaqueSample),
     packageJson: redactJson(downloaded.packageJson ?? null),
     cachedAt: new Date().toISOString(),
   };

@@ -19,6 +19,7 @@ const {
   decodeText,
   hasUnicodeConfusables,
   isRootGypPath,
+  mayStartScript,
   isSafePaxPath,
   normalizeTarPath,
   parsePackageJson,
@@ -205,6 +206,93 @@ describe("decodeText", () => {
   });
 });
 
+describe("control bytes in source files", () => {
+  const payload = "require('child_process').exec('true');\n";
+
+  test("a source file a NUL would mark binary keeps a text sample with the bytes replaced", async () => {
+    const tar = buildTar([
+      { name: "package/index.js", body: `/*\0*/${payload}` },
+      { name: "package/hook.py", body: `#${"\x01".repeat(64)}\nimport os\n` },
+      { name: "package/site.pth", body: "#\0\nimport os\n" },
+    ]);
+    const files = await parse(tar);
+    expect(files.map((file) => [file.path, file.flags, file.textSample])).toEqual([
+      ["index.js", ["control-bytes"], `/*�*/${payload}`],
+      ["hook.py", ["control-bytes"], `#${"�".repeat(64)}\nimport os\n`],
+      ["site.pth", ["control-bytes"], "#�\nimport os\n"],
+    ]);
+  });
+
+  test("an extensionless script is recognized by its shebang", async () => {
+    const tar = buildTar([
+      { name: "package/bin/cli", body: `#!/usr/bin/env node\n/*\0*/${payload}` },
+    ]);
+    const [file] = await parse(tar);
+    expect(file.flags).toEqual(["control-bytes"]);
+    expect(file.textSample).toContain("child_process");
+  });
+
+  test("binary bodies are decoded for the rules unless native, inert or packed", async () => {
+    const elf = new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0, 0, 0, 0]);
+    const peLookalike = `MZ/*${"\0".repeat(62)}*/=1;\n${payload}`;
+    const hidden = `/*\0*/${payload}`;
+    const tar = buildTar([
+      { name: "package/data.bin", body: hidden },
+      { name: "package/lib/payload", body: hidden },
+      { name: "package/notes.txt", body: hidden },
+      { name: "package/blob.dat", body: elf },
+      { name: "package/addon.node", body: hidden },
+      {
+        name: "package/logo.png",
+        body: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0, 0]),
+      },
+      { name: "package/bundle.tgz", body: new Uint8Array([0x1f, 0x8b, 0x08, 0, 0, 0]) },
+      // A scriptable first byte is a possible polyglot, so the name alone
+      // does not keep it opaque.
+      { name: "package/spinner.gif", body: `GIF89a/*\0*/${payload}` },
+      { name: "package/addon.js", body: elf },
+      { name: "package/loader.js", body: peLookalike },
+    ]);
+    const files = await parse(tar);
+    expect(files.map((file) => [file.path, file.flags, Boolean(file.textSample)])).toEqual([
+      ["data.bin", ["binary", "control-bytes"], true],
+      ["lib/payload", ["binary", "control-bytes"], true],
+      ["notes.txt", ["binary", "control-bytes"], true],
+      ["blob.dat", ["native-elf", "binary"], false],
+      ["addon.node", ["binary"], false],
+      ["logo.png", ["binary"], false],
+      ["bundle.tgz", ["binary", "packed"], false],
+      ["spinner.gif", ["binary", "control-bytes"], true],
+      ["addon.js", ["native-elf", "control-bytes"], true],
+      ["loader.js", ["native-pe", "control-bytes"], true],
+    ]);
+    expect(files[0].textSample).toContain("child_process");
+    expect(files[9].textSample).toContain("child_process");
+  });
+
+  test.each([
+    [[0x00], false],
+    [[0x89], false],
+    [[0xff], false],
+    [[0x25], false],
+    [[0x7f], false],
+    [[0x2f], true],
+    [[0x47], true],
+    [[0x0a], true],
+    [[0xef, 0xbb, 0xbf], true],
+    [[0xc3, 0xa9], true],
+  ])("mayStartScript(%j) is %s", (bytes, expected) => {
+    expect(mayStartScript(new Uint8Array(bytes))).toBe(expected);
+  });
+
+  test("source with only tab, newline, vertical tab and form feed controls is untouched", async () => {
+    const body = "a\tb\nc\x0bd\x0ce\r\n";
+    const [file] = await parse(buildTar([{ name: "package/index.js", body }]));
+    expect(file.flags).toEqual([]);
+    expect(file.textSample).toBe(body);
+  });
+});
+
 describe("readTar regular files", () => {
   test("decodes a regular file with text body", async () => {
     const tar = buildTar([{ name: "package/index.js", body: "export const x = 1;\n" }]);
@@ -246,18 +334,21 @@ describe("readTar regular files", () => {
     expect(files[0].textSample).toContain("eval(process.env.SECRET)");
   });
 
-  test("omits low-value generated text samples while preserving metadata", async () => {
+  test("samples minified bundles and omits only source maps, keeping their metadata", async () => {
     const tar = buildTar([
       { name: "package/dist/index.js", body: "export const value = 1;\n" },
       { name: "package/dist/index.js.map", body: JSON.stringify({ version: 3, mappings: "AAAA" }) },
       { name: "package/dist/index.d.ts", body: "export declare const value: number;\n" },
       { name: "package/dist/index.min.js", body: "(()=>{var a=1})();\n" },
+      { name: "package/dist/theme.min.css", body: "a{color:red}\n" },
     ]);
     const files = await parse(tar);
     const byPath = Object.fromEntries(files.map((file) => [file.path, file]));
 
     expect(byPath["dist/index.js"].textSample).toBe("export const value = 1;\n");
-    for (const path of ["dist/index.js.map", "dist/index.min.js"]) {
+    expect(byPath["dist/index.min.js"].textSample).toBe("(()=>{var a=1})();\n");
+    expect(byPath["dist/theme.min.css"].textSample).toBe("a{color:red}\n");
+    for (const path of ["dist/index.js.map"]) {
       expect(byPath[path].textSample).toBeUndefined();
       expect(byPath[path].sha256).toMatch(/^[0-9a-f]{64}$/);
       expect(byPath[path].size).toBeGreaterThan(0);
@@ -381,10 +472,10 @@ describe("readTar baseline text-sample cap", () => {
     const tar = buildTar([{ name: "package/bin/tool", body }]);
 
     const [capped] = await parseCapped(tar);
+    const [uncapped] = await parse(tar);
 
-    expect(capped.flags).toContain("binary");
-    expect(capped.flags).not.toContain("baseline-truncated");
-    expect(capped.textSample).toBeUndefined();
+    expect(uncapped.flags).toEqual(["binary", "control-bytes"]);
+    expect(capped.flags).toEqual(["binary", "control-bytes", "baseline-truncated"]);
   });
 });
 
@@ -2800,6 +2891,55 @@ describe("readTar limits and malformed archives", () => {
   });
 });
 
+describe("archive container flags", () => {
+  const bytes = (...parts) =>
+    new Uint8Array(
+      parts.flatMap((part) => (typeof part === "string" ? [...Buffer.from(part, "latin1")] : part)),
+    );
+  const eocd = [0x50, 0x4b, 0x05, 0x06, ...Array.from({ length: 18 }, () => 0)];
+
+  test.each([
+    ["gzip", bytes([0x1f, 0x8b, 0x08, 0x00, 0, 0])],
+    ["zip", bytes("PK", [0x03, 0x04, 0, 0])],
+    ["bzip2", bytes("BZh9", [0x31, 0x41, 0x59, 0x26, 0])],
+    ["xz", bytes([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00])],
+    ["zstd", bytes([0x28, 0xb5, 0x2f, 0xfd, 0])],
+  ])("a %s body is flagged packed whatever its name", async (_label, body) => {
+    expect((await tarParser.summarizeFile("data/blob.bin", body)).flags).toContain("packed");
+  });
+
+  test("text that starts like a container is not packed", async () => {
+    expect(
+      (await tarParser.summarizeFile("notes.txt", bytes("BZh9 is a bzip2 header\n"))).flags,
+    ).toEqual([]);
+  });
+
+  test("a zip directory record at the end flags the file whatever leads it", async () => {
+    const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0];
+    const record = await tarParser.summarizeFile("assets/logo.png", bytes(png, "PK", [3, 4], eocd));
+    expect(record.flags).toEqual(["zip-trailer", "binary"]);
+    expect(
+      tarParser.hasZipDirectoryTrailer(
+        bytes(
+          png,
+          eocd,
+          Array.from({ length: 0xffff }, () => 0x20),
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      tarParser.hasZipDirectoryTrailer(
+        bytes(
+          png,
+          eocd,
+          Array.from({ length: 0x10000 }, () => 0x20),
+        ),
+      ),
+    ).toBe(false);
+    expect(tarParser.hasZipDirectoryTrailer(bytes(png))).toBe(false);
+  });
+});
+
 describe("sniffNativeArtifact", () => {
   const { sniffNativeArtifact } = tarParser;
 
@@ -3356,6 +3496,11 @@ describe("rendered sandbox parser source", () => {
   const SANDBOX_EXPORT_NAMES = [
     "readString",
     "decodeText",
+    "isScriptSourcePath",
+    "isInertAssetPath",
+    "isPackedArchivePath",
+    "mayStartScript",
+    "decodeBodyText",
     "isPlainObject",
     "normalizeStringRecord",
     "normalizePeerDependenciesMeta",
@@ -3379,6 +3524,8 @@ describe("rendered sandbox parser source", () => {
     "shouldSkipTextSample",
     "clipTextSample",
     "sniffNativeArtifact",
+    "sniffPackedContainer",
+    "hasZipDirectoryTrailer",
     "createHeadCapture",
     "summarizeFile",
     "summarizeSkippedFile",

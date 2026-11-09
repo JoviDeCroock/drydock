@@ -449,7 +449,7 @@ describe("VS Code extension review adapter", () => {
     );
   });
 
-  test("raises medium risk when a changed VSIX tail was recorded hash-only", () => {
+  test("raises high risk when the VSIX main was recorded hash-only", () => {
     const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
       { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
     ]);
@@ -480,12 +480,17 @@ describe("VS Code extension review adapter", () => {
       },
     });
 
-    expect(review.risk).toBe("medium");
-    expect(review.ruleFindings).toContainEqual(
-      expect.objectContaining({
-        ruleId: "tar.suspicious-entry",
-        severity: "medium",
-      }),
+    // VS Code runs `main` on activation, so an unreadable main is unreviewed code.
+    expect(review.risk).toBe("high");
+    expect(review.ruleFindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ruleId: "tar.suspicious-entry", severity: "medium" }),
+        expect.objectContaining({
+          ruleId: "file.unsampled-entrypoint",
+          severity: "high",
+          file: "out/extension.js",
+        }),
+      ]),
     );
   });
 
