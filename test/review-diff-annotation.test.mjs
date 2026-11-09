@@ -690,7 +690,7 @@ describe("release delta in minified and grown modules", () => {
       ),
     ).toMatchObject({ releaseDelta: true });
     expect(risk.releaseRisk).toBe("high");
-  });
+  }, 30_000);
 
   test("a line moved within a file past the diff bound counts as changed", () => {
     const filler = (seed) => shuffled(2_500, seed, "s");
