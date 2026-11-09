@@ -355,6 +355,8 @@ describe("demotion needs provably static loads", () => {
     ["eval over a file read", `${read}eval(src);\n`],
     ["spawning node", "require('child_process').spawn('node', [p]);\n"],
     ["spawning argv[0]", "require('child_process').spawn(process.argv[0], [p]);\n"],
+    ["spawning argv0", "require('child_process').spawn(process.argv0, [p]);\n"],
+    ["node by another path", "require('child_process').execSync('/usr/bin/env node ' + p);\n"],
     ["process.dlopen", "process.dlopen(module, p);\n"],
   ];
 
@@ -416,6 +418,13 @@ describe("demotion needs provably static loads", () => {
     ],
     ["eval anywhere", "module.exports = (s) => eval(s);\n"],
     ["the vm builtin", "const vm = require('vm');\n"],
+    ["a computed key on process", "const k = Buffer.from(s, 'base64').toString();\nprocess[k];\n"],
+    ["Reflect.get on process", "Reflect.get(process, k);\n"],
+    [
+      "the AsyncFunction constructor",
+      "const AF = Object.getPrototypeOf(async function () {}).constructor;\n",
+    ],
+    ["an async arrow's constructor", "const AF = (async () => {}).constructor;\n"],
     ["a native addon", null],
   ])("%s disable demotion package-wide", async (_label, index) => {
     const staged = await parsed({

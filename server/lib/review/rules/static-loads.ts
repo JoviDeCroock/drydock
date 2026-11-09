@@ -17,9 +17,11 @@ import { codeViewsForScanning, normalizeCodeForScanning } from "./normalize";
 // `instanceof Function`), `x.constructor.constructor` or a constructor called
 // off a parenthesised value (`(function(){}).constructor(src)`), the vm/module/
 // worker_threads/repl/inspector/cluster builtins, a Worker, process.dlopen/
-// binding, `mainModule`, a computed key on `globalThis` or `global`, a native
-// addon, and with child_process: fork, execPath, argv[0] or a `node` command. Literal bracket keys and string concatenation
-// are folded first (`module['req'+'uire']` reads as `module.require`), so
+// binding, `mainModule`, a computed key or `Reflect.get` on `globalThis`,
+// `global` or `process`, the AsyncFunction/GeneratorFunction constructor, a
+// native addon, and with child_process: fork, execPath, argv0/argv[0] or a
+// command that runs `node` by any path. Literal bracket keys and string
+// concatenation are folded first (`module['req'+'uire']` reads as `module.require`), so
 // checked text is both as written and folded. A key computed at run time off
 // an alias of a global object is beyond this check.
 
@@ -29,13 +31,13 @@ const PYTHON_PATH = /\.pyw?$/i;
 
 const TOKEN = /(?<![\w$])(?:require|module|import)(?![\w$])/g;
 const DENIED =
-  /(?<![\w$])(?:eval|mainModule|dlopen|importScripts|runIn(?:This|New)?Context|compileFunction|SourceTextModule|createRequire|_linkedBinding)(?![\w$])|\bprocess\s*\.\s*binding\b|(?<![\w$])Worker\s*\(|\.\s*constructor\s*\.\s*constructor\b|\)\s*\.\s*constructor\s*\(|(?<![\w$.])(?:globalThis|global)\s*\[\s*(?!["'`])/g;
+  /(?<![\w$])(?:eval|mainModule|dlopen|importScripts|runIn(?:This|New)?Context|compileFunction|SourceTextModule|createRequire|_linkedBinding)(?![\w$])|\bprocess\s*\.\s*binding\b|(?<![\w$])Worker\s*\(|\.\s*constructor\s*\.\s*constructor\b|\)\s*\.\s*constructor\s*\(|(?<![\w$.])(?:globalThis|global|process)\s*\[\s*(?!["'`])|\bReflect\s*\.\s*get\s*\(\s*(?:globalThis|global|process|module)\b|\bgetPrototypeOf\s*\(\s*(?:async\b|function\s*\*)|(?:=>|\bfunction\s*\*?\s*\(\s*\))\s*\{\s*\}\s*\)\s*\.\s*constructor\b/g;
 const FUNCTION = /(?<![\w$])Function(?![\w$])/g;
 const DENIED_SPECIFIER =
   /(?:\bfrom|\bimport|\brequire)\s*\(?\s*(["'`])(?:node:)?(?:vm|module|worker_threads|repl|inspector|cluster)\1/;
 const CHILD_PROCESS = /["'`](?:node:)?child_process["'`]/;
 const NODE_RUN =
-  /(?<![\w$])fork\s*\(|\.\s*fork\s*\(|\bexecPath\b|\bargv\s*\[\s*0\s*\]|["'`]node(?:\.exe)?(?=["'`\s])/;
+  /(?<![\w$])fork\s*\(|\.\s*fork\s*\(|\bexecPath\b|\bargv0\b|\bargv\s*\[\s*0\s*\]|["'`](?:[^"'`\n]*[\s/\\])?node(?:\.exe)?(?=["'`\s])/;
 const PYTHON_DENIED =
   /(?<![\w.])(?:exec|eval|compile|__import__)\s*\(|\b(?:runpy|SourceFileLoader|zipimport)\b|\bimportlib\b(?!\s*\.\s*(?:metadata|resources)\b)|\bsys\s*\.\s*path\b/;
 

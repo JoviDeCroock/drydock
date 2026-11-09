@@ -40,10 +40,11 @@ const SPECIFIER_CALL =
 // Compile a string as module code. Only `compiled-file` when a file read sits
 // beside it; alone these are jsdom/vite-node style contexts.
 const CODE_COMPILER =
-  /\brunIn(?:This|New)?Context\s*\(|\bcompileFunction\s*\(|\bnew\s+(?:vm\s*\.\s*)?(?:Script|SourceTextModule)\s*\(|\._compile\s*\(|\b(?:Module|module\s*\.\s*constructor)\s*\.\s*_load\s*\(|\b(?:spawn|execFile|fork)(?:Sync)?\s*\(\s*process\s*\.\s*(?:execPath\b|argv\s*\[\s*0\s*\])/g;
-// A `node` command runs its script argument; read on the view with strings.
+  /\brunIn(?:This|New)?Context\s*\(|\bcompileFunction\s*\(|\bnew\s+(?:vm\s*\.\s*)?(?:Script|SourceTextModule)\s*\(|\._compile\s*\(|\b(?:Module|module\s*\.\s*constructor)\s*\.\s*_load\s*\(|\b(?:spawn|execFile|fork)(?:Sync)?\s*\(\s*process\s*\.\s*(?:execPath\b|argv0\b|argv\s*\[\s*0\s*\])/g;
+// A `node` command, by any path, runs its script argument; read on the view
+// with strings.
 const NODE_COMMAND =
-  /\b(?:spawn|execFile|exec|fork)(?:Sync)?\s*\(\s*["'`]node(?:\.exe)?(?=["'`\s])/g;
+  /\b(?:spawn|execFile|exec|fork)(?:Sync)?\s*\(\s*["'`](?:[^"'`\n]*[\s/\\])?node(?:\.exe)?(?=["'`\s])/g;
 // eval and the Function constructor are ordinary in bundles; only beside a
 // file read are they a loader.
 const EVALUATOR =
