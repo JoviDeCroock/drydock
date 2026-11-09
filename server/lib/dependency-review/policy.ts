@@ -1,5 +1,5 @@
 import type { PublicPackageDiff } from "../public-diff";
-import { isInertAssetPath } from "../tar-parser.js";
+import { isInertAssetPath, isPackedArchivePath } from "../tar-parser.js";
 import { combineRisk } from "../review";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "../review/rules/patterns";
 import type { FindingSeverity, RiskLevel } from "../review/types";
@@ -75,9 +75,14 @@ function isNative(entry: { path: string; flags: string[] }): boolean {
 
 function isUninspected(entry: { path: string; flags: string[] }): boolean {
   if (entry.flags.includes("content-skipped")) return true;
-  // A binary body the parser decoded (`control-bytes`) is read by the rules.
-  // An inert asset is read by none but run by no runtime either; anything else
-  // binary counts as uninspected. A native binary is its own hold reason.
+  // An archive or compressed body counts by name or content even when decoded:
+  // the rules read its bytes, never what it packs.
+  if (entry.flags.includes("packed") || entry.flags.includes("zip-trailer")) return true;
+  if (entry.flags.includes("binary") && isPackedArchivePath(entry.path)) return true;
+  // Any other binary body the parser decoded (`control-bytes`) is read by the
+  // rules. An inert asset is read by none but run by no runtime either;
+  // anything else binary counts as uninspected. A native binary is its own
+  // hold reason.
   if (entry.flags.includes("binary") && !entry.flags.includes("control-bytes")) {
     return !isNative(entry) && !isInertAssetPath(entry.path);
   }

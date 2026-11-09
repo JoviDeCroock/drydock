@@ -49,6 +49,7 @@ export const NEWLY_LOADED_EVIDENCE = "newly loaded: ";
 export function binaryFindings(ctx: RuleContext): Finding[] {
   const findings: Finding[] = [];
   const grade = loadGrader(ctx);
+  const zipImportNames = ctx.codePatternSet === "python" ? pythonZipImportText(ctx) : null;
 
   for (const file of ctx.files) {
     const changed = ctx.diffByPath.get(file.path)?.status;
@@ -134,6 +135,30 @@ export function binaryFindings(ctx: RuleContext): Finding[] {
           }),
         ),
       );
+    }
+    if (zipImportNames !== null && file.flags.includes("zip-trailer")) {
+      const named = zipImportNames.includes(basename(file.path));
+      const archiveName = isPackedArchivePath(file.path);
+      if (named || !archiveName) {
+        findings.push(
+          testScope(
+            isUnreachableTestFile(ctx, file.path),
+            false,
+            tag("fileEmbeddedZip", {
+              severity: named ? "high" : "medium",
+              file: file.path,
+              evidence: withSha256(
+                named
+                  ? "zip archive named by a .pth file or sys.path code"
+                  : "non-archive file ends in a zip directory record",
+                file.sha256,
+              ),
+              reason:
+                "Python imports modules from any zip on sys.path whatever its name or leading bytes, and the review does not unpack it",
+            }),
+          ),
+        );
+      }
     }
     if (native) {
       findings.push(
@@ -279,6 +304,29 @@ function loadGrader(ctx: RuleContext) {
 // code as written; any other codec (utf-7, utf-16, EBCDIC, double-byte sets
 // whose trail bytes include `\`) can make the bytes reviewers read differ
 // from the code that runs.
+// Text that can put a zip on sys.path: every `.pth` file, and the lines of
+// Python source that touch the import path. Lowercased for a basename search.
+const SYS_PATH_LINE = /sys\s*\.\s*path|zipimport|addsitedir|PYTHONPATH/;
+
+function pythonZipImportText(ctx: RuleContext): string {
+  const parts: string[] = [];
+  for (const file of ctx.files) {
+    if (!file.textSample || file.flags.includes("binary")) continue;
+    if (/\.pth$/i.test(file.path)) {
+      parts.push(file.textSample);
+    } else if (/\.pyw?$/i.test(file.path) && SYS_PATH_LINE.test(file.textSample)) {
+      for (const line of file.textSample.split("\n")) {
+        if (SYS_PATH_LINE.test(line)) parts.push(line);
+      }
+    }
+  }
+  return parts.join("\n").toLowerCase();
+}
+
+function basename(path: string): string {
+  return (path.replaceAll("\\", "/").split("/").at(-1) ?? "").toLowerCase();
+}
+
 const PYTHON_CODING_COOKIE = /^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)/;
 const PYTHON_SOURCE = /\.(?:pyw?|pth)$/i;
 const READS_AS_WRITTEN =

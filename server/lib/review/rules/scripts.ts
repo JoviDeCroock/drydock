@@ -17,6 +17,7 @@ import {
 } from "./patterns";
 import { firstJsonPropertyLine, loadScope, tag, testScope } from "./helpers";
 import { isLifecycleScriptFile, loadedAsCode as loadedAsCodeInPackage } from "./load-calls";
+import { dynamicLoaders, type DynamicLoader } from "./dynamic-loaders";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
 import {
   isBuildInfrastructurePath,
@@ -121,6 +122,10 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     );
   }
 
+  // A file loaded through a path nothing here spells out could be any file, so
+  // while such a loader ships, no file is graded as unloaded.
+  const loaders = dynamicLoaders(ctx);
+  let unprovenWithFindings = false;
   for (const file of ctx.files) {
     if (
       isDocumentationPath(file.path) ||
@@ -136,8 +141,11 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
     const minified = isMinifiedBundlePath(file.path);
     const loadable = minified || isLoadableDataPath(file.path);
     const loadedAsCode =
-      (loadable || isMarkupPath(file.path)) && loadedAsCodeInPackage(ctx, file.path);
+      (loadable || isMarkupPath(file.path)) &&
+      (loaders.length > 0 || loadedAsCodeInPackage(ctx, file.path));
     const loadUnproven = loadable && !loadedAsCode;
+    const reachedOnlyDynamically =
+      loaders.length > 0 && loadable && !loadedAsCodeInPackage(ctx, file.path);
     const firstFinding = findings.length;
 
     // Character references that spell code in a script-capable attribute are
@@ -455,9 +463,45 @@ export function scriptFindings(ctx: RuleContext): Finding[] {
       for (let i = firstFinding; i < findings.length; i++)
         findings[i] = loadScope(findings[i], steps);
     }
+    if (reachedOnlyDynamically && findings.length > firstFinding) unprovenWithFindings = true;
   }
 
+  for (const loader of loaders) {
+    const finding = dynamicLoadFinding(ctx, loader, unprovenWithFindings);
+    if (finding) findings.push(finding);
+  }
   return findings;
+}
+
+const DYNAMIC_LOAD_EVIDENCE: Record<DynamicLoader["kind"], string> = {
+  "computed-load": "loads a module or script from a computed path or source",
+  "compiled-file": "compiles a file it reads as module code",
+  "loader-hook": "hooks how modules are compiled",
+};
+
+// Fires on a file read compiled as code or a loader hook, or on any dynamic
+// load once some file nothing statically loads has findings. A bundle's
+// `require(x)` beside nothing worth reaching stays quiet. High only for a
+// loader this release introduced; release attribution follows the same call
+// (see diff-annotation). Python's loaders are already dynamic-evaluation
+// findings and only lift the grading.
+function dynamicLoadFinding(
+  ctx: RuleContext,
+  loader: DynamicLoader,
+  unprovenWithFindings: boolean,
+): Finding | null {
+  if (ctx.codePatternSet === "python") return null;
+  const strong = loader.kind !== "computed-load";
+  if (!strong && !unprovenWithFindings) return null;
+  return tag("codeDynamicLoad", {
+    severity: loader.introduced ? "high" : strong ? "medium" : "low",
+    file: loader.path,
+    line: loader.line,
+    evidence: `${changedPrefix(ctx, loader.path)}${DYNAMIC_LOAD_EVIDENCE[loader.kind]}`,
+    reason: unprovenWithFindings
+      ? "a dynamic load can run files nothing in the package names; they are graded as loaded"
+      : "a dynamic load can run files nothing in the package names",
+  });
 }
 
 // Match a capability category against the raw sample and, only if that misses,

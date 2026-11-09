@@ -60,6 +60,8 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.shouldSkipTextSample,
   tarParser.clipTextSample,
   tarParser.sniffNativeArtifact,
+  tarParser.sniffPackedContainer,
+  tarParser.hasZipDirectoryTrailer,
   tarParser.createHeadCapture,
   tarParser.summarizeFile,
   tarParser.summarizeSkippedFile,

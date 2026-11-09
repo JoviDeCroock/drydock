@@ -1031,10 +1031,11 @@ describe("review", () => {
       reviewEntrypoint(text, data).find(
         (finding) => finding.ruleId === "code.remote-shell" && finding.file === "data.map",
       )?.severity;
-    const calls = loadCallArgumentText(100_000);
-    // Scanned either way; only a load call naming it proves the full severity.
-    expect(remoteShell(calls)).toBe("medium");
-    expect(remoteShell(`${calls}require('./DATA.map');\n`)).toBe("critical");
+    // Scanned either way; a load call naming it proves the full severity, and
+    // the token soup is itself a computed require that could reach it.
+    expect(remoteShell("module.exports = 1;\n")).toBe("medium");
+    expect(remoteShell("module.exports = require('./DATA.map');\n")).toBe("critical");
+    expect(remoteShell(loadCallArgumentText(100_000))).toBe("critical");
   }, 60_000);
 
   test("looks for thousands of unlisted doc names in megabytes of near-miss code in linear time", () => {

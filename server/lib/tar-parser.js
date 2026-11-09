@@ -74,7 +74,9 @@ export function isInertAssetPath(path) {
 // Compressed containers: decoding them shows a regex nothing, but what they
 // pack was never inspected.
 export function isPackedArchivePath(path) {
-  return /\.(?:zip|gz|tgz|bz2|xz|zst|br|7z|rar|tar|jar|wasm)$/i.test(String(path || ""));
+  return /\.(?:zip|whl|egg|jar|war|ear|aar|apk|xpi|vsix|nupkg|crx|gz|tgz|bz2|xz|lz|lz4|lzma|zst|br|7z|rar|cab|tar|wasm)$/i.test(
+    String(path || ""),
+  );
 }
 
 // Whether a body's first byte could begin a script Node runs. False only for
@@ -984,6 +986,54 @@ export function sniffNativeArtifact(bytes) {
   return null;
 }
 
+// Compressed and archive containers by leading magic, whatever the name: the
+// rules read their bytes, but what they pack was never unpacked. Self-contained
+// for the sandbox (see sniffNativeArtifact).
+export function sniffPackedContainer(bytes) {
+  if (!bytes || bytes.byteLength < 4) return false;
+  const b0 = bytes[0];
+  const b1 = bytes[1];
+  const b2 = bytes[2];
+  const b3 = bytes[3];
+  if (b0 === 0x1f && b1 === 0x8b) return true; // gzip
+  if (b0 === 0x50 && b1 === 0x4b && b2 < 0x09 && b3 < 0x09) return true; // zip
+  if (b0 === 0x42 && b1 === 0x5a && b2 === 0x68 && b3 >= 0x31 && b3 <= 0x39) return true; // bzip2
+  if (b0 === 0xfd && b1 === 0x37 && b2 === 0x7a && b3 === 0x58) return true; // xz
+  if (b0 === 0x28 && b1 === 0xb5 && b2 === 0x2f && b3 === 0xfd) return true; // zstd
+  if (b0 === 0x37 && b1 === 0x7a && b2 === 0xbc && b3 === 0xaf) return true; // 7z
+  if (b0 === 0x52 && b1 === 0x61 && b2 === 0x72 && b3 === 0x21) return true; // rar
+  if (b0 === 0x4c && b1 === 0x5a && b2 === 0x49 && b3 === 0x50) return true; // lzip
+  if (b0 === 0x4d && b1 === 0x53 && b2 === 0x43 && b3 === 0x46) return true; // cab
+  // ustar, at its fixed header offset.
+  return (
+    bytes.byteLength > 262 &&
+    bytes[257] === 0x75 &&
+    bytes[258] === 0x73 &&
+    bytes[259] === 0x74 &&
+    bytes[260] === 0x61 &&
+    bytes[261] === 0x72
+  );
+}
+
+// A zip end-of-central-directory record where a reader looks for one: the last
+// 22 bytes plus at most a 64 KiB comment. Python's zipimport opens a zip from
+// its end, so such a file imports as a zip whatever bytes lead it.
+export function hasZipDirectoryTrailer(bytes) {
+  if (!bytes || bytes.byteLength < 22) return false;
+  const stop = Math.max(0, bytes.byteLength - 22 - 0xffff);
+  for (let i = bytes.byteLength - 22; i >= stop; i--) {
+    if (
+      bytes[i] === 0x50 &&
+      bytes[i + 1] === 0x4b &&
+      bytes[i + 2] === 0x05 &&
+      bytes[i + 3] === 0x06
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Retain the first `limit` bytes flowing through a discard sink so a
 // content-skipped body can still be magic-byte sniffed without buffering the
 // body. Must stay self-contained: serialized into the sandbox worker via
@@ -1010,6 +1060,7 @@ export async function summarizeFile(path, body, maxTextSampleChars = 0) {
   if (skipTextSample) flags.push("text-sample-skipped");
   const native = sniffNativeArtifact(body);
   if (native) flags.push("native-" + native);
+  if (hasZipDirectoryTrailer(body)) flags.push("zip-trailer");
   const hash = await sha256Hex(body);
   if (skipTextSample) {
     return {
@@ -1038,6 +1089,7 @@ export async function summarizeFile(path, body, maxTextSampleChars = 0) {
   const decoded = decodeBodyText(path, body);
   const text = decoded.text;
   flags.push(...decoded.flags);
+  if (decoded.flags.includes("binary") && sniffPackedContainer(body)) flags.push("packed");
   const limit = maxTextSampleChars > 0 && !isRetainedManifestPath(path) ? maxTextSampleChars : 0;
   const clipped = limit > 0 && text.length > limit ? clipTextSample(text, limit) : text;
   // Deliberately NOT the `truncated` flag the persistence layer adds to a

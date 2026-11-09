@@ -135,6 +135,8 @@ export function createStreamCursor(
 
 export function shouldSkipTextSample(path: string): boolean;
 export type NativeArtifactKind = "elf" | "macho" | "pe" | "wasm";
+export function sniffPackedContainer(bytes: Uint8Array | null | undefined): boolean;
+export function hasZipDirectoryTrailer(bytes: Uint8Array | null | undefined): boolean;
 export function sniffNativeArtifact(
   bytes: Uint8Array | null | undefined,
 ): NativeArtifactKind | null;

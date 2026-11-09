@@ -261,7 +261,7 @@ describe("control bytes in source files", () => {
       ["blob.dat", ["native-elf", "binary"], false],
       ["addon.node", ["binary"], false],
       ["logo.png", ["binary"], false],
-      ["bundle.tgz", ["binary"], false],
+      ["bundle.tgz", ["binary", "packed"], false],
       ["spinner.gif", ["binary", "control-bytes"], true],
       ["addon.js", ["native-elf", "control-bytes"], true],
       ["loader.js", ["native-pe", "control-bytes"], true],
@@ -2891,6 +2891,55 @@ describe("readTar limits and malformed archives", () => {
   });
 });
 
+describe("archive container flags", () => {
+  const bytes = (...parts) =>
+    new Uint8Array(
+      parts.flatMap((part) => (typeof part === "string" ? [...Buffer.from(part, "latin1")] : part)),
+    );
+  const eocd = [0x50, 0x4b, 0x05, 0x06, ...Array.from({ length: 18 }, () => 0)];
+
+  test.each([
+    ["gzip", bytes([0x1f, 0x8b, 0x08, 0x00, 0, 0])],
+    ["zip", bytes("PK", [0x03, 0x04, 0, 0])],
+    ["bzip2", bytes("BZh9", [0x31, 0x41, 0x59, 0x26, 0])],
+    ["xz", bytes([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00])],
+    ["zstd", bytes([0x28, 0xb5, 0x2f, 0xfd, 0])],
+  ])("a %s body is flagged packed whatever its name", async (_label, body) => {
+    expect((await tarParser.summarizeFile("data/blob.bin", body)).flags).toContain("packed");
+  });
+
+  test("text that starts like a container is not packed", async () => {
+    expect(
+      (await tarParser.summarizeFile("notes.txt", bytes("BZh9 is a bzip2 header\n"))).flags,
+    ).toEqual([]);
+  });
+
+  test("a zip directory record at the end flags the file whatever leads it", async () => {
+    const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0];
+    const record = await tarParser.summarizeFile("assets/logo.png", bytes(png, "PK", [3, 4], eocd));
+    expect(record.flags).toEqual(["zip-trailer", "binary"]);
+    expect(
+      tarParser.hasZipDirectoryTrailer(
+        bytes(
+          png,
+          eocd,
+          Array.from({ length: 0xffff }, () => 0x20),
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      tarParser.hasZipDirectoryTrailer(
+        bytes(
+          png,
+          eocd,
+          Array.from({ length: 0x10000 }, () => 0x20),
+        ),
+      ),
+    ).toBe(false);
+    expect(tarParser.hasZipDirectoryTrailer(bytes(png))).toBe(false);
+  });
+});
+
 describe("sniffNativeArtifact", () => {
   const { sniffNativeArtifact } = tarParser;
 
@@ -3475,6 +3524,8 @@ describe("rendered sandbox parser source", () => {
     "shouldSkipTextSample",
     "clipTextSample",
     "sniffNativeArtifact",
+    "sniffPackedContainer",
+    "hasZipDirectoryTrailer",
     "createHeadCapture",
     "summarizeFile",
     "summarizeSkippedFile",

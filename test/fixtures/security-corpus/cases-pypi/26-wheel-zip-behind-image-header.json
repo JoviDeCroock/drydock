@@ -1,0 +1,79 @@
+{
+  "id": "pypi-wheel-zip-behind-image-header",
+  "title": "wheel puts an image that ends in a zip archive on sys.path",
+  "category": "obfuscated-dropper",
+  "intent": "The icon starts with a PNG header, so it reads as an opaque image, but it ends in a zip directory record. A .pth path line puts it on sys.path, and Python's zipimport loads modules from it on every interpreter start. file.embedded-zip flags the hidden archive high because a .pth file names it.",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0-py3-none-any.whl",
+      "files": [
+        {
+          "path": "demo_package-1.2.0.dist-info/METADATA",
+          "size": 64,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/WHEEL",
+          "size": 60,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "flags": [],
+          "textSample": "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+        },
+        {
+          "path": "demo_package-1.2.0.dist-info/RECORD",
+          "size": 200,
+          "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "flags": [],
+          "textSample": "demo_package/__init__.py,,\ndemo_package/assets/icon.png,,\ndemo_package-assets.pth,,\ndemo_package-1.2.0.dist-info/METADATA,,\ndemo_package-1.2.0.dist-info/WHEEL,,\ndemo_package-1.2.0.dist-info/RECORD,,\n"
+        },
+        {
+          "path": "demo_package/__init__.py",
+          "size": 24,
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "flags": [],
+          "textSample": "__version__ = \"1.2.0\"\n"
+        },
+        {
+          "path": "demo_package/assets/icon.png",
+          "size": 4096,
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "flags": ["zip-trailer", "binary"]
+        },
+        {
+          "path": "demo_package-assets.pth",
+          "size": 29,
+          "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+          "flags": [],
+          "textSample": "demo_package/assets/icon.png\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "file.embedded-zip",
+      "severity": "high",
+      "file": "wheel/py3-none-any/demo_package/assets/icon.png"
+    },
+    {
+      "ruleId": "pypi.pth-execution",
+      "severity": "medium",
+      "file": "dist/demo_package-1.2.0-py3-none-any.whl/demo_package-assets.pth"
+    }
+  ]
+}

@@ -157,6 +157,8 @@ make it required.
    `success` is what auto-merge acts on, and GitHub treats a `neutral` check
    as passing. Turn them on to hold instead. Images, fonts, and
    media are binary but inert and are not counted. Source maps aren't either.
+   Archives and compressed bodies always count, by name or by leading magic,
+   as does any file ending in a zip directory: the rules never unpack them.
    A file listing GitHub cut short (over 3,000 files, or fewer listed than the
    PR's `changed_files`) holds the review under `holdOnUnreviewed`, because a
    lockfile may have gone unread. A coverage notice on the diff counts as

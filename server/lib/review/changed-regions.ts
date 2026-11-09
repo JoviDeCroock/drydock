@@ -1,4 +1,4 @@
-import { diffChars, diffLines } from "diff";
+import { diffChars, diffLines, type ChangeObject } from "diff";
 
 // Where a modified file changed, for release-delta classification.
 //
@@ -18,8 +18,10 @@ interface ChangedSpan {
 }
 
 export interface ChangedRegions {
-  /** Staged line numbers (1-based) changed as whole lines. */
-  lines: Set<number>;
+  /** Staged line numbers (1-based) changed as whole lines; every line past the diff budget. */
+  lines: ReadonlySet<number>;
+  /** The line diff ran out of budget, so the whole staged text counts as changed. */
+  whole: boolean;
   /** Long staged lines whose change was narrowed to `spans`. */
   refinedLines: Set<number>;
   /** Staged character ranges that changed inside `refinedLines`. */
@@ -38,9 +40,133 @@ const SINGLE_SPAN_CHARS = 4096;
 const REFINE_MAX_CHARS = 256 * 1024;
 const REFINE_MAX_EDITS = 64;
 
-export function changedRegions(previous: string, staged: string): ChangedRegions {
-  const regions: ChangedRegions = { lines: new Set(), refinedLines: new Set(), spans: [] };
-  const parts = diffLines(previous, staged);
+// Myers line diffing costs about D² for D edits (measured on jsdiff 9: ~1 s at
+// D = 4,500 whatever the line count or how many lines repeat), so a release
+// that rewrites a many-line file costs its line count squared. Each diff gets
+// an edit bound whose square stays under LINE_DIFF_FILE_WORK, and one
+// annotation pass shares LINE_DIFF_TOTAL_WORK across files so many such files
+// cannot add up. Past either bound the whole file counts as changed, which can
+// only keep a finding in the release. A rebuilt bundle with a few thousand
+// changed hunks still diffs.
+const LINE_DIFF_FILE_WORK = 2_000 * 2_000;
+const LINE_DIFF_TOTAL_WORK = 5 * LINE_DIFF_FILE_WORK;
+
+export interface LineDiffBudget {
+  remaining: number;
+}
+
+export function lineDiffBudget(): LineDiffBudget {
+  return { remaining: LINE_DIFF_TOTAL_WORK };
+}
+
+// The staged line numbers of a file whose diff ran out of budget: all of them,
+// without materializing a set the size of the file.
+export class EveryLine implements ReadonlySet<number> {
+  constructor(readonly size: number) {}
+  has(line: number): boolean {
+    return Number.isInteger(line) && line >= 1 && line <= this.size;
+  }
+  *keys(): SetIterator<number> {
+    for (let line = 1; line <= this.size; line += 1) yield line;
+  }
+  values(): SetIterator<number> {
+    return this.keys();
+  }
+  *entries(): SetIterator<[number, number]> {
+    for (const line of this.keys()) yield [line, line];
+  }
+  [Symbol.iterator](): SetIterator<number> {
+    return this.keys();
+  }
+  forEach(callback: (value: number, key: number, set: ReadonlySet<number>) => void): void {
+    for (const line of this.keys()) callback(line, line, this);
+  }
+}
+
+// `diffLines(previous, staged)` with the common leading and trailing lines
+// split off first (linear, and most edits leave most of a file alone), then
+// the middle diffed under the budget. Null when the middle needs more edits
+// than the budget allows.
+export function boundedDiffLines(
+  previous: string,
+  staged: string,
+  budget: LineDiffBudget = lineDiffBudget(),
+): ChangeObject<string>[] | null {
+  const shorter = Math.min(previous.length, staged.length);
+  let prefix = 0;
+  while (prefix < shorter && previous.charCodeAt(prefix) === staged.charCodeAt(prefix)) prefix += 1;
+  if (prefix === previous.length && prefix === staged.length) {
+    return previous ? [unchangedPart(previous)] : [];
+  }
+  prefix = previous.lastIndexOf("\n", prefix - 1) + 1;
+  let suffix = 0;
+  while (
+    suffix < shorter - prefix &&
+    previous.charCodeAt(previous.length - 1 - suffix) ===
+      staged.charCodeAt(staged.length - 1 - suffix)
+  ) {
+    suffix += 1;
+  }
+  // Keep the suffix to whole lines on both sides.
+  while (
+    suffix > 0 &&
+    !(
+      isLineStart(previous, previous.length - suffix) && isLineStart(staged, staged.length - suffix)
+    )
+  ) {
+    suffix -= 1;
+  }
+  const previousMiddle = previous.slice(prefix, previous.length - suffix);
+  const stagedMiddle = staged.slice(prefix, staged.length - suffix);
+  const maxEditLength = Math.floor(Math.sqrt(Math.min(LINE_DIFF_FILE_WORK, budget.remaining)));
+  if (maxEditLength < 1) return null;
+  const middle = diffLines(previousMiddle, stagedMiddle, { maxEditLength });
+  if (!middle) {
+    budget.remaining -= maxEditLength * maxEditLength;
+    return null;
+  }
+  let edits = 0;
+  for (const part of middle) if (part.added || part.removed) edits += part.count ?? 1;
+  budget.remaining -= Math.max(1, edits * edits);
+  const parts: ChangeObject<string>[] = [];
+  if (prefix) parts.push(unchangedPart(previous.slice(0, prefix)));
+  parts.push(...middle);
+  if (suffix) parts.push(unchangedPart(previous.slice(previous.length - suffix)));
+  return parts;
+}
+
+function unchangedPart(value: string): ChangeObject<string> {
+  return { value, count: countLines(value), added: false, removed: false };
+}
+
+function isLineStart(text: string, offset: number): boolean {
+  return offset === 0 || text.charCodeAt(offset - 1) === 10;
+}
+
+function countLines(text: string): number {
+  let lines = 0;
+  for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) {
+    lines += 1;
+  }
+  return text && !text.endsWith("\n") ? lines + 1 : lines;
+}
+
+export function changedRegions(
+  previous: string,
+  staged: string,
+  budget?: LineDiffBudget,
+): ChangedRegions {
+  const parts = boundedDiffLines(previous, staged, budget);
+  if (!parts) {
+    return {
+      lines: new EveryLine(countLines(staged)),
+      whole: true,
+      refinedLines: new Set(),
+      spans: [],
+    };
+  }
+  const lines = new Set<number>();
+  const regions: ChangedRegions = { lines, whole: false, refinedLines: new Set(), spans: [] };
   let stagedOffset = 0;
   let stagedLine = 0;
   for (let index = 0; index < parts.length; index += 1) {
@@ -66,7 +192,7 @@ export function changedRegions(previous: string, staged: string): ChangedRegions
     } else {
       for (const _line of partLines) {
         stagedLine += 1;
-        regions.lines.add(stagedLine);
+        lines.add(stagedLine);
       }
     }
     stagedOffset += part.value.length;
@@ -83,6 +209,7 @@ export function patternsTouchChangedRegions(
   patterns: RegExp[],
 ): boolean {
   if (!patterns.length) return false;
+  if (regions.whole) return anyMatch(patterns, text);
   if (regions.lines.size) {
     const lines = splitLines(text, regions);
     for (const lineNumber of regions.lines) {
@@ -103,6 +230,7 @@ export function patternsTouchChangedRegions(
 // The text within reach of every changed line and span, for callers that
 // look for literals (hosts) rather than rule patterns.
 export function changedRegionTexts(text: string, regions: ChangedRegions): string[] {
+  if (regions.whole) return [text];
   const texts: string[] = [];
   if (regions.lines.size) {
     const lines = splitLines(text, regions);

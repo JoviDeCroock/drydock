@@ -16,9 +16,53 @@ describe("changed staged line numbers", () => {
     ["first\nsecond\n", "first\nchanged\n", [2]],
     ["first\nremoved\nlast\n", "first\nlast\n", []],
     ["first", "first\nadded", [1, 2]],
+    ["a\nb\nc\nd\n", "a\nB\nc\nd\n", [2]],
+    ["a\nb\nc", "a\nb\nc\nd", [3, 4]],
+    ["x\na\nb\n", "a\nb\n", []],
   ])("maps staged-side additions and replacements", (previous, staged, expected) => {
     expect([...changedStagedLines(previous, staged)]).toEqual(expected);
   });
+
+  test("a rewrite past the diff budget counts every staged line as changed", () => {
+    const lines = (seed) =>
+      Array.from({ length: 40_000 }, (_, index) => `line ${(index * seed) % 39_989}`).join("\n");
+    const started = performance.now();
+    const changed = changedStagedLines(lines(7), lines(11));
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(changed.size).toBe(40_000);
+    expect(changed.has(1) && changed.has(40_000) && !changed.has(40_001)).toBe(true);
+  });
+});
+
+describe("release-delta annotation stays bounded", () => {
+  test("several rewritten 1 MiB files with many findings annotate in bounded time", () => {
+    // Every line differs between versions: Myers' line diff would cost each
+    // file its line count squared without the edit budget.
+    const body = (seed) =>
+      Array.from(
+        { length: 33_000 },
+        (_, index) => `v${index}=fetch(process.env.K${(index * seed) % 7_919});`,
+      ).join("\n");
+    const previous = [];
+    const staged = [];
+    for (const index of [1, 2, 3, 4]) {
+      const path = `lib/bundle${index}.min.js`;
+      previous.push({ path, size: 1, sha256: `p${index}`, flags: [], textSample: body(7 + index) });
+      staged.push({ path, size: 1, sha256: `s${index}`, flags: [], textSample: body(13 + index) });
+    }
+    expect(staged[0].textSample.length).toBeGreaterThan(1024 * 1024);
+    const diff = createPackageDiff(previous, staged);
+    const findings = deterministicFindings(staged, diff, undefined, { previousFiles: previous });
+    expect(findings.length).toBeGreaterThanOrEqual(4);
+    const started = performance.now();
+    const annotated = annotateFindingsWithDiffStatus(findings, diff, {
+      previousFiles: previous,
+      stagedFiles: staged,
+    });
+    expect(performance.now() - started).toBeLessThan(20_000);
+    // Past the budget the whole file counts as changed: conservative.
+    expect(annotated.every((finding) => finding.releaseDelta)).toBe(true);
+  }, 120_000);
 });
 
 describe("review diff annotation", () => {

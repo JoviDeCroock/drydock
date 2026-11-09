@@ -1,5 +1,5 @@
 import { isRootGypPath, normalizeStringRecord } from "../../tar-parser.js";
-import { diffLines } from "diff";
+import { boundedDiffLines, EveryLine } from "../changed-regions";
 import type { DiffEntry } from "../diff";
 import type { PackageJsonSummary } from "../serialize";
 import type { CodePatternSet, FileRecord } from "../types";
@@ -109,10 +109,13 @@ export function buildRuleContext(
   };
 }
 
-export function changedStagedLines(previous: string, staged: string): Set<number> {
+// Every staged line when the diff runs past its budget (see boundedDiffLines).
+export function changedStagedLines(previous: string, staged: string): ReadonlySet<number> {
+  const parts = boundedDiffLines(previous, staged);
+  if (!parts) return new EveryLine(splitComparableLines(staged).length);
   const changed = new Set<number>();
   let stagedLine = 0;
-  for (const part of diffLines(previous, staged)) {
+  for (const part of parts) {
     const lines = splitComparableLines(part.value);
     if (part.added) {
       for (const _line of lines) {

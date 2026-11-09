@@ -28,6 +28,8 @@ import {
 } from "./rules/reachability";
 import {
   changedRegions,
+  lineDiffBudget,
+  type LineDiffBudget,
   changedRegionTexts,
   patternsTouchChangedRegions,
   type ChangedRegions,
@@ -111,8 +113,16 @@ function annotateFindings<
     predecessors,
   );
   const changesCache = new Map<string, FileChanges | null>();
+  const diffBudget = lineDiffBudget();
   const changesFor = (path: string) =>
-    fileChangesForPath(path, comparedByPath, stagedByPath, changesCache, options.codePatternSet);
+    fileChangesForPath(
+      path,
+      comparedByPath,
+      stagedByPath,
+      changesCache,
+      options.codePatternSet,
+      diffBudget,
+    );
   // Both readers of the baseline finding set ask only about modified files, so
   // the rules re-run over those and the manifests that give them context.
   // Fewer baseline files can only mean fewer baseline fingerprints, which
@@ -144,6 +154,7 @@ function annotateFindings<
       diffStatus,
       releaseDelta:
         lifecycleCommandReleaseDelta(finding, previousByPath, stagedByPath) ??
+        dynamicLoadReleaseDelta(finding) ??
         (isReleaseScopedFinding(finding) ||
           isNewlyEnabledImplicitNodeGypFinding(finding, previousByPath, stagedByPath) ||
           ((CAPABILITY_RULE_IDS.has(finding.ruleId ?? "") ||
@@ -376,6 +387,17 @@ function isReleaseScopedFinding(finding: {
   );
 }
 
+// The rule compares the loader with the file's previous version and grades a
+// new one high, so the line diff (a rebuilt bundle changes every line) is not
+// asked again.
+function dynamicLoadReleaseDelta(finding: {
+  ruleId?: string | null;
+  severity?: string | null;
+}): boolean | null {
+  if (finding.ruleId !== DETERMINISTIC_RULE_IDS.codeDynamicLoad) return null;
+  return finding.severity === "high";
+}
+
 function isNewlyEnabledImplicitNodeGypFinding(
   finding: { ruleId?: string | null },
   previousByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
@@ -442,6 +464,7 @@ function fileChangesForPath(
   stagedByPath: Map<string, Pick<FileRecord, "path" | "textSample" | "flags">>,
   cache: Map<string, FileChanges | null>,
   codePatternSet: CodePatternSet | undefined,
+  budget: LineDiffBudget,
 ): FileChanges | null {
   if (cache.has(path)) return cache.get(path) ?? null;
   const previous = previousByPath.get(path);
@@ -470,7 +493,7 @@ function fileChangesForPath(
       return view;
     },
     stagedText,
-    raw: changedRegions(previousText, stagedText),
+    raw: changedRegions(previousText, stagedText, budget),
     folded: () => {
       if (folded !== undefined) return folded;
       if (!foldable) return (folded = null);
@@ -479,7 +502,7 @@ function fileChangesForPath(
       folded =
         text === stagedText && previousFolded === previousText
           ? null
-          : { text, regions: changedRegions(previousFolded, text) };
+          : { text, regions: changedRegions(previousFolded, text, budget) };
       return folded;
     },
   };
@@ -495,7 +518,9 @@ function findingPatternMatchesChanges(
   // The propagation and prompt-injection matchers are line-oriented; they see
   // every changed line, narrowed ones included, as before.
   if (isPropagationFinding(finding) || isPromptInjectionFinding(finding)) {
-    const changedLines = new Set([...changes.raw.lines, ...changes.raw.refinedLines]);
+    const changedLines = changes.raw.whole
+      ? changes.raw.lines
+      : new Set([...changes.raw.lines, ...changes.raw.refinedLines]);
     if (isPropagationFinding(finding)) {
       return hasMatchingCodeLine(changes.stagedText, patterns, changedLines);
     }

@@ -99,7 +99,9 @@ The first 64 bytes of every skipped body are kept and sniffed (`sniffNativeArtif
 
 Source maps (`*.map`) alone are hashed but never sampled (`text-sample-skipped`, `shouldSkipTextSample`); minified bundles are sampled like any file. `decodeBodyText` decides the rest. Node runs whatever a manifest or `require()` names, whatever its extension, so an extension alone never decides whether a body is decoded: a media or archive name with a scriptable first byte may be a polyglot and is decoded. Interpreters ignore control bytes in comments and strings, so a byte-level binary verdict would hide code from the rules.
 
-A `binary` body's decoded text never leaves memory: `withoutOpaqueSample` drops it from stored scan files, the public diff payload and the compare cache, and display, line diffing, AI evidence and the injection screen treat `binary` as opaque. Where the package loads such a body, `file.control-bytes` reports it; a loaded file with no sample at all (source map, hash-only) raises `file.unsampled-entrypoint` ([rules](./detection-rule-behavior.md)).
+A `binary` body's decoded text never leaves memory: `withoutOpaqueSample` drops it from stored scan files, the public diff payload, the compare cache and the AI reviewer's input, and display, line diffing and the injection screen treat `binary` as opaque. Where the package loads such a body, `file.control-bytes` reports it; a loaded file with no sample at all (source map, hash-only) raises `file.unsampled-entrypoint` ([rules](./detection-rule-behavior.md)).
+
+Two container flags ride beside the classification. `packed` marks a `binary` body whose leading magic is a compressed or archive container (gzip, zip, bzip2, xz, zstd, 7z, rar, lzip, cab, ustar; `sniffPackedContainer`), whatever its name. `zip-trailer` marks any sampled body with a zip end-of-central-directory record in its last 64 KiB + 22 bytes (`hasZipDirectoryTrailer`), where Python's zipimport looks for one. Dependency review counts both, and any `binary` archive-named body, as uninspected; `file.embedded-zip` reads `zip-trailer` for PyPI.
 
 ## Archive digests (`digestArchiveStream`)
 

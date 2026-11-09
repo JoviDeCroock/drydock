@@ -138,6 +138,25 @@ describe("extractBumpEvidence", () => {
     expect(evidence.uninspectedFiles).toBe(3);
   });
 
+  test("decoded archives and compressed bodies stay uninspected by name or content", () => {
+    const decoded = ["binary", "control-bytes"];
+    const evidence = extractBumpEvidence(
+      diffWith({
+        diff: [
+          { path: "vendor/lib.zip", status: "added", flags: decoded },
+          { path: "vendor/tool.jar", status: "added", flags: decoded },
+          { path: "wheels/dep.whl", status: "added", flags: decoded },
+          { path: "eggs/dep.egg", status: "added", flags: decoded },
+          { path: "data/dump.bz2", status: "added", flags: decoded },
+          { path: "data/blob.bin", status: "added", flags: [...decoded, "packed"] },
+          { path: "assets/logo.png", status: "added", flags: ["zip-trailer", "binary"] },
+          { path: "lib/table.dat", status: "added", flags: decoded },
+        ],
+      }),
+    );
+    expect(evidence.uninspectedFiles).toBe(7);
+  });
+
   test("a coverage notice from the diff holds like an uninspected file", () => {
     const evidence = extractBumpEvidence(
       diffWith({ notices: ["2 other wheels of 1.0.1 were not inspected."] }),

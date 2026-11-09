@@ -26,6 +26,7 @@ import { errorMessage } from "../platform/errors";
 import { AI_GATEWAY_ID, AI_GATEWAY_POLICY_HEADERS } from "./gateway";
 import { recordProductEvent } from "../analytics";
 import { durationMsSince } from "../platform/observability";
+import { withoutOpaqueSample } from "../sample-retention";
 
 export type { AiReview, AiReviewResult, SelectiveAiReviewOptions } from "./types";
 export { displayedAiResult } from "./types";
@@ -117,11 +118,20 @@ export async function runSelectiveAiReview(
 export async function analyzeWithAi(
   env: Cloudflare.Env,
   model: string | readonly string[],
-  options: SelectiveAiReviewOptions,
+  reviewed: SelectiveAiReviewOptions,
   // Test seam: inject a language model to exercise the agent loop without a
   // live Workers AI binding. Production always builds the Workers AI model.
   languageModelOverride?: LanguageModelOverride,
 ): Promise<AiReviewResult> {
+  // A binary body's decoded text is for the deterministic rules. The injection
+  // screen skips binary files, so the reviewer must not read them either.
+  const options: SelectiveAiReviewOptions = {
+    ...reviewed,
+    files: reviewed.files.map(withoutOpaqueSample),
+    ...(reviewed.previousFiles
+      ? { previousFiles: reviewed.previousFiles.map(withoutOpaqueSample) }
+      : {}),
+  };
   const models = typeof model === "string" ? [model] : [...model];
   const index = buildEvidenceIndex(options);
   const payload = buildAiReviewPayload(options, index);
