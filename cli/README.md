@@ -24,20 +24,27 @@ pnpm run drydock whoami
 
 The key is read from `DRYDOCK_API_KEY` only, never from a flag, so it stays out of shell history and process listings. `DRYDOCK_URL` (or `--url`) points the CLI at a self-hosted deployment; plain `http` is accepted only for `localhost`.
 
+## Pre-install admission
+
+With a pinned, preinstalled CLI, run `drydock admit package-lock.json --baseline trusted-package-lock.json --output NEW_FILE` before permitting an npm install. This binds the actual sibling package.json to the active lock and checks the entire modern npm graph, holds first-time/unsupported packages and incomplete reviews, and binds both reviewed archives to strong lockfile integrity. Exit `0` admits under the fixed policy; `3` holds. Every other nonzero exit fails admission. Output is an unsigned JSON receipt, and an existing output path is refused.
+
+The trusted caller enforces ordering and installs the same immutable active lockfile and manifest from their directory with `npm --prefix "$PWD" --workspaces=false ci --ignore-scripts`. This command invokes no installer and executes no dependency code. Read the [supported boundary, baseline trust, Safe Chain composition, policy, and failure remedies](../docs/npm-admission.md) before making it a required CI check.
+
 ## Commands
 
-| Command                                       | What it does                                                                                      |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `whoami`                                      | The key's organization, name, expiry, and access (`read`, `scan`, or `decide_staged`)             |
-| `scans list [--filter F] [--limit N]`         | Reviews, newest first (`undecided` by default; `all`, `publish`, `no_publish`, …)                 |
-| `scans get <review-id>`                       | One review and its findings                                                                       |
-| `scans wait <review-id> [--fail-on RISK]`     | Poll until the review completes (`--timeout`, `--interval` in seconds)                            |
-| `report <review-id> [--output FILE]`          | The byte-stable `drydock.report.v2` export                                                        |
-| `receipt <review-id> [--output FILE]`         | The Release Receipt, refused unless it matches the `x-drydock-receipt-sha256` digest sent with it |
-| `releases <package> [--ecosystem E]`          | One package's reviews in the organization                                                         |
-| `gate <review-id>`                            | The GitHub workflow gate a review belongs to                                                      |
-| `diff <package> <from> <to> [--fail-on RISK]` | Diff two published releases through the anonymous public diff; needs no key                       |
-| `file <package> <from> <to> <path>`           | Bounded before/after file evidence through the anonymous public diff; needs no key                |
+| Command                                                         | What it does                                                                                      |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `admit <package-lock.json> --baseline FILE [--output NEW_FILE]` | Byte-bound npm pre-install admission against an explicitly trusted complete graph                 |
+| `whoami`                                                        | The key's organization, name, expiry, and access (`read`, `scan`, or `decide_staged`)             |
+| `scans list [--filter F] [--limit N]`                           | Reviews, newest first (`undecided` by default; `all`, `publish`, `no_publish`, …)                 |
+| `scans get <review-id>`                                         | One review and its findings                                                                       |
+| `scans wait <review-id> [--fail-on RISK]`                       | Poll until the review completes (`--timeout`, `--interval` in seconds)                            |
+| `report <review-id> [--output FILE]`                            | The byte-stable `drydock.report.v2` export                                                        |
+| `receipt <review-id> [--output FILE]`                           | The Release Receipt, refused unless it matches the `x-drydock-receipt-sha256` digest sent with it |
+| `releases <package> [--ecosystem E]`                            | One package's reviews in the organization                                                         |
+| `gate <review-id>`                                              | The GitHub workflow gate a review belongs to                                                      |
+| `diff <package> <from> <to> [--fail-on RISK]`                   | Diff two published releases through the anonymous public diff; needs no key                       |
+| `file <package> <from> <to> <path>`                             | Bounded before/after file evidence through the anonymous public diff; needs no key                |
 
 ### Starting reviews
 
@@ -75,7 +82,7 @@ On Windows, `approve` runs npm only through an `npm.cmd` it finds on `PATH`, nev
 
 `--fail-on RISK` (`low`, `medium`, `high`, `critical`) compares the release risk: the findings the release introduces, not ones already in the previous version. That is the risk the workflow gate decides on. A review with no graded release delta (the previous version was not compared, or the review predates the split) is compared on its overall risk, and a risk the CLI does not recognize counts as at the threshold. Every wait retries rate limits (honouring `Retry-After`), server errors, and network errors with backoff until `--timeout`.
 
-Exit codes: `0` success, `1` request or review failed (`approve` also exits `1` when you decide nothing), `2` usage error, `3` release risk at or above `--fail-on`, `4` a wait timed out before the review finished (or before its status could be read), `5` `approve` recorded the decision in Drydock but npm did not complete it.
+Exit codes: `0` success, `1` request or review failed (`approve` also exits `1` when you decide nothing), `2` usage error, `3` release risk at or above `--fail-on` or admission held, `4` a wait timed out before the review finished (or before its status could be read), `5` `approve` recorded the decision in Drydock but npm did not complete it.
 
 ## In CI
 

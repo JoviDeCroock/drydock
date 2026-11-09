@@ -45,6 +45,8 @@ export interface PublicDiffAttestation {
 export interface PublicDiffAcquiredSources {
   from: PublicDiffAcquiredSide;
   to: PublicDiffAcquiredSide;
+  /** Digest of the baseline bytes the parser actually consumed. */
+  fromDigests?: ArchiveDigests;
   /**
    * The `to` archive's digests, when it came from the registry rather than a
    * mutable preview. A published-pair review persists them so its decision can

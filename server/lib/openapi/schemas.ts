@@ -349,6 +349,18 @@ export const PublicPackageDiff = z
     risk: z.looseObject({ artifactRisk: z.string(), releaseRisk: z.string() }),
     textSamplesOmitted: z.boolean(),
     notices: z.array(z.string()),
+    artifactDigests: z
+      .looseObject({
+        from: z
+          .looseObject({ sha1: z.string().nullable(), sha256: z.string().nullable() })
+          .nullable(),
+        to: z
+          .looseObject({ sha1: z.string().nullable(), sha256: z.string().nullable() })
+          .nullable(),
+      })
+      .nullable()
+      .optional(),
+    analysisVersion: z.string().nullable().optional(),
     cachedAt: isoDateTime,
     reviewUrl: z.url().describe("Canonical human review page for this release pair"),
   })

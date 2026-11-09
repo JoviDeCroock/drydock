@@ -11,6 +11,7 @@ Read one row, not the folder. User-facing guide: `src/pages/Docs/index.tsx` (kee
 | Know which tests a change needs | [`release-safety.md`](./release-safety.md) | `pnpm run verify:file <path>` |
 | Find a command | [`tooling.md`](./tooling.md) |  |
 | Understand the system | [`architecture.md`](./architecture.md) | [`security-model.md`](./security-model.md) |
+| Follow protection from install to publication | [`prevention-flow.md`](./prevention-flow.md) | [`protection-health.md`](./protection-health.md), [`../cli/README.md`](../cli/README.md) |
 | Touch auth, an anonymous route, an API key route, or egress | [`security-model.md`](./security-model.md) | [`api-keys.md`](./api-keys.md), [`two-factor-auth.md`](./two-factor-auth.md), [`organization-members.md`](./organization-members.md) |
 | Change UI | [`design.md`](./design.md) | [`ui.md`](./ui.md), the Signals skill named in `tooling.md`, `verify-live` skill |
 | Add or change a detection rule | [`security-detection-corpus.md`](./security-detection-corpus.md) | [`detection-eval.md`](./detection-eval.md), `add-detection-rule` skill |
@@ -52,6 +53,9 @@ Canonical npm gate workflow: [`examples/npm-workflow-gate.yml`](./examples/npm-w
 | [`api-keys.md`](./api-keys.md) | organization API keys: route allowlists by access level, auth rules, storage, lifecycle; [`openapi.json`](./openapi.json) contract |
 | [`dependency-pr-diff-links.md`](./dependency-pr-diff-links.md) | Renovate preset + Dependabot/Renovate PR comment workflow (public contract) |
 | [`dependency-review.md`](./dependency-review.md) | GitHub App check on dependency-update PRs: hold policy, approval authority, `dependency-review` rollout flag, limits |
+| [`prevention-flow.md`](./prevention-flow.md) | installation admission, merge review, publication gate, and configuration health boundaries |
+| [`npm-admission.md`](./npm-admission.md) | digest-bound pre-install npm admission, trusted baseline, supported graphs, and installer ordering |
+| [`protection-health.md`](./protection-health.md) | scheduled and manual checks of mapped GitHub protection, freshness, and unknown evidence |
 | [`two-factor-auth.md`](./two-factor-auth.md) | 2FA enrollment, sign-in challenge, step-up |
 | [`organization-members.md`](./organization-members.md) | roles, invitations |
 | [`audit-log.md`](./audit-log.md) | organization audit log |

@@ -20,6 +20,7 @@ import { cn } from "../../../components/cn";
 import { MonoDetail, MonoLabel, Muted } from "../../../components/Typography";
 import { ReleaseTargetForm } from "./ReleaseTargetForm";
 import { PublisherSetup } from "../../../features/publisher-setup/PublisherSetup";
+import { ProtectionHealth } from "../../../features/protection-health/ProtectionHealth";
 import { OPERATOR_SETUP_DOCS } from "./settings-links";
 
 export function GithubAppSection({
@@ -165,6 +166,7 @@ export function GithubAppSection({
               </SettingsCardBody>
             )}
           </div>
+          {releaseTargets.length ? <ProtectionHealth targets={targets} /> : null}
         </>
       )}
     </CollapsibleCard>

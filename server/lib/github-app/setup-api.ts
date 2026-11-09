@@ -106,7 +106,21 @@ export async function createSetupClient(
   fullName: string,
   write = false,
   repositoryEvidenceOnly = false,
+  readAdministration = false,
+  readDeadlineMs?: number,
 ) {
+  const readBudget = () => {
+    if (readDeadlineMs === undefined) return {};
+    const remaining = readDeadlineMs - Date.now();
+    if (remaining <= 0)
+      throw new PublisherSetupError(
+        "github_unavailable",
+        "GitHub protection checks reached their time budget.",
+        502,
+      );
+    return { attempts: 1, timeoutMs: Math.min(15_000, remaining) };
+  };
+  const bodyDeadline = () => Math.min(Date.now() + 15_000, readDeadlineMs ?? Infinity);
   const parsed = parseRepositoryFullName(fullName);
   if (!parsed)
     throw new PublisherSetupError("invalid_input", "Choose a repository in owner/repository form.");
@@ -114,14 +128,17 @@ export async function createSetupClient(
   const jwt = await generateGithubAppJwt(config);
   const permissions = write
     ? { contents: "write", pull_requests: "write", workflows: "write" }
-    : repositoryEvidenceOnly
-      ? { contents: "read" }
-      : { contents: "read", actions: "read" };
+    : readAdministration
+      ? { contents: "read", actions: "read", administration: "read" }
+      : repositoryEvidenceOnly
+        ? { contents: "read" }
+        : { contents: "read", actions: "read" };
   // Minting has no repository side effect, so transient failures retry like reads; each
   // agent turn mints a token and a single GitHub blip would otherwise end the job.
   const tokenResponse = await reliableFetch(
     `https://api.github.com/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
     {
+      ...readBudget(),
       method: "POST",
       redirect: "manual",
       headers: githubHeaders(jwt, { "Content-Type": "application/json" }),
@@ -147,7 +164,7 @@ export async function createSetupClient(
   }
   const tokenBody = await readBoundedJson(tokenResponse, {
     maxBytes: 12_000,
-    deadlineMs: Date.now() + 15_000,
+    deadlineMs: bodyDeadline(),
   });
   if (!isRecord(tokenBody) || typeof tokenBody.token !== "string")
     throw new PublisherSetupError(
@@ -157,6 +174,7 @@ export async function createSetupClient(
     );
   const token = tokenBody.token;
   const repositoryResponse = await reliableFetch(`https://api.github.com${path}`, {
+    ...readBudget(),
     redirect: "manual",
     headers: githubHeaders(token),
   });
@@ -170,7 +188,7 @@ export async function createSetupClient(
   }
   const metadata = await readBoundedJson(repositoryResponse, {
     maxBytes: 40_000,
-    deadlineMs: Date.now() + 15_000,
+    deadlineMs: bodyDeadline(),
   });
   if (
     !isRecord(metadata) ||
@@ -213,6 +231,7 @@ export async function createSetupClient(
     async request(suffix: string, init: RequestInit = {}, allowMissing = false): Promise<unknown> {
       const response = await reliableFetch(`https://api.github.com${path}${suffix}`, {
         ...init,
+        ...readBudget(),
         redirect: "manual",
         headers: githubHeaders(token, { "Content-Type": "application/json" }),
       });
@@ -232,7 +251,7 @@ export async function createSetupClient(
       }
       const data = await readBoundedJson(response, {
         maxBytes: 250_000,
-        deadlineMs: Date.now() + 15_000,
+        deadlineMs: bodyDeadline(),
       });
       if (data === null)
         throw new PublisherSetupError(
@@ -385,7 +404,11 @@ async function setupCommitTree(client: SetupGithubClient, revision: string): Pro
   return setupGithubSha(commit.tree.sha);
 }
 
-async function readRegularSetupFile(client: SetupGithubClient, path: string, revision: string) {
+export async function readRegularSetupFile(
+  client: SetupGithubClient,
+  path: string,
+  revision: string,
+) {
   if (!validSetupFilePath(path) || !validSetupSha(revision))
     throw new PublisherSetupError(
       "proposal_invalid",

@@ -1,5 +1,6 @@
 // @ts-check
 import { parseArguments } from "./args.mjs";
+import { admit } from "./admission.mjs";
 import { approve } from "./approve.mjs";
 import { CliError, createClient, pathSegment, requireApiKey, resolveBaseUrl } from "./client.mjs";
 import {
@@ -50,6 +51,8 @@ Commands:
   releases <package>              One package's reviews in the organization
       [--ecosystem npm|pypi|vscode|atpm] [--limit N] [--cursor C]
   gate <review-id>                The GitHub workflow gate a review belongs to
+  admit <package-lock.json> --baseline <trusted-package-lock.json> [--output NEW_FILE]
+                          Pre-install admission of the entire locked npm graph
   diff <package> <from> <to>      Diff two published releases (no API key needed)
       [--ecosystem npm|pypi|atpm] [--fail-on RISK]
   file <package> <from> <to> <path>  Inspect bounded before/after file samples (no key)
@@ -78,7 +81,7 @@ findings the release introduces, as the workflow gate does. Every wait retries
 rate limits, server errors, and network errors until --timeout.
 
 Exit codes: 0 success, 1 request or review failed (or approve recorded no
-decision), 2 usage error, 3 release risk at or above --fail-on, 4 a wait timed
+decision), 2 usage error, 3 release risk at or above --fail-on (or admission held), 4 a wait timed
 out before the review finished (or before its status could be read), 5 approve
 recorded the decision in Drydock but npm did not complete it.
 `;
@@ -101,6 +104,8 @@ const PUBLIC_DIFF_ECOSYSTEMS = ["npm", "pypi", "atpm"];
  * @property {typeof fetch} fetch
  * @property {(text: string) => void} stdout
  * @property {(text: string) => void} stderr
+ * @property {(path: string) => Promise<string>} [readFile] bounded local lockfile read
+ * @property {(path: string, data: string) => Promise<void>} [writeNewFile] refuses existing files
  * @property {(path: string, data: string) => Promise<void>} writeFile
  * @property {(ms: number) => Promise<void>} sleep
  * @property {() => number} now
@@ -210,6 +215,7 @@ function resolveCommand(positionals) {
     receipt: { run: (ctx) => download(ctx, "release-receipt.json"), options: ["output"] },
     releases: { run: releases, options: ["ecosystem", "limit", "cursor"] },
     gate: { run: gate, options: [] },
+    admit: { run: admit, options: ["baseline", "output"], anonymous: true },
     diff: { run: diff, options: ["ecosystem", "fail-on"], anonymous: true },
     file: { run: file, options: ["ecosystem"], anonymous: true },
     approve: {

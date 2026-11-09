@@ -1,3 +1,4 @@
+import { sweepProtectionHealth } from "./lib/github-app/protection-health-job";
 import { prunePublisherSetupJobs } from "./db/publisher-setup-jobs";
 import { personalOrganizationId } from "./lib/auth/ownership";
 import { createDb } from "./db/client";
@@ -248,6 +249,13 @@ export async function scheduled(
     });
   }
   await runPublicationMonitorCron(env);
+  try {
+    await sweepProtectionHealth(env);
+  } catch {
+    emitOperationalEvent("warn", "github_app.protection_health.cron_failed", {
+      reason: "health_sweep_unavailable",
+    });
+  }
   try {
     await prunePublisherSetupJobs(createDb(env.DB), env.ARTIFACTS);
   } catch {

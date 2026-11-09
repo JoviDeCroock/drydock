@@ -6,6 +6,19 @@ export { HOLD_REASON_TEXT, UNREVIEWED_TEXT } from "../../../server/lib/dependenc
 
 type PolicySwitch = Exclude<keyof DependencyReviewPolicy, "holdAtReleaseRisk">;
 
+export const POLICY_PROFILES = [
+  { value: "capability", label: "Capability changes" },
+  { value: "prevention", label: "Prevention" },
+] as const;
+
+export const POLICY_PROFILE_DETAIL = {
+  capability:
+    "Holds install scripts, native binaries, added dependencies and high release risk. New packages and missing inspection evidence can pass.",
+  prevention:
+    "Also holds new packages, updates without a verdict and files Drydock could not inspect. Private registries, large PRs and unread platform artifacts can wait for approval or a smaller update.",
+  custom: "Uses the individual hold rules below.",
+};
+
 /** One settings checkbox per policy switch, phrased to finish "Hold an update that…". */
 export const POLICY_SWITCHES: ReadonlyArray<{ key: PolicySwitch; label: string; hint?: string }> = [
   { key: "holdOnInstallScripts", label: "adds or changes an install script" },

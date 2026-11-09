@@ -2,7 +2,7 @@
 
 Trust boundaries, anonymous surfaces, credential and egress rules, and auth posture for Drydock. **Authority:** enforced. **Owner:** `server/index.ts` (route order), `server/lib/sandbox.ts` (egress), `server/lib/auth/index.ts` (sessions).
 
-Package bytes are evidence; credentials stay outside the sandbox; humans authorize releases.
+Packages stay inert; credentials stay isolated; humans decide. [Flow](./prevention-flow.md).
 
 ## At a glance
 

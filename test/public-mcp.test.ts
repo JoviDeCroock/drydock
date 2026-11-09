@@ -82,6 +82,11 @@ const pairPayload = {
   provenance: [{ label: "Source", value: "https://example.com/demo", detail: "Unverified claim" }],
   attestation: { status: "not-evaluated", reason: "No attestation available" },
   displayName: "Demo.Pkg",
+  artifactDigests: {
+    from: { sha1: null, sha256: "a".repeat(64) },
+    to: { sha1: null, sha256: "b".repeat(64) },
+  },
+  analysisVersion: "pypi:test:rules=test:risk=1",
   cachedAt: "2026-10-15T10:00:00.000Z",
   reviewUrl: "https://drydock.example/diff/pypi/demo-pkg/1.0.0/1.1.0",
 };
@@ -137,6 +142,8 @@ describe("anonymous public MCP tools", () => {
       "reviewUrl",
     ]);
     expect(structured).toMatchObject({
+      artifactDigests: pairPayload.artifactDigests,
+      analysisVersion: pairPayload.analysisVersion,
       risk: pairPayload.risk,
       findings: pairPayload.findings,
       notices: pairPayload.notices,

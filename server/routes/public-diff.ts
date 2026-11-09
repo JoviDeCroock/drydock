@@ -355,6 +355,8 @@ publicDiffRoutes.get("/", async (c) => {
       provenance: payload.provenance ?? [],
       attestation: payload.attestation ?? null,
       displayName: payload.displayName ?? null,
+      artifactDigests: payload.artifactDigests ?? null,
+      analysisVersion: payload.analysisVersion ?? null,
       cachedAt: payload.cachedAt,
       // The site's own path helper, so API clients link the URL the site
       // renders instead of re-deriving its encoding.

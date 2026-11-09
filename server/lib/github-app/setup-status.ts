@@ -1,10 +1,10 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 import type { AppDb } from "../../db/client";
 import { githubWorkflowGates, scans } from "../../db/schema";
-import { isRecord } from "../platform/guards";
 import type { GithubAppConfig, SupportedEcosystem } from "./config";
 import { listReleaseTargetsForOrganization } from "./persistence";
-import { PublisherSetupError, type SetupGithubClient } from "./setup-api";
+import type { SetupGithubClient } from "./setup-api";
+import { readEnvironmentProtection } from "./protection-health";
 import { SETUP_ARTIFACT_NAMES, type PublisherSetupStatus } from "./setup-types";
 
 export async function publisherSetupStatus(
@@ -26,47 +26,8 @@ export async function publisherSetupStatus(
       target.artifactName === SETUP_ARTIFACT_NAMES[ecosystem],
   );
   const targetMapped = Boolean(selectedTarget);
-  const environmentData = await client.request(
-    `/environments/${encodeURIComponent(environment)}`,
-    {},
-    true,
-  );
-  const environmentExists = environmentData !== null;
-  let protectionEnabled = false;
-  let administratorsCanBypass: boolean | null = null;
-  if (environmentExists) {
-    if (!isRecord(environmentData))
-      throw new PublisherSetupError(
-        "github_unavailable",
-        "GitHub returned invalid environment metadata.",
-        502,
-      );
-    administratorsCanBypass =
-      typeof environmentData.can_admins_bypass === "boolean"
-        ? environmentData.can_admins_bypass
-        : null;
-    const rules = await client.request(
-      `/environments/${encodeURIComponent(environment)}/deployment_protection_rules`,
-    );
-    if (
-      !isRecord(rules) ||
-      !Array.isArray(rules.custom_deployment_protection_rules) ||
-      typeof rules.total_count !== "number" ||
-      rules.total_count > rules.custom_deployment_protection_rules.length
-    )
-      throw new PublisherSetupError(
-        "github_unavailable",
-        "GitHub did not return the complete environment protection configuration.",
-        502,
-      );
-    protectionEnabled = rules.custom_deployment_protection_rules.some(
-      (rule) =>
-        isRecord(rule) &&
-        rule.enabled === true &&
-        isRecord(rule.app) &&
-        String(rule.app.id) === config.appId,
-    );
-  }
+  const { environmentExists, protectionEnabled, administratorsCanBypass } =
+    await readEnvironmentProtection(client, environment, config.appId);
   const scope = and(
     eq(githubWorkflowGates.organizationId, organizationId),
     eq(githubWorkflowGates.installationRowId, installationRowId),

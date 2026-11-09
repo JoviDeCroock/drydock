@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import type { DependencyReviewCoverage } from "../../server/db/dependency-reviews";
 import type { BumpEvidence, ReviewedBump } from "../../server/lib/dependency-review/types";
+import type { ProtectionHealthTarget } from "../../server/lib/github-app/protection-health-types";
 
 const ORG = "org-deps";
 const SCREENSHOTS = ".context/e2e-artifacts/dependency-review";
@@ -142,6 +143,144 @@ test("dependency review settings save the hold policy", async ({ page }) => {
     },
   ]);
   expect(errors).toEqual([]);
+});
+
+test("Prevention is an explicit draft, saves coverage holds, and preserves Custom policies", async ({
+  page,
+}) => {
+  const writes: unknown[] = [];
+  await installMocks(page, writes, { enabled: true });
+  await page.goto("/dashboard/settings?tab=integrations#dependency-review");
+  const section = page.locator("#dependency-review");
+  const profile = section.getByLabel("Policy profile");
+  await expect(profile).toHaveValue("capability");
+  await profile.selectOption("prevention");
+  await expect(section.getByText(/Private registries, large PRs/)).toBeVisible();
+  await expect(section.getByRole("checkbox", { name: /has no Drydock verdict/ })).toBeChecked();
+  await expect(
+    section.getByRole("checkbox", { name: /changes files or artifacts Drydock could not read/ }),
+  ).toBeChecked();
+  await expect(section.getByRole("checkbox", { name: /is a package the PR adds/ })).toBeChecked();
+  expect(writes).toEqual([]);
+  await section.getByRole("button", { name: "Discard changes" }).click();
+  await expect(profile).toHaveValue("capability");
+  await profile.selectOption("prevention");
+  await section.getByRole("button", { name: "Save dependency review" }).click();
+  await expect(section.getByText("Saved.")).toBeVisible();
+  expect(writes).toEqual([
+    {
+      enabled: true,
+      policy: {
+        ...POLICY,
+        holdOnNewPackages: true,
+        holdOnUnreviewed: true,
+        holdOnUninspectedFiles: true,
+      },
+      extraBotLogins: [],
+    },
+  ]);
+  await page.reload();
+  await expect(profile).toHaveValue("prevention");
+  await section.getByLabel("Or reaches release risk").selectOption("critical");
+  await expect(profile).toHaveValue("custom");
+  await section.getByRole("button", { name: "Save dependency review" }).click();
+  await expect(section.getByText("Saved.")).toBeVisible();
+  await page.reload();
+  await expect(profile).toHaveValue("custom");
+  await section.screenshot({ path: `${SCREENSHOTS}/prevention-profile.png` });
+});
+
+test("protection health names stale, failing and fresh scoped evidence", async ({ page }) => {
+  const errors = watchErrors(page);
+  const now = "2026-11-08T12:00:00.000Z";
+  await page.clock.install({ time: new Date(now) });
+  const target: ProtectionHealthTarget = {
+    releaseTargetId: "target-health",
+    repositoryFullName: "acme/web",
+    environment: "production",
+    status: "protected",
+    checkedAt: "2026-11-08T10:00:00.000Z",
+    stale: true,
+    defaultBranch: "main",
+    checks: [
+      {
+        id: "dependency-check",
+        label: "Required dependency check",
+        status: "passed",
+        detail: "Previously verified.",
+      },
+    ],
+    scope: "mapped_environment_and_default_branch",
+  };
+  let refreshCount = 0;
+  await installMocks(page, [], {
+    healthTargets: [target],
+    refreshHealth: () => ({
+      ...target,
+      stale: false,
+      checkedAt: now,
+      status: ++refreshCount === 1 ? "at_risk" : "protected",
+      checks: [
+        {
+          id: "dependency-check",
+          label: "Required dependency check",
+          status: refreshCount === 1 ? "failed" : "passed",
+          detail:
+            refreshCount === 1
+              ? "Require the Drydock check from the Drydock App."
+              : "The mapped controls are configured.",
+        },
+      ],
+    }),
+  });
+  await page.goto("/dashboard/settings?tab=integrations#github-app");
+  const health = page.getByRole("region", { name: "Protection health" });
+  await expect(health.getByText("Evidence stale", { exact: true })).toBeVisible();
+  await expect(health.getByText("Configured controls verified", { exact: true })).toHaveCount(0);
+  await expect(health.getByText(/does not verify other branches/)).toBeVisible();
+  await health.getByRole("button", { name: "Check now" }).click();
+  await expect(health.getByText("Needs attention", { exact: true })).toBeVisible();
+  await health.getByText("View protection checks").click();
+  await expect(health.getByText("Require the Drydock check from the Drydock App.")).toBeVisible();
+  await health.getByRole("button", { name: "Check now" }).click();
+  await expect(health.getByText("Configured controls verified", { exact: true })).toBeVisible();
+  await health.screenshot({ path: `${SCREENSHOTS}/protection-health.png` });
+  await page.clock.fastForward(3_600_000);
+  await expect(health.getByText("Evidence stale", { exact: true })).toBeVisible();
+  await expect(health.getByText("Configured controls verified", { exact: true })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("members can see unknown protection evidence without a refresh action", async ({ page }) => {
+  await installMocks(page, [], {
+    healthCanRefresh: false,
+    healthTargets: [
+      {
+        releaseTargetId: "target-unknown",
+        repositoryFullName: "acme/web",
+        environment: "production",
+        status: "unknown",
+        checkedAt: null,
+        stale: false,
+        defaultBranch: null,
+        checks: [
+          {
+            id: "permissions",
+            label: "GitHub evidence",
+            status: "unknown",
+            detail: "GitHub permissions could not be verified.",
+          },
+        ],
+        scope: "mapped_environment_and_default_branch",
+      },
+    ],
+  });
+  await page.goto("/dashboard/settings?tab=integrations#github-app");
+  const health = page.getByRole("region", { name: "Protection health" });
+  await expect(health.getByText("Not verified", { exact: true })).toBeVisible();
+  await expect(health.getByRole("button", { name: "Check now" })).toHaveCount(0);
+  await health.getByText("View protection checks").click();
+  await expect(health.getByText("GitHub permissions could not be verified.")).toBeVisible();
 });
 
 test("dependency review detail lists each bump's verdict as text", async ({ page }) => {
@@ -440,6 +579,9 @@ async function installMocks(
     bumps = (): ReviewedBump[] => BUMPS,
     coverage = (): DependencyReviewCoverage => COVERAGE,
     newerReviewId = null as string | null,
+    healthTargets = [] as ProtectionHealthTarget[],
+    healthCanRefresh = true,
+    refreshHealth = null as (() => ProtectionHealthTarget) | null,
   } = {},
 ) {
   let settings = { enabled, policy: POLICY, extraBotLogins: [] as string[] };
@@ -450,7 +592,17 @@ async function installMocks(
       "/api/v1/npm-connection": { connection: null },
       "/api/v1/github-app/config": { configured: true, appSlug: "drydock" },
       "/api/v1/github-app/installations": { installations: [] },
-      "/api/v1/github-app/release-targets": { releaseTargets: [] },
+      "/api/v1/github-app/release-targets": {
+        releaseTargets: healthTargets.map((target) => ({
+          id: target.releaseTargetId,
+          installationRowId: "inst-1",
+          repositoryFullName: target.repositoryFullName,
+          repositoryId: 42,
+          environment: target.environment,
+          ecosystem: null,
+          artifactName: null,
+        })),
+      },
       "/api/v1/slack": { configured: false, connection: null },
       [`/api/v1/organizations/${ORG}/notification-recipients`]: { recipients: [] },
       "/api/v1/organizations/members": { members: [] },
@@ -484,6 +636,22 @@ async function installMocks(
     }
     if (path in empty) {
       await fulfillJson(route, empty[path]);
+      return;
+    }
+    if (path === "/api/v1/github-app/protection-health") {
+      await fulfillJson(route, { targets: healthTargets, canRefresh: healthCanRefresh });
+      return;
+    }
+    if (
+      path.startsWith("/api/v1/github-app/protection-health/") &&
+      path.endsWith("/refresh") &&
+      refreshHealth
+    ) {
+      const target = refreshHealth();
+      healthTargets = healthTargets.map((row) =>
+        row.releaseTargetId === target.releaseTargetId ? target : row,
+      );
+      await fulfillJson(route, { target });
       return;
     }
     if (path === "/api/v1/dependency-reviews") {

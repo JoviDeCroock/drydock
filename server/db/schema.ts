@@ -615,6 +615,24 @@ export const githubReleaseTargets = sqliteTable(
   }),
 );
 
+export const protectionHealth = sqliteTable(
+  "protection_health",
+  {
+    releaseTargetId: text("release_target_id")
+      .primaryKey()
+      .references(() => githubReleaseTargets.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    snapshotJson: text("snapshot_json"),
+    checkedAt: integer("checked_at", { mode: "timestamp_ms" }),
+    nextCheckAt: integer("next_check_at", { mode: "timestamp_ms" }).notNull(),
+    leaseId: text("lease_id"),
+    leaseUntil: integer("lease_until", { mode: "timestamp_ms" }),
+  },
+  (table) => ({ dueIdx: index("protection_health_due_idx").on(table.nextCheckAt) }),
+);
+
 export const githubWorkflowGates = sqliteTable(
   "github_workflow_gates",
   {

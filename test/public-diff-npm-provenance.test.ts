@@ -34,6 +34,8 @@ function archive(version: string) {
     ],
     packageJson,
     suspiciousEntries: [],
+    archiveSha1: (version === "1.0.1" ? "b" : "a").repeat(40),
+    archiveSha256: (version === "1.0.1" ? "b" : "a").repeat(64),
   };
 }
 
@@ -183,6 +185,11 @@ describe("npm public diff provenance continuity", () => {
 
     const settled = await ttlFor(false, false);
     expect(settled.payload.cacheExpiresAt).toBeUndefined();
+    expect(settled.payload.artifactDigests).toEqual({
+      from: { sha1: "a".repeat(40), sha256: "a".repeat(64) },
+      to: { sha1: "b".repeat(40), sha256: "b".repeat(64) },
+    });
+    expect(settled.payload.analysisVersion).toMatch(/^npm:v6:rules=.+:risk=1$/);
     expect(settled.kvTtl).toBe(60 * 60 * 24 * 30);
 
     // A packument cached before the provenance marker was projected.

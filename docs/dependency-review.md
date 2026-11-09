@@ -148,8 +148,22 @@ make it required.
    | `holdOnUnreviewed`       | off     | could not be diffed at all                                                          |
    | `holdOnNewPackages`      | off     | is a package with no previous version in the lockfile                               |
 
-   Only the three capability holds default on, so a new organization's checks
-   hold for what a worm needs and little else. `holdOnUninspectedFiles` and
+   **Capability changes** names the existing default policy: the three capability
+   holds above and the high release-risk threshold. **Prevention** adds
+   `holdOnNewPackages`, `holdOnUnreviewed`, and `holdOnUninspectedFiles`. It waits
+   for a decision when there is no baseline, no verdict, or incomplete inspection;
+   private registries, large pull requests and unread platform artifacts can
+   therefore need approval or a smaller update. Neither profile turns on
+   `holdOnNewBinCommands`.
+
+   Choosing a profile edits the settings draft; **Save dependency review** applies
+   it. Existing organizations keep their saved policy, and new organizations keep
+   the default until an owner or admin deliberately changes it. Changing any
+   individual rule or risk threshold away from both profiles shows **Custom**.
+   Profiles are expanded into the existing policy fields, not a separate saved
+   setting (`server/lib/dependency-review/policy-profiles.ts`).
+
+   With Capability changes, `holdOnUninspectedFiles` and
    `holdOnUnreviewed` are off by default, so "we didn't look" passes: a
    `success` is what auto-merge acts on, and GitHub treats a `neutral` check
    as passing. Turn them on to hold instead. Images, fonts, and
@@ -249,6 +263,13 @@ as its source. Auto-merge (Dependabot
 `auto-merge`, Renovate `automerge` with `platformAutomerge`) then merges clean
 bumps and waits on held ones.
 
+Settings → GitHub App → **Protection health** reads saved evidence for each mapped
+release target's Environment and default branch. It checks the required dependency
+check's App source alongside publish protection, and distinguishes failed, unknown
+and stale evidence. See [the prevention flow](./prevention-flow.md). This scope
+does not cover other branches, all repositories in an installation, registry
+settings or interactive publishing paths.
+
 ## Data and limits
 
 - Review detail responses include `coverage.unreadLockfiles` and
@@ -283,6 +304,10 @@ bumps and waits on held ones.
   `product-analytics.md`.
 
 ## Not covered
+
+- First execution on a developer machine or in CI. A pull-request check can hold
+  merging after an install has already run. Use an install-time protection tool
+  for that boundary; a green Drydock check does not establish runtime containment.
 
 - Lockfiles other than `package-lock.json`/`npm-shrinkwrap.json`,
   `pnpm-lock.yaml`, `yarn.lock`, `uv.lock`, and requirements files
