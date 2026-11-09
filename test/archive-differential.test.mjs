@@ -324,7 +324,38 @@ const NPM_CASES = [
   },
 ];
 
+// A header node-tar skips without its body, followed by a block node-tar reads
+// as a decoy sized to swallow the next header; CPython reads the swallowed one.
+// The decoy is named `0` where CPython must also parse it as sparse-map data.
+function sdistAfterSkippedHeader(skipped, decoyName = "demo-1.0/decoy.txt") {
+  return gz(
+    concatBytes([
+      tarEntriesOnly(
+        buildTar([PYPROJECT, { name: "demo-1.0/setup.py", body: "print('reviewed')\n" }]),
+      ),
+      skipped,
+      rawHeader({ name: decoyName, size: 1024 }),
+      buildTar([{ name: "demo-1.0/setup.py", body: "print('other')\n" }]),
+    ]),
+  );
+}
+
 const PYPI_CASES = [
+  {
+    name: "sdist sparse record with a linkname and extension flag",
+    kind: "sdist",
+    bytes: () => {
+      const sparse = rawHeader({ name: "demo-1.0/s", type: "S", linkname: "x" });
+      sparse[482] = 1;
+      return sdistAfterSkippedHeader(sealTarHeader(sparse, 0), "0");
+    },
+  },
+  {
+    name: "sdist regular file with a linkname and a body",
+    kind: "sdist",
+    bytes: () =>
+      sdistAfterSkippedHeader(rawHeader({ name: "demo-1.0/readme.txt", size: 512, linkname: "x" })),
+  },
   {
     name: "plain sdist",
     kind: "sdist",

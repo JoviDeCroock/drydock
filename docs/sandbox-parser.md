@@ -34,7 +34,7 @@ Bulk demotions (budget spent, tier full) produce one `retention-tier` suspicious
 | Shape | Behavior |
 | --- | --- |
 | End of archive | two consecutive all-zero blocks |
-| Bad header checksum, undecodable base-256 field | block skipped without consuming its body |
+| Header npm's reader rejects (bad checksum, undecodable base-256 field, empty path, linkname the type does not allow) | npm: block skipped without consuming its body, disclosed archive-wide; parses pip may read (PyPI, gate) fail closed, since CPython consumes the body or ends the archive there |
 | PAX `size` | overrides the header size |
 | `X` / `N` / `K` extended headers, 1 MiB metadata limit | as node-tar |
 | Typeflag `7` | regular file |
@@ -69,7 +69,7 @@ Bulk demotions (budget spent, tier full) produce one `retention-tier` suspicious
 | --- | --- |
 | Same entry set | yes |
 | Consumer refuses the archive, or Drydock's parse throws | yes (fail closed) |
-| Every disagreement covered by an archive-level `parser-differential`, a per-path `parser-differential`/`duplicate`/`unicode-confusable`/non-directory `non-regular`, or bytes Drydock reviewed under a disclosed path | yes |
+| Every disagreement covered by a disclosure the review raises at high severity (in the ecosystem's dialect) that names its path, or by bytes Drydock reviewed under such a path; an archive-level `parser-differential` covers everything except, for pip, a `body` or `missing` disagreement | yes |
 | Only extra reviewed files the consumer could not write (a file already at a parent path, or a populated directory at the same path) | yes: the reviewer sees more than is installed |
 | Anything else | no; the message names each `missing`/`extra`/`body`/`type` path |
 

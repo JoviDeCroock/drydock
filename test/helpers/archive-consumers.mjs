@@ -19,6 +19,7 @@ import { Parser as NpmElevenParser } from "tar-npm11";
 import yauzl from "yauzl";
 import { preparePyPiArtifact } from "../../server/lib/ecosystems/pypi/acquire";
 import { normalizeVsixFiles } from "../../server/lib/ecosystems/vscode/manifest";
+import { tarSuspiciousEntryFindings } from "../../server/lib/review";
 import {
   boundedByteStream,
   readTarStream,
@@ -96,7 +97,12 @@ export async function drydockSdist(gzBytes) {
     files: result.files,
     suspiciousEntries: result.suspicious,
   });
-  return { ok: true, files: prepared.files, suspicious: prepared.suspiciousEntries ?? [] };
+  return {
+    ok: true,
+    dialect: "pypi",
+    files: prepared.files,
+    suspicious: prepared.suspiciousEntries ?? [],
+  };
 }
 
 export async function drydockWheel(zipBytes) {
@@ -109,7 +115,7 @@ export async function drydockWheel(zipBytes) {
       MAX_ENTRIES,
       0,
     );
-    return { ok: true, files: parsed.files, suspicious: parsed.suspicious };
+    return { ok: true, dialect: "pypi", files: parsed.files, suspicious: parsed.suspicious };
   } catch (error) {
     return failClosed(error);
   }
@@ -411,12 +417,12 @@ export function pipInstallBatch(jobs) {
 
 // --- agreement ---------------------------------------------------------------
 
-// Disclosures that tell the reviewer the installed set depends on the reader.
-// A directory record (`typeflag 5`) is info-level evidence and does not count.
-function isDisclosure(entry) {
-  if (entry.kind === "parser-differential" || entry.kind === "duplicate") return true;
-  if (entry.kind === "unicode-confusable") return true;
-  return entry.kind === "non-regular" && !entry.detail.startsWith("typeflag 5 ");
+// Only a disclosure the review raises at high severity or above tells the
+// reviewer the installed set depends on the reader, so only those count. The
+// severity comes from the production rule, in the ecosystem's dialect.
+function isDisclosure(entry, dialect) {
+  const [finding] = tarSuspiciousEntryFindings([entry], { dialect });
+  return finding?.severity === "high" || finding?.severity === "critical";
 }
 
 // Disclosures carry the raw archive name (`package/C:x`, `a\\b`, `x/../y`), so
@@ -492,7 +498,8 @@ export function compareInstalled(drydock, consumer) {
   if (!disagreements.length) {
     return { outcome: unwritableChildren ? "reviewed-unwritable-child" : "agree", disagreements };
   }
-  const disclosures = drydock.suspicious.filter(isDisclosure);
+  const dialect = drydock.dialect ?? "npm";
+  const disclosures = drydock.suspicious.filter((entry) => isDisclosure(entry, dialect));
   const archiveWide = disclosures.some(
     (entry) => entry.kind === "parser-differential" && entry.path === "<archive>",
   );
@@ -524,9 +531,19 @@ export function compareInstalled(drydock, consumer) {
           disagreement.path.endsWith(`/${other.path}`)) &&
         Math.abs(other.path.split("/").length - disagreement.path.split("/").length) === 1,
     );
-  const undisclosed = archiveWide
-    ? []
-    : disagreements.filter((disagreement) => !covered(disagreement) && !rootShifted(disagreement));
+  // pip installing bytes Drydock never reviewed (a different body, or a file
+  // Drydock does not list) is the hiding direction, so for pip an
+  // archive-level notice alone does not cover it.
+  const archiveCovers = (disagreement) =>
+    archiveWide &&
+    !(
+      dialect === "pypi" &&
+      (disagreement.kind === "body" || disagreement.kind.startsWith("missing"))
+    );
+  const undisclosed = disagreements.filter(
+    (disagreement) =>
+      !archiveCovers(disagreement) && !covered(disagreement) && !rootShifted(disagreement),
+  );
   return undisclosed.length
     ? { outcome: "differential", disagreements: undisclosed }
     : { outcome: "disclosed", disagreements };

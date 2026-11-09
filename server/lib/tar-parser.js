@@ -1166,8 +1166,12 @@ export async function readTarStream(
 
   // A header npm's reader rejects. Recorded once, with a count: each one is a
   // block this reader also skips without consuming a body, so the two stay on
-  // the same boundaries, but no publisher toolchain emits any of them.
+  // the same boundaries, but no publisher toolchain emits any of them. pip's
+  // CPython tarfile accepts most of them and consumes the declared body (or
+  // ends the archive there), so in any parse pip may read the skip would put
+  // the two on different block boundaries: those parses fail closed instead.
   function rejectHeader() {
+    if (rootStrip !== "strip1") throw tarError("tar header is one npm's reader skips");
     rejectedBlocks += 1;
     if (!rejectedNotice) {
       rejectedNotice = { kind: "parser-differential", path: "<archive>", detail: "" };
@@ -1392,6 +1396,12 @@ export async function readTarStream(
 
       const rawName = readString(header, 0, 100);
       const type = String.fromCharCode(header[156] || 48);
+      // An old GNU sparse `S` record can pull following blocks into CPython's
+      // sparse map, and node-tar ignores the type, so a parse pip may read
+      // fails closed before any reject branch below can skip it.
+      if (rootStrip !== "strip1" && type === "S") {
+        throw tarError("tar archive uses an old GNU sparse record");
+      }
       // Metadata headers: `x`/`X` extended, `g` global, `L`/`N` long path, `K`
       // long linkpath. node-tar merges all of them into one pending record that
       // survives until the next non-metadata entry, so a `K` sitting between an
@@ -1546,8 +1556,8 @@ export async function readTarStream(
       // looks at a `0` or NUL typeflag and the final name. Where they disagree
       // one reader consumes the declared body and the other does not. CPython
       // also reads no body for link, device, and FIFO records, and an old GNU
-      // sparse `S` record can pull following blocks into its sparse map. Any of
-      // these with a body puts the two readers on different block boundaries
+      // sparse `S` record (rejected above) can pull following blocks into its
+      // sparse map. Any of these with a body puts the two readers on different block boundaries
       // for the rest of the archive, and no writer emits one, so every parse
       // whose consumer may be pip fails closed. npm's `strip1` parse answers to
       // node-tar alone. `type` folds NUL into `0`, so the raw byte tells the
@@ -1559,9 +1569,6 @@ export async function readTarStream(
         header[156] === 0 && rawNameLength > 0 && header[rawNameLength - 1] === 0x2f;
       const directoryViewsDiffer = type === "0" && namedDirectory !== cpythonDirectory;
       const bodylessForPip = type.length === 1 && "12346".includes(type);
-      if (pipMayRead && type === "S") {
-        throw tarError("tar archive uses an old GNU sparse record");
-      }
       if (pipMayRead && size > 0 && (directoryViewsDiffer || bodylessForPip)) {
         throw tarError("tar entry declares a body that readers size differently");
       }

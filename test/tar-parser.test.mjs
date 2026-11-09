@@ -31,13 +31,15 @@ const PARSE_LIMITS = {
   maxTarBytes: 25 * 1024 * 1024,
 };
 
-async function parse(tar, limits = PARSE_LIMITS) {
-  const result = await readTar(tar.buffer, limits.maxFiles, limits.maxTarBytes);
+// npm's parse by default: most cases here pin node-tar's reading, and parses
+// pip may read fail closed on the headers node-tar rejects.
+async function parse(tar, limits = PARSE_LIMITS, rootStrip = "strip1") {
+  const result = await readTar(tar.buffer, limits.maxFiles, limits.maxTarBytes, 0, rootStrip);
   return result.files;
 }
 
-async function parseFull(tar, limits = PARSE_LIMITS) {
-  return readTar(tar.buffer, limits.maxFiles, limits.maxTarBytes);
+async function parseFull(tar, limits = PARSE_LIMITS, rootStrip = "strip1") {
+  return readTar(tar.buffer, limits.maxFiles, limits.maxTarBytes, 0, rootStrip);
 }
 
 describe("normalizeTarPath", () => {
@@ -560,7 +562,7 @@ describe("readTar PAX and GNU long-name handling", () => {
       { name: "PaxHeader", type: "x", body: paxRecord },
       { name: "package/lib/decoy.js", body: "{}" },
     ]);
-    const { files } = await parseFull(tar);
+    const { files } = await parseFull(tar, PARSE_LIMITS, "package-prefix");
     expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
     expect(isRootGypPath(files[0].path)).toBe(true);
   });
@@ -1300,7 +1302,7 @@ describe("readTar suspicious entries", () => {
     // Fullwidth slashes canonicalize to ASCII separators, exposing traversal.
     const sneaky = "package／..／payload.js";
     const tar = buildTar([{ name: sneaky, body: "bad\n" }]);
-    const { files, suspicious } = await parseFull(tar);
+    const { files, suspicious } = await parseFull(tar, PARSE_LIMITS, "package-prefix");
     expect(files.map((f) => f.path)).toEqual(["package／..／payload.js"]);
     expect(suspicious).toHaveLength(1);
     expect(suspicious[0]).toMatchObject({
@@ -1315,7 +1317,7 @@ describe("readTar suspicious entries", () => {
       { name: "package/a​.js", body: "process.env.NPM_TOKEN\n" },
       { name: "package/a.js", body: "ok\n" },
     ]);
-    const { files, suspicious } = await parseFull(tar);
+    const { files, suspicious } = await parseFull(tar, PARSE_LIMITS, "package-prefix");
     expect(files.map((f) => [f.path, f.textSample])).toEqual([
       ["a​.js", "process.env.NPM_TOKEN\n"],
       ["a.js", "ok\n"],
@@ -2025,7 +2027,10 @@ describe("readTar limits and malformed archives", () => {
       buildTarHeaderOnly({ name: "package/decoy.txt", size: 1024 }),
       buildTar([{ name: "package/binding.gyp", body: "{}" }]),
     ]);
-    expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", "123"]);
+    expect((await parse(tar, PARSE_LIMITS, "package-prefix")).map((f) => f.path)).toEqual([
+      "index.js",
+      "123",
+    ]);
   });
 
   test("ignores a zero-length long-name header, as node-tar does", async () => {
@@ -2034,7 +2039,10 @@ describe("readTar limits and malformed archives", () => {
       buildTarHeaderOnly({ name: "././@LongLink", type: "L", size: 0 }),
       buildTar([{ name: "package/binding.gyp", body: "{}" }]),
     ]);
-    expect((await parse(tar)).map((f) => f.path)).toEqual(["index.js", "binding.gyp"]);
+    expect((await parse(tar, PARSE_LIMITS, "package-prefix")).map((f) => f.path)).toEqual([
+      "index.js",
+      "binding.gyp",
+    ]);
   });
 
   test("keeps a leading BOM in a name, as node-tar's Buffer decode does", async () => {
@@ -2161,6 +2169,41 @@ describe("readTar limits and malformed archives", () => {
       }),
     );
   });
+
+  test.each(["keep", "package-prefix"])(
+    "fails closed under the %s parse on a header npm's reader skips without its body",
+    async (rootStrip) => {
+      const setup = (body) => buildTar([{ name: "demo-1.0/setup.py", body }]);
+      // A sparse record with a linkname, its extension flag set.
+      const sparse = buildTarHeaderOnly({ name: "demo-1.0/s", type: "S", size: 0, linkname: "x" });
+      sparse[482] = 1;
+      sealTarHeader(sparse, 0);
+      const badChecksum = buildTarHeaderOnly({ name: "demo-1.0/c.txt", size: 512 });
+      badChecksum[150] ^= 1;
+      for (const lead of [
+        [sparse, buildTarHeaderOnly({ name: "0", size: 1024 })],
+        [
+          buildTarHeaderOnly({ name: "demo-1.0/readme.txt", size: 512, linkname: "x" }),
+          buildTarHeaderOnly({ name: "demo-1.0/decoy.txt", size: 1024 }),
+        ],
+        [badChecksum],
+      ]) {
+        const tar = concatBytes([
+          tarEntriesOnly(setup("print(1)\n")),
+          ...lead,
+          setup("print('other')\n"),
+        ]);
+        await expect(readTar(tar.buffer, 2_500, 1 << 20, 0, rootStrip)).rejects.toThrow(
+          /npm's reader skips|old GNU sparse record/,
+        );
+        // npm's parse skips the header as node-tar does and discloses it.
+        const npm = await readTar(tar.buffer, 2_500, 1 << 20, 0, "strip1");
+        expect(npm.suspicious).toContainEqual(
+          expect.objectContaining({ kind: "parser-differential", path: "<archive>" }),
+        );
+      }
+    },
+  );
 
   test("fails closed on an old GNU sparse record when pip may read the archive", async () => {
     const tar = concatBytes([
@@ -2297,14 +2340,18 @@ describe("readTar limits and malformed archives", () => {
 
   test("reads the ustar prefix only when the ustar magic is present", async () => {
     const withMagic = buildTar([{ name: "binding.gyp", prefix: "package/lib", body: "{}" }]);
-    expect((await parse(withMagic)).map((f) => f.path)).toEqual(["lib/binding.gyp"]);
+    expect((await parse(withMagic, PARSE_LIMITS, "package-prefix")).map((f) => f.path)).toEqual([
+      "lib/binding.gyp",
+    ]);
 
     // Without the magic node-tar ignores bytes 345+, so the entry npm sees is
     // the bare name — the package root, where the gyp rules look.
     const withoutMagic = buildTar([{ name: "binding.gyp", prefix: "package/lib", body: "{}" }]);
     withoutMagic.fill(0, 257, 265);
     sealTarHeader(withoutMagic, 0);
-    expect((await parse(withoutMagic)).map((f) => f.path)).toEqual(["binding.gyp"]);
+    expect((await parse(withoutMagic, PARSE_LIMITS, "package-prefix")).map((f) => f.path)).toEqual([
+      "binding.gyp",
+    ]);
   });
 
   test("discloses a magic-less prefix that pip's CPython tarfile joins and node-tar ignores", async () => {
@@ -2470,7 +2517,7 @@ describe("readTar limits and malformed archives", () => {
       // surface a finding, downgrading the trust-boundary failure.
       const limits = { maxFiles: 100, maxTarBytes: 1024 };
       const tar = buildTar([{ name: path, body: "x".repeat(2048) }]);
-      await expect(parse(tar, limits)).rejects.toThrow(/invalid tar entry size/);
+      await expect(parse(tar, limits, "package-prefix")).rejects.toThrow(/invalid tar entry size/);
     },
   );
 
@@ -2746,7 +2793,7 @@ describe("readTar limits and malformed archives", () => {
       { name: "b/package.json", body: new Uint8Array(400).fill(0x62) },
       { name: "c/package.json", body: new Uint8Array(400).fill(0x63) },
     ]);
-    const { files } = await parseFull(tar, limits);
+    const { files } = await parseFull(tar, limits, "package-prefix");
     expect(files.find((f) => f.path === "a/package.json")?.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(files.find((f) => f.path === "b/package.json")?.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(files.find((f) => f.path === "c/package.json")?.flags).toEqual(["content-skipped"]);
