@@ -132,7 +132,7 @@ function shouldDemoteTestMatch(ctx: RuleContext, path: string, patterns: RegExp[
 
 export function promptInjectionPatternsMatchChangedLines(
   sample: string,
-  changedLines: ReadonlySet<number>,
+  changedLines: Set<number>,
   patterns: RegExp[],
   excludedPatterns: RegExp[] = [],
 ): boolean {

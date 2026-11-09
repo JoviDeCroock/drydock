@@ -106,3 +106,23 @@ const UTF8_ENCODER = new TextEncoder();
 export function utf8Size(value: string): number {
   return UTF8_ENCODER.encode(value).byteLength;
 }
+
+/**
+ * Staged line numbers whose text occurs more often than in the previous
+ * version: every copy of such a line, since nothing says which copy is new.
+ * Linear time, where an LCS diff of one rewritten bundle takes seconds. A
+ * moved line is not new text. Line endings are ignored, indentation is not
+ * (Python reads it).
+ */
+export function addedLineNumbers(previous: string, staged: string): Set<number> {
+  const key = (line: string) => line.replace(/\r$/, "");
+  const counts = new Map<string, number>();
+  for (const line of previous.split("\n")) counts.set(key(line), (counts.get(key(line)) ?? 0) + 1);
+  const stagedLines = staged.split("\n").map(key);
+  for (const line of stagedLines) counts.set(line, (counts.get(line) ?? 0) - 1);
+  const added = new Set<number>();
+  stagedLines.forEach((line, index) => {
+    if ((counts.get(line) ?? 0) < 0) added.add(index + 1);
+  });
+  return added;
+}

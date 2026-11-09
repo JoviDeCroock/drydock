@@ -1,4 +1,5 @@
 import { diffChars, diffLines, type ChangeObject } from "diff";
+import { addedLineNumbers } from "../platform/text-utils";
 
 // Where a modified file changed, for release-delta classification.
 //
@@ -18,10 +19,8 @@ interface ChangedSpan {
 }
 
 export interface ChangedRegions {
-  /** Staged line numbers (1-based) changed as whole lines; every line past the diff budget. */
-  lines: ReadonlySet<number>;
-  /** The line diff ran out of budget, so the whole staged text counts as changed. */
-  whole: boolean;
+  /** Staged line numbers (1-based) changed as whole lines. */
+  lines: Set<number>;
   /** Long staged lines whose change was narrowed to `spans`. */
   refinedLines: Set<number>;
   /** Staged character ranges that changed inside `refinedLines`. */
@@ -45,9 +44,10 @@ const REFINE_MAX_EDITS = 64;
 // that rewrites a many-line file costs its line count squared. Each diff gets
 // an edit bound whose square stays under LINE_DIFF_FILE_WORK, and one
 // annotation pass shares LINE_DIFF_TOTAL_WORK across files so many such files
-// cannot add up. Past either bound the whole file counts as changed, which can
-// only keep a finding in the release. A rebuilt bundle with a few thousand
-// changed hunks still diffs.
+// cannot add up. A rebuilt bundle with a few thousand changed hunks still
+// diffs. Past either bound a staged line counts as changed when its text occurs
+// more often than before (`addedLineNumbers`, linear): new and duplicated text
+// still counts, a moved line does not, and long lines are not narrowed.
 const LINE_DIFF_FILE_WORK = 2_000 * 2_000;
 const LINE_DIFF_TOTAL_WORK = 5 * LINE_DIFF_FILE_WORK;
 
@@ -57,30 +57,6 @@ export interface LineDiffBudget {
 
 export function lineDiffBudget(): LineDiffBudget {
   return { remaining: LINE_DIFF_TOTAL_WORK };
-}
-
-// The staged line numbers of a file whose diff ran out of budget: all of them,
-// without materializing a set the size of the file.
-export class EveryLine implements ReadonlySet<number> {
-  constructor(readonly size: number) {}
-  has(line: number): boolean {
-    return Number.isInteger(line) && line >= 1 && line <= this.size;
-  }
-  *keys(): SetIterator<number> {
-    for (let line = 1; line <= this.size; line += 1) yield line;
-  }
-  values(): SetIterator<number> {
-    return this.keys();
-  }
-  *entries(): SetIterator<[number, number]> {
-    for (const line of this.keys()) yield [line, line];
-  }
-  [Symbol.iterator](): SetIterator<number> {
-    return this.keys();
-  }
-  forEach(callback: (value: number, key: number, set: ReadonlySet<number>) => void): void {
-    for (const line of this.keys()) callback(line, line, this);
-  }
 }
 
 // `diffLines(previous, staged)` with the common leading and trailing lines
@@ -157,16 +133,12 @@ export function changedRegions(
   budget?: LineDiffBudget,
 ): ChangedRegions {
   const parts = boundedDiffLines(previous, staged, budget);
-  if (!parts) {
-    return {
-      lines: new EveryLine(countLines(staged)),
-      whole: true,
-      refinedLines: new Set(),
-      spans: [],
-    };
-  }
+  // Past the budget, lines are matched as multisets instead (see
+  // LINE_DIFF_FILE_WORK).
+  if (!parts)
+    return { lines: addedLineNumbers(previous, staged), refinedLines: new Set(), spans: [] };
   const lines = new Set<number>();
-  const regions: ChangedRegions = { lines, whole: false, refinedLines: new Set(), spans: [] };
+  const regions: ChangedRegions = { lines, refinedLines: new Set(), spans: [] };
   let stagedOffset = 0;
   let stagedLine = 0;
   for (let index = 0; index < parts.length; index += 1) {
@@ -209,7 +181,6 @@ export function patternsTouchChangedRegions(
   patterns: RegExp[],
 ): boolean {
   if (!patterns.length) return false;
-  if (regions.whole) return anyMatch(patterns, text);
   if (regions.lines.size) {
     const lines = splitLines(text, regions);
     for (const lineNumber of regions.lines) {
@@ -230,7 +201,6 @@ export function patternsTouchChangedRegions(
 // The text within reach of every changed line and span, for callers that
 // look for literals (hosts) rather than rule patterns.
 export function changedRegionTexts(text: string, regions: ChangedRegions): string[] {
-  if (regions.whole) return [text];
   const texts: string[] = [];
   if (regions.lines.size) {
     const lines = splitLines(text, regions);

@@ -33,6 +33,7 @@ import {
   type ClefUsage,
 } from "./clef";
 import type { AiFinding } from "./types";
+import { addedLineNumbers } from "../platform/text-utils";
 
 /**
  * Version of the candidate policy, question battery, and thresholds below.
@@ -308,26 +309,6 @@ function rangeWindows(
 function withoutDanglingHighSurrogate(text: string): string {
   const last = text.charCodeAt(text.length - 1);
   return last >= 0xd800 && last <= 0xdbff ? text.slice(0, -1) : text;
-}
-
-/**
- * Staged line numbers whose content the previous version did not have, matched
- * as multisets so a duplicated line still counts. Linear time: an LCS diff of
- * one rewritten bundle took seconds, and this runs on every modified file of a
- * scan the user is waiting on. A moved line is not new text, which is the
- * question this lane asks.
- */
-function addedLineNumbers(previous: string, staged: string): Set<number> {
-  const key = (line: string) => line.replace(/\r$/, "");
-  const counts = new Map<string, number>();
-  for (const line of previous.split("\n")) counts.set(key(line), (counts.get(key(line)) ?? 0) + 1);
-  const added = new Set<number>();
-  staged.split("\n").forEach((line, index) => {
-    const count = counts.get(key(line)) ?? 0;
-    if (count === 0) added.add(index + 1);
-    else counts.set(key(line), count - 1);
-  });
-  return added;
 }
 
 function contiguousRanges(lines: Set<number>): Array<{ start: number; end: number }> {

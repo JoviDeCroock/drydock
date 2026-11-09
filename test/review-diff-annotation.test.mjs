@@ -23,14 +23,17 @@ describe("changed staged line numbers", () => {
     expect([...changedStagedLines(previous, staged)]).toEqual(expected);
   });
 
-  test("a rewrite past the diff budget counts every staged line as changed", () => {
-    const lines = (seed) =>
-      Array.from({ length: 40_000 }, (_, index) => `line ${(index * seed) % 39_989}`).join("\n");
+  test("past the diff budget, lines whose text occurs more often count as changed", () => {
+    const previous = Array.from({ length: 40_000 }, (_, index) => `line ${index}`);
+    // Reversed: no line is new, but the move needs far more edits than the budget.
+    const staged = [...previous].reverse();
+    staged.splice(10, 0, "line new");
+    staged.splice(20, 0, "line 7");
     const started = performance.now();
-    const changed = changedStagedLines(lines(7), lines(11));
+    const changed = changedStagedLines(previous.join("\n"), staged.join("\n"));
     expect(performance.now() - started).toBeLessThan(5_000);
-    expect(changed.size).toBe(40_000);
-    expect(changed.has(1) && changed.has(40_000) && !changed.has(40_001)).toBe(true);
+    const copiesOf7 = staged.flatMap((line, index) => (line === "line 7" ? [index + 1] : []));
+    expect([...changed].sort((a, b) => a - b)).toEqual([11, ...copiesOf7].sort((a, b) => a - b));
   });
 });
 
@@ -60,9 +63,33 @@ describe("release-delta annotation stays bounded", () => {
       stagedFiles: staged,
     });
     expect(performance.now() - started).toBeLessThan(20_000);
-    // Past the budget the whole file counts as changed: conservative.
+    // Every line is new text, so past the budget every finding stays in the release.
     expect(annotated.every((finding) => finding.releaseDelta)).toBe(true);
   }, 120_000);
+
+  test.each([
+    ["only moves an existing fetch line", null, false],
+    ["adds a fetch line", 'fetch("https://collect.example.invalid/b");', true],
+  ])("a rebuilt bundle past the diff budget that %s", (_label, added, releaseDelta) => {
+    const lines = Array.from({ length: 30_000 }, (_, index) => `const v${index} = ${index};`);
+    lines.splice(15_000, 0, 'fetch("https://collect.example.invalid/a");');
+    const rebuilt = [...lines].reverse();
+    if (added) rebuilt.splice(100, 0, added);
+    const previous = [
+      { path: "dist/bundle.js", size: 1, sha256: "p", flags: [], textSample: lines.join("\n") },
+    ];
+    const staged = [
+      { path: "dist/bundle.js", size: 1, sha256: "s", flags: [], textSample: rebuilt.join("\n") },
+    ];
+    const diff = createPackageDiff(previous, staged);
+    const findings = deterministicFindings(staged, diff, undefined, { previousFiles: previous });
+    const [network] = annotateFindingsWithDiffStatus(
+      findings.filter((finding) => finding.ruleId === "code.network-access"),
+      diff,
+      { previousFiles: previous, stagedFiles: staged },
+    );
+    expect(network).toMatchObject({ file: "dist/bundle.js", releaseDelta });
+  });
 });
 
 describe("review diff annotation", () => {

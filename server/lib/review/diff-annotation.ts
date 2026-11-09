@@ -518,9 +518,7 @@ function findingPatternMatchesChanges(
   // The propagation and prompt-injection matchers are line-oriented; they see
   // every changed line, narrowed ones included, as before.
   if (isPropagationFinding(finding) || isPromptInjectionFinding(finding)) {
-    const changedLines = changes.raw.whole
-      ? changes.raw.lines
-      : new Set([...changes.raw.lines, ...changes.raw.refinedLines]);
+    const changedLines = new Set([...changes.raw.lines, ...changes.raw.refinedLines]);
     if (isPropagationFinding(finding)) {
       return hasMatchingCodeLine(changes.stagedText, patterns, changedLines);
     }
