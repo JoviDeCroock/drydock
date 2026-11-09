@@ -1,0 +1,59 @@
+{
+  "id": "pypi-sdist-regular-typeflag-directory-name",
+  "title": "sdist member has a regular-file typeflag and a name ending in a slash",
+  "category": "archive-structure",
+  "intent": "node-tar reads a `0` typeflag member named with a trailing slash as a directory, while pip's CPython tarfile writes an empty regular file at that name. An empty file can shadow a module path pip's build then imports, so the reader discloses both readings instead of recording a directory",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0.tar.gz",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.2.0/PKG-INFO",
+          "size": 56,
+          "sha256": "3168628ebc7e3d0fffe471ccfd47beaa411f6dfc1854d465dcbfb4d4573f0ec7",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0/pyproject.toml",
+          "size": 74,
+          "sha256": "1be9b82eff188babac4fc0e2c99d8bf7a48ea1307544bcf032bce3ec57a3e779",
+          "flags": [],
+          "textSample": "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n"
+        }
+      ],
+      "suspiciousEntries": [
+        {
+          "kind": "non-regular",
+          "path": "demo_package-1.2.0/demo_package/__init__.py",
+          "detail": "typeflag 5 (directory)"
+        },
+        {
+          "kind": "parser-differential",
+          "path": "demo_package-1.2.0/demo_package/__init__.py",
+          "detail": "node-tar reads the member as a directory because its name ends in `/`, while pip's CPython tarfile, which spots a directory only by a NUL typeflag and a header name ending in `/`, writes an empty file there"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "tar.suspicious-entry",
+      "severity": "high",
+      "file": "dist/demo_package-1.2.0.tar.gz/demo_package/__init__.py"
+    }
+  ]
+}

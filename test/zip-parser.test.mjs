@@ -542,6 +542,68 @@ describe("readZipStream", () => {
     await expect(parseStream(extended)).rejects.toThrow(/trailing data/);
   });
 
+  test("rejects an end record whose comment holds another end record signature", async () => {
+    const entries = [{ path: "demo/a.py", body: "a\n" }];
+    const comment = new Uint8Array(22);
+    new DataView(comment.buffer).setUint32(0, 0x06054b50, true);
+    await expect(parseStream(buildZip(entries, { comment }))).rejects.toThrow(/ambiguous/);
+    // An ordinary comment is still read.
+    const plain = buildZip(entries, { comment: encoder.encode("built by a tool") });
+    expect((await parseStream(plain)).files.map((f) => f.path)).toEqual(["demo/a.py"]);
+  });
+
+  test("rejects an end record that does not name the central directory the walk read", async () => {
+    const entries = [
+      { path: "demo/__init__.py", body: "x = 1\n" },
+      { path: "demo/data.bin", body: "data" },
+    ];
+    const zip = buildZip(entries);
+    const end = zip.length - 22;
+    const size = new DataView(zip.buffer).getUint32(end + 12, true);
+    for (const [field, value] of [
+      [12, size - 1],
+      [16, new DataView(zip.buffer).getUint32(end + 16, true) + 1],
+    ]) {
+      const tampered = zip.slice();
+      new DataView(tampered.buffer).setUint32(end + field, value, true);
+      await expect(parseStream(tampered)).rejects.toThrow(/does not match the central directory/);
+      await expect(readZipArchiveBuffered(tampered, 100, 1 << 20)).rejects.toThrow(
+        /end of central directory/,
+      );
+    }
+  });
+
+  test("rejects a zip64 locator signature right before the end record", async () => {
+    const locator = new Uint8Array(20);
+    new DataView(locator.buffer).setUint32(0, 0x07064b50, true);
+    const zip = buildZip([
+      { path: "demo/__init__.py", body: "x = 1\n" },
+      { path: "demo/data.bin", body: "data", centralComment: locator },
+    ]);
+    await expect(parseStream(zip)).rejects.toThrow(/zip64/);
+    await expect(readZipArchiveBuffered(zip, 100, 1 << 20)).rejects.toThrow(/zip64/);
+    // A central-record comment without the signature is still read.
+    const plain = buildZip([
+      { path: "demo/__init__.py", body: "x = 1\n", centralComment: encoder.encode("note") },
+    ]);
+    expect((await parseStream(plain)).files.map((f) => f.path)).toEqual(["demo/__init__.py"]);
+    expect((await readZipArchiveBuffered(plain, 100, 1 << 20)).files).toHaveLength(1);
+  });
+
+  test("buffered reader rejects an end record whose comment length misses the file end", async () => {
+    // yauzl, which VS Code installs through, refuses the same archive.
+    const zip = buildZip([{ path: "extension/package.json", body: "{}" }], {
+      comment: encoder.encode("note"),
+    });
+    const extended = new Uint8Array(zip.length + 8);
+    extended.set(zip, 0);
+    await expect(readZipArchiveBuffered(extended, 100, 1 << 20)).rejects.toThrow(
+      /invalid zip end of central directory/,
+    );
+    const ok = await readZipArchiveBuffered(zip, 100, 1 << 20);
+    expect(ok.files.map((f) => f.path)).toEqual(["extension/package.json"]);
+  });
+
   test("fails closed when cumulative declared expansion exceeds the stream cap", async () => {
     const big = new Uint8Array(4096).fill(0x41);
     const zip = buildZip([{ path: "demo/big.bin", body: big }]);

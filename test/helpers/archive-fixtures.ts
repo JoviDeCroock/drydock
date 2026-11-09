@@ -1,10 +1,10 @@
 // Minimal tar/zip writers shared by the archive-parser specs.
 //
 // These produce just enough of the POSIX/ustar and ZIP container formats for
-// `readTar` / `readZipArchive` to parse them. They are intentionally lenient
-// (no checksum, no data-descriptor support) — the parser under test doesn't
-// require those fields, and keeping the writers minimal makes the fixtures
-// readable. Used by tar-parser.test.mjs, zip-parser.test.mjs, and the
+// `readTar` / `readZipArchive` to parse them, plus the real CRC-32 that CPython's
+// zipfile checks, so the differential suite can feed the same bytes to pip's
+// reader. Keeping the writers minimal makes the fixtures readable. Used by
+// tar-parser.test.mjs, zip-parser.test.mjs, and the
 // property/fuzz suite, so the round-trip and adversarial tests build archives
 // the exact same way the regression tests do.
 
@@ -36,6 +36,12 @@ export interface ZipEntry {
   extra?: Uint8Array;
   /** Extra-field bytes for the local header. */
   localExtra?: Uint8Array;
+  /** CRC-32 to declare instead of the body's own. */
+  crc?: number;
+  /** Raw name bytes for the central record only, when it should differ from the local one. */
+  centralNameBytes?: Uint8Array;
+  /** File comment bytes for the central record. */
+  centralComment?: Uint8Array;
 }
 
 type TarHeaderInput = Omit<TarEntry, "body"> & { size?: number };
@@ -205,6 +211,7 @@ function zipEntry(
   const localFlag = entry.utf8 === false ? 0 : 0x0800;
   const centralFlag = (entry.centralUtf8 ?? entry.utf8) === false ? 0 : 0x0800;
   const body = entry.body instanceof Uint8Array ? entry.body : encoder.encode(entry.body ?? "");
+  const crc = entry.crc ?? crc32(body);
   // `rawDeflate` supplies a hand-crafted deflate payload for `body` (e.g. one
   // padded with empty stored blocks) so adversarial compressed-vs-declared-size
   // shapes can be built; sizes/method fields still describe `body`.
@@ -223,7 +230,7 @@ function zipEntry(
   if (entry.dataDescriptor) {
     const descriptorView = new DataView(descriptor.buffer);
     u32(descriptorView, 0, 0x08074b50);
-    u32(descriptorView, 4, 0); // crc (unchecked by the parser, as in buildZip)
+    u32(descriptorView, 4, crc);
     u32(descriptorView, 8, compressed.length);
     u32(descriptorView, 12, body.length);
   }
@@ -238,7 +245,7 @@ function zipEntry(
   u16(localView, 4, 20);
   u16(localView, 6, localFlag | (entry.dataDescriptor ? 0x0008 : 0));
   u16(localView, 8, method);
-  u32(localView, 14, 0);
+  u32(localView, 14, crc);
   u32(localView, 18, entry.dataDescriptor ? 0 : compressed.length);
   u32(localView, 22, entry.dataDescriptor ? 0 : body.length);
   u16(localView, 26, name.length);
@@ -248,21 +255,27 @@ function zipEntry(
   local.set(compressed, 30 + name.length + localExtra.length);
   local.set(descriptor, 30 + name.length + localExtra.length + compressed.length);
 
-  const central = new Uint8Array(46 + name.length + centralExtra.length);
+  const centralName = entry.centralNameBytes ?? name;
+  const centralComment = entry.centralComment ?? new Uint8Array(0);
+  const central = new Uint8Array(
+    46 + centralName.length + centralExtra.length + centralComment.length,
+  );
   const centralView = new DataView(central.buffer);
   u32(centralView, 0, 0x02014b50);
   u16(centralView, 4, 20);
   u16(centralView, 6, 20);
   u16(centralView, 8, centralFlag);
   u16(centralView, 10, method);
-  u32(centralView, 16, 0);
+  u32(centralView, 16, crc);
   u32(centralView, 20, compressed.length);
   u32(centralView, 24, body.length);
-  u16(centralView, 28, name.length);
+  u16(centralView, 28, centralName.length);
   u16(centralView, 30, centralExtra.length);
+  u16(centralView, 32, centralComment.length);
   u32(centralView, 42, localOffset);
-  central.set(name, 46);
-  central.set(centralExtra, 46 + name.length);
+  central.set(centralName, 46);
+  central.set(centralExtra, 46 + centralName.length);
+  central.set(centralComment, 46 + centralName.length + centralExtra.length);
 
   return { local, central };
 }
@@ -286,7 +299,12 @@ export function unicodePathExtra(
   return out;
 }
 
-export function buildZip(entries: ZipEntry[]): Uint8Array<ArrayBuffer> {
+// `comment` is the end-of-central-directory comment, written verbatim with its
+// declared length.
+export function buildZip(
+  entries: ZipEntry[],
+  { comment = new Uint8Array(0) }: { comment?: Uint8Array } = {},
+): Uint8Array<ArrayBuffer> {
   const locals: Uint8Array[] = [];
   const centrals: Uint8Array[] = [];
   let localOffset = 0;
@@ -304,5 +322,6 @@ export function buildZip(entries: ZipEntry[]): Uint8Array<ArrayBuffer> {
   u16(view, 10, entries.length);
   u32(view, 12, centralDirectory.length);
   u32(view, 16, localOffset);
-  return concat([...locals, centralDirectory, eocd]);
+  u16(view, 20, comment.length);
+  return concat([...locals, centralDirectory, eocd, comment]);
 }

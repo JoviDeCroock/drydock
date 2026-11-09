@@ -1166,8 +1166,12 @@ export async function readTarStream(
 
   // A header npm's reader rejects. Recorded once, with a count: each one is a
   // block this reader also skips without consuming a body, so the two stay on
-  // the same boundaries, but no publisher toolchain emits any of them.
+  // the same boundaries, but no publisher toolchain emits any of them. pip's
+  // CPython tarfile accepts most of them and consumes the declared body (or
+  // ends the archive there), so in any parse pip may read the skip would put
+  // the two on different block boundaries: those parses fail closed instead.
   function rejectHeader() {
+    if (rootStrip !== "strip1") throw tarError("tar header is one npm's reader skips");
     rejectedBlocks += 1;
     if (!rejectedNotice) {
       rejectedNotice = { kind: "parser-differential", path: "<archive>", detail: "" };
@@ -1205,6 +1209,7 @@ export async function readTarStream(
         oldGnu: false,
         sizedMeta: false,
         cpythonPath: null,
+        cpythonDirectory: null,
       };
     }
     return metaShape;
@@ -1289,12 +1294,19 @@ export async function readTarStream(
         `member's header has no ustar magic but a non-empty prefix field; node-tar ignores the prefix, while pip's CPython tarfile joins it and extracts the member as \`${shape.cpythonPath}\``,
       );
     }
+    if (shape.cpythonDirectory !== null) {
+      details.push(
+        shape.cpythonDirectory
+          ? "node-tar reads the member as an empty file at its extended-header name, while pip's CPython tarfile, which spots a directory by a NUL typeflag and a header name ending in `/`, creates a directory there"
+          : "node-tar reads the member as a directory because its name ends in `/`, while pip's CPython tarfile, which spots a directory only by a NUL typeflag and a header name ending in `/`, writes an empty file there",
+      );
+    }
     if (shape.paxBody.size) {
       details.push(`member's pax header carries ${[...shape.paxBody].join("; and ")}`);
     }
     if (shape.sizedMeta) {
       details.push(
-        "a pending pax `size` record also sized a metadata header before this member; node-tar applies it to that header's body, while CPython tarfile applies it only to the member, so the two read different block boundaries",
+        "a pending pax `size` record also sized a metadata header before this member; node-tar before 7.5.22 (npm 11) applies it to that header's body, while node-tar 7.5.22 (npm 12) and CPython tarfile apply it only to the member, so they read different block boundaries",
       );
     }
     if (details.length) {
@@ -1384,6 +1396,12 @@ export async function readTarStream(
 
       const rawName = readString(header, 0, 100);
       const type = String.fromCharCode(header[156] || 48);
+      // An old GNU sparse `S` record can pull following blocks into CPython's
+      // sparse map, and node-tar ignores the type, so a parse pip may read
+      // fails closed before any reject branch below can skip it.
+      if (rootStrip !== "strip1" && type === "S") {
+        throw tarError("tar archive uses an old GNU sparse record");
+      }
       // Metadata headers: `x`/`X` extended, `g` global, `L`/`N` long path, `K`
       // long linkpath. node-tar merges all of them into one pending record that
       // survives until the next non-metadata entry, so a `K` sitting between an
@@ -1532,6 +1550,31 @@ export async function readTarStream(
       // an ordinary file, so it is read as one here.
       const namedDirectory = (type === "0" || type === nul) && namePath.endsWith("/");
       const isRegular = !namedDirectory && (type === "0" || type === nul || type === "7");
+      // pip's CPython tarfile decides "directory" differently from node-tar:
+      // only a NUL typeflag whose own header name field (cut at its first NUL,
+      // before any pax or GNU long name replaces it) ends in `/`. node-tar
+      // looks at a `0` or NUL typeflag and the final name. Where they disagree
+      // one reader consumes the declared body and the other does not. CPython
+      // also reads no body for link, device, and FIFO records, and an old GNU
+      // sparse `S` record (rejected above) can pull following blocks into its
+      // sparse map. Any of these with a body puts the two readers on different block boundaries
+      // for the rest of the archive, and no writer emits one, so every parse
+      // whose consumer may be pip fails closed. npm's `strip1` parse answers to
+      // node-tar alone. `type` folds NUL into `0`, so the raw byte tells the
+      // two typeflags apart.
+      const pipMayRead = rootStrip !== "strip1";
+      const rawNameEnd = header.subarray(0, 100).indexOf(0);
+      const rawNameLength = rawNameEnd < 0 ? 100 : rawNameEnd;
+      const cpythonDirectory =
+        header[156] === 0 && rawNameLength > 0 && header[rawNameLength - 1] === 0x2f;
+      const directoryViewsDiffer = type === "0" && namedDirectory !== cpythonDirectory;
+      const bodylessForPip = type.length === 1 && "12346".includes(type);
+      if (pipMayRead && size > 0 && (directoryViewsDiffer || bodylessForPip)) {
+        throw tarError("tar entry declares a body that readers size differently");
+      }
+      if (pipMayRead && directoryViewsDiffer) {
+        currentMetaShape().cpythonDirectory = cpythonDirectory;
+      }
       // A directory record carries no body whatever it declares: node-tar zeroes
       // the size, so a directory claiming one would swallow the entries npm goes
       // on to extract.
@@ -1545,8 +1588,10 @@ export async function readTarStream(
       if (!isRegular && !isMeta && size > maxTarBytes) throw tarError("invalid tar entry size");
 
       if (isMeta) {
-        // node-tar sizes a metadata body by a pending local `size` record too;
-        // CPython's tarfile applies that record only to the member it precedes.
+        // node-tar before 7.5.22, which npm 11 ships, sizes a metadata body by
+        // a pending local `size` record too; 7.5.22 (npm 12) and CPython's
+        // tarfile apply it only to the member it precedes. Records follow
+        // npm 11 and the shape is disclosed.
         if (pax !== null && typeof pax.size === "string") currentMetaShape().sizedMeta = true;
         // CPython's tarfile has no `N` type: it extracts the record as a file of
         // its own and leaves the member its header name.
@@ -1841,6 +1886,24 @@ export function findZipEndOfCentralDirectory(bytes) {
   return -1;
 }
 
+// Readers that start from the end record must agree on where the central
+// directory is. CPython's zipfile and yauzl switch to a zip64 record whenever
+// its locator signature sits right before the end record, and CPython places
+// the directory by its declared size back from the end record, so a directory
+// that does not end exactly there, or a locator, can hand them a different
+// one. Both fail closed; the zip64 field sentinels are rejected separately.
+export function assertZipEndRecordConsistent(bytes, eocd) {
+  if (readUint16Le(bytes, eocd + 20) !== bytes.length - eocd - 22) {
+    throw tarError("invalid zip end of central directory");
+  }
+  if (eocd >= 20 && readUint32Le(bytes, eocd - 20) === 0x07064b50) {
+    throw tarError("zip64 archives are not supported");
+  }
+  if (readUint32Le(bytes, eocd + 16) + readUint32Le(bytes, eocd + 12) !== eocd) {
+    throw tarError("zip end of central directory does not match the central directory");
+  }
+}
+
 export async function inflateRawBounded(bytes, maxBytes) {
   const reader = new Response(bytes).body
     .pipeThrough(new DecompressionStream("deflate-raw"))
@@ -1911,10 +1974,10 @@ export async function readZipArchiveBuffered(
   ) {
     throw tarError("zip64 archives are not supported");
   }
+  // yauzl (VS Code) takes this same last signature but refuses it unless its
+  // comment runs exactly to the end of the file.
+  assertZipEndRecordConsistent(bytes, eocd);
   if (entryCount > entryLimit) throw tarError("archive contains too many files");
-  if (centralDirectoryOffset + centralDirectorySize > bytes.length) {
-    throw tarError("truncated zip central directory");
-  }
 
   const files = [];
   const suspicious = [];
@@ -1996,6 +2059,9 @@ export async function readZipArchiveBuffered(
         suspicious.push(tierNotice);
       }
     }
+  }
+  if (offset !== eocd) {
+    throw tarError("zip end of central directory does not match the central directory");
   }
   if (tierNotice) {
     tierNotice.detail = `the archive exceeds the ${maxFiles}-file full-inspection tier; ${demotedByTier} additional file bodies were recorded hash-only (path, size, sha256) without content inspection`;
@@ -2175,6 +2241,8 @@ export async function readZipStream(
   let expandedBytes = 0;
   let sawCentralDirectory = false;
   let centralEntryCount = 0;
+  let centralDirectoryStart = -1;
+  let centralDirectoryTail = new Uint8Array(0);
   let retainedTextCount = 0;
   // Bulk demotions aggregate into one suspicious entry per cause (see
   // readTarStream); per-file entries stay reserved for oversized bodies.
@@ -2353,6 +2421,7 @@ export async function readZipStream(
         // flags@4, method@6, compressed size@16, uncompressed size@20, name length@24,
         // extra length@26, comment length@28, local header offset@38 (42 bytes).
         sawCentralDirectory = true;
+        if (centralDirectoryStart < 0) centralDirectoryStart = headerOffset;
         if (!(await cursor.fill(42))) throw tarError("invalid zip central directory");
         const header = cursor.take(42);
         const flags = readUint16Le(header, 4);
@@ -2369,10 +2438,18 @@ export async function readZipStream(
         const nameBytes = cursor.take(fileNameLength);
         const rawPath = decodeZipName(nameBytes, flags);
         if (!(await cursor.fill(extraLength))) throw tarError("invalid zip central directory");
-        assertZipUnicodePath(nameBytes, rawPath, cursor.take(extraLength));
-        if (!(await cursor.discard(commentLength))) {
-          throw tarError("invalid zip central directory");
-        }
+        const extra = cursor.take(extraLength);
+        assertZipUnicodePath(nameBytes, rawPath, extra);
+        if (!(await cursor.fill(commentLength))) throw tarError("invalid zip central directory");
+        const comment = cursor.take(commentLength);
+        // The 20 bytes before the end record, where a zip64 locator would sit,
+        // always fall inside the last central record (at least 46 bytes long).
+        const record = new Uint8Array(42 + fileNameLength + extraLength + commentLength);
+        record.set(header, 0);
+        record.set(nameBytes, 42);
+        record.set(extra, 42 + fileNameLength);
+        record.set(comment, 42 + fileNameLength + extraLength);
+        centralDirectoryTail = record.subarray(Math.max(0, record.length - 20));
         const local = localEntries.get(localHeaderOffset);
         if (
           !local ||
@@ -2411,8 +2488,39 @@ export async function readZipStream(
             throw tarError("zip central directory does not match local entries");
           }
         }
-        if (commentLength > 0 && !(await cursor.discard(commentLength))) {
+        // CPython's zipfile places the central directory by the end record's
+        // declared size back from the end record, and reads a zip64 record
+        // instead when its locator signature sits in the 20 bytes before. Only
+        // a record that names exactly the directory walked here, with no
+        // locator, leaves pip reading the same entries.
+        const directoryStart = centralDirectoryStart < 0 ? headerOffset : centralDirectoryStart;
+        if (
+          readUint32Le(eocd, 12) !== directoryStart ||
+          readUint32Le(eocd, 8) !== headerOffset - directoryStart
+        ) {
+          throw tarError("zip end of central directory does not match the central directory");
+        }
+        if (
+          centralDirectoryTail.length === 20 &&
+          readUint32Le(centralDirectoryTail, 0) === 0x07064b50
+        ) {
+          throw tarError("zip64 archives are not supported");
+        }
+        if (commentLength > 0 && !(await cursor.fill(commentLength))) {
           throw tarError("truncated zip central directory");
+        }
+        // This walk takes the first end record after the central directory;
+        // CPython's zipfile (pip) searches backwards from the end of the file
+        // and takes the last one it finds. A second signature in this record's
+        // fields or comment is one CPython may pick instead, with its own
+        // central directory, so it fails closed.
+        const endRecord = new Uint8Array(eocd.length + commentLength);
+        endRecord.set(eocd, 0);
+        if (commentLength > 0) endRecord.set(cursor.take(commentLength), eocd.length);
+        for (let index = 0; index + 4 <= endRecord.length; index += 1) {
+          if (readUint32Le(endRecord, index) === 0x06054b50) {
+            throw tarError("zip end of central directory record is ambiguous");
+          }
         }
         if (await cursor.fill(1))
           throw tarError("trailing data after zip end of central directory");

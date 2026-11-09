@@ -30,6 +30,13 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # The archive differential suite reads PyPI archives with CPython as pip
+      # does; 3.12+ applies the zip Unicode Path field, and pinning keeps the
+      # expected-fail cases from flipping with the runner image's Python.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 

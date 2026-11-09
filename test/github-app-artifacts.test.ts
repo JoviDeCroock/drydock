@@ -6,6 +6,7 @@ import {
   fetchReleaseBundleWithToken,
   processReleaseBundleWithToken,
 } from "../server/lib/github-app/artifacts";
+import { extractOuterZipEntries } from "../server/lib/github-app/artifacts-zip";
 import { buildZip, concatBytes, type ZipEntry } from "./helpers/archive-fixtures";
 import { stubGithubFetch } from "./helpers/github-fetch-stub";
 import { githubRunResponse } from "./helpers/github-run-stub";
@@ -695,5 +696,25 @@ describe("evaluateGithubArtifactEgress", () => {
       evaluateGithubArtifactEgress("https://productionresultssa4.blob.core.windows.net/x").allowed,
     ).toBe(false);
     expect(evaluateGithubArtifactEgress("not a url").allowed).toBe(false);
+  });
+});
+
+describe("extractOuterZipEntries end record", () => {
+  test("fails closed unless the end record names exactly the central directory read", async () => {
+    const zip = buildZip([{ path: "dist/demo-1.0.0.tar.gz", body: "sdist" }]);
+    await expect(extractOuterZipEntries(zip)).resolves.toHaveLength(1);
+    const end = zip.length - 22;
+    const shortened = zip.slice();
+    const view = new DataView(shortened.buffer);
+    view.setUint32(end + 12, view.getUint32(end + 12, true) - 1, true);
+    await expect(extractOuterZipEntries(shortened)).rejects.toMatchObject({
+      code: "bundle_unavailable",
+    });
+    const locator = new Uint8Array(20);
+    new DataView(locator.buffer).setUint32(0, 0x07064b50, true);
+    const withLocator = buildZip([
+      { path: "dist/demo-1.0.0.tar.gz", body: "sdist", centralComment: locator },
+    ]);
+    await expect(extractOuterZipEntries(withLocator)).rejects.toThrow(/zip64/);
   });
 });

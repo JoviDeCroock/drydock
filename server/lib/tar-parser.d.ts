@@ -169,6 +169,7 @@ export function readTarStream(
 export function readUint16Le(bytes: Uint8Array, offset: number): number;
 export function readUint32Le(bytes: Uint8Array, offset: number): number;
 export function findZipEndOfCentralDirectory(bytes: Uint8Array): number;
+export function assertZipEndRecordConsistent(bytes: Uint8Array, eocd: number): void;
 export function inflateRawBounded(bytes: Uint8Array, maxBytes: number): Promise<Uint8Array>;
 export function readZipArchive(
   buffer: ArrayBuffer | Uint8Array,
