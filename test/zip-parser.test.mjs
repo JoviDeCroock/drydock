@@ -542,6 +542,30 @@ describe("readZipStream", () => {
     await expect(parseStream(extended)).rejects.toThrow(/trailing data/);
   });
 
+  test("rejects an end record whose comment holds another end record signature", async () => {
+    const entries = [{ path: "demo/a.py", body: "a\n" }];
+    const comment = new Uint8Array(22);
+    new DataView(comment.buffer).setUint32(0, 0x06054b50, true);
+    await expect(parseStream(buildZip(entries, { comment }))).rejects.toThrow(/ambiguous/);
+    // An ordinary comment is still read.
+    const plain = buildZip(entries, { comment: encoder.encode("built by a tool") });
+    expect((await parseStream(plain)).files.map((f) => f.path)).toEqual(["demo/a.py"]);
+  });
+
+  test("buffered reader rejects an end record whose comment length misses the file end", async () => {
+    // yauzl, which VS Code installs through, refuses the same archive.
+    const zip = buildZip([{ path: "extension/package.json", body: "{}" }], {
+      comment: encoder.encode("note"),
+    });
+    const extended = new Uint8Array(zip.length + 8);
+    extended.set(zip, 0);
+    await expect(readZipArchiveBuffered(extended, 100, 1 << 20)).rejects.toThrow(
+      /invalid zip end of central directory/,
+    );
+    const ok = await readZipArchiveBuffered(zip, 100, 1 << 20);
+    expect(ok.files.map((f) => f.path)).toEqual(["extension/package.json"]);
+  });
+
   test("fails closed when cumulative declared expansion exceeds the stream cap", async () => {
     const big = new Uint8Array(4096).fill(0x41);
     const zip = buildZip([{ path: "demo/big.bin", body: big }]);

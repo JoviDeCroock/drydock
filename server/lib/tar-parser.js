@@ -1532,6 +1532,20 @@ export async function readTarStream(
       // an ordinary file, so it is read as one here.
       const namedDirectory = (type === "0" || type === nul) && namePath.endsWith("/");
       const isRegular = !namedDirectory && (type === "0" || type === nul || type === "7");
+      // pip's CPython tarfile sizes two record shapes differently from
+      // node-tar. It reads a `0` typeflag (not NUL) whose name ends in `/` as a
+      // regular file with its declared body, and it reads no body at all for
+      // link, device, and FIFO records. Either body puts the two readers on
+      // different block boundaries for the rest of the archive, and no writer
+      // emits one, so every parse whose consumer may be pip fails closed. npm's
+      // `strip1` parse answers to node-tar alone. `type` folds NUL into `0`, so
+      // the raw byte tells the two typeflags apart.
+      const pipMayRead = rootStrip !== "strip1";
+      const regularTypeDirectory = namedDirectory && header[156] === 0x30;
+      const bodylessForPip = type.length === 1 && "12346".includes(type);
+      if (pipMayRead && size > 0 && (regularTypeDirectory || bodylessForPip)) {
+        throw tarError("tar entry declares a body that readers size differently");
+      }
       // A directory record carries no body whatever it declares: node-tar zeroes
       // the size, so a directory claiming one would swallow the entries npm goes
       // on to extract.
@@ -1783,6 +1797,14 @@ export async function readTarStream(
           path: reportedPath,
           detail: `typeflag ${reportedType} (${describeNonRegularType(reportedType)})`,
         });
+        if (pipMayRead && regularTypeDirectory) {
+          addSuspicious({
+            kind: "parser-differential",
+            path: reportedPath || "<unnamed>",
+            detail:
+              "member has a regular-file typeflag `0` and a name ending in `/`; node-tar reads it as a directory, while pip's CPython tarfile writes an empty file at that name",
+          });
+        }
         discloseMetadataShape(reportedPath || "<unnamed>");
         if (!(await discard(size))) throw tarError("truncated tar entry");
         pax = null;
@@ -1899,6 +1921,12 @@ export async function readZipArchiveBuffered(
   const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   const eocd = findZipEndOfCentralDirectory(bytes);
   if (eocd < 0) throw tarError("zip central directory not found");
+  // yauzl (VS Code) takes this same last signature but refuses it unless its
+  // comment runs exactly to the end of the file, so a record it would refuse is
+  // not one this reader reviews either.
+  if (readUint16Le(bytes, eocd + 20) !== bytes.length - eocd - 22) {
+    throw tarError("invalid zip end of central directory");
+  }
 
   const entryCount = readUint16Le(bytes, eocd + 10);
   const entryLimit = Math.max(Number.isFinite(maxEntries) ? maxEntries : maxFiles, maxFiles);
@@ -2411,8 +2439,21 @@ export async function readZipStream(
             throw tarError("zip central directory does not match local entries");
           }
         }
-        if (commentLength > 0 && !(await cursor.discard(commentLength))) {
+        if (commentLength > 0 && !(await cursor.fill(commentLength))) {
           throw tarError("truncated zip central directory");
+        }
+        // This walk takes the first end record after the central directory;
+        // CPython's zipfile (pip) searches backwards from the end of the file
+        // and takes the last one it finds. A second signature in this record's
+        // fields or comment is one CPython may pick instead, with its own
+        // central directory, so it fails closed.
+        const endRecord = new Uint8Array(eocd.length + commentLength);
+        endRecord.set(eocd, 0);
+        if (commentLength > 0) endRecord.set(cursor.take(commentLength), eocd.length);
+        for (let index = 0; index + 4 <= endRecord.length; index += 1) {
+          if (readUint32Le(endRecord, index) === 0x06054b50) {
+            throw tarError("zip end of central directory record is ambiguous");
+          }
         }
         if (await cursor.fill(1))
           throw tarError("trailing data after zip end of central directory");

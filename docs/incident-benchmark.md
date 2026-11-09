@@ -38,7 +38,7 @@ Artifact risk (includes existing capabilities) and release risk (scores attribut
 
 | Report | Rules | Malicious caught | Benign FPs |
 | --- | --- | --- | --- |
-| `v1.json` (suite 1.0.0) | 1.58.0 | 2/2 | 0/2 (both controls low release risk) |
+| `v1.json` (suite 1.0.0) | 1.59.0 | 2/2 | 0/2 (both controls low release risk) |
 | `v1-rules-1.47.0.json` (archived) | 1.47.0 | 2/2 | 2/2 |
 
 - Attack and control fixture bytes are identical across both reports; per-fixture SHA-256 values prove it (the corpus digest differs because it covers report metadata).

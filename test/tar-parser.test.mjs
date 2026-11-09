@@ -1462,7 +1462,9 @@ describe("readTar limits and malformed archives", () => {
     const limits = { maxFiles: 100, maxTarBytes: 1024 };
     const big = new Uint8Array(2048).fill(0x42);
     const tar = buildTar([{ name: "package/link", type: "2", body: big }]);
-    await expect(parse(tar, limits)).rejects.toThrow(/invalid tar entry size/);
+    await expect(
+      readTar(tar.buffer, limits.maxFiles, limits.maxTarBytes, 0, "strip1"),
+    ).rejects.toThrow(/invalid tar entry size/);
   });
 
   test("duplicate paths still count toward the file-count cap", async () => {
@@ -2084,12 +2086,48 @@ describe("readTar limits and malformed archives", () => {
     expect((await parse(tar)).map((f) => f.path)).toEqual(["binding.gyp"]);
   });
 
-  test("ignores the size a `0` entry named like a directory declares", async () => {
+  test("ignores the size a `0` entry named like a directory declares under npm's parse", async () => {
     const tar = concatBytes([
       buildTarHeaderOnly({ name: "package/dir/", type: "0", size: 1024 }),
       buildTar([{ name: "package/binding.gyp", body: "{}" }]),
     ]);
-    expect((await parse(tar)).map((f) => f.path)).toEqual(["binding.gyp"]);
+    const { files } = await readTar(tar.buffer, 2_500, 1 << 20, 0, "strip1");
+    expect(files.map((f) => f.path)).toEqual(["binding.gyp"]);
+  });
+
+  test.each(["keep", "package-prefix"])(
+    "fails closed under the %s parse on records pip sizes differently from node-tar",
+    async (rootStrip) => {
+      for (const header of [
+        buildTarHeaderOnly({ name: "demo-1.0/dir/", type: "0", size: 1024 }),
+        buildTarHeaderOnly({ name: "demo-1.0/link", type: "2", size: 1024, linkname: "x" }),
+        buildTarHeaderOnly({ name: "demo-1.0/hard", type: "1", size: 1024, linkname: "x" }),
+        buildTarHeaderOnly({ name: "demo-1.0/fifo", type: "6", size: 1024 }),
+      ]) {
+        const tar = concatBytes([header, buildTar([{ name: "demo-1.0/setup.py", body: "x\n" }])]);
+        await expect(readTar(tar.buffer, 2_500, 1 << 20, 0, rootStrip)).rejects.toThrow(
+          /declares a body that readers size differently/,
+        );
+      }
+    },
+  );
+
+  test("discloses a bodiless `0` entry named like a directory when pip may read it", async () => {
+    const tar = concatBytes([
+      buildTarHeaderOnly({ name: "demo-1.0/data/", type: "0", size: 0 }),
+      buildTar([{ name: "demo-1.0/setup.py", body: "x\n" }]),
+    ]);
+    const keep = await readTar(tar.buffer, 2_500, 1 << 20, 0, "keep");
+    expect(keep.files.map((f) => f.path)).toEqual(["demo-1.0/setup.py"]);
+    expect(keep.suspicious).toContainEqual(
+      expect.objectContaining({
+        kind: "parser-differential",
+        path: "demo-1.0/data",
+        detail: expect.stringContaining("regular-file typeflag `0`"),
+      }),
+    );
+    const npm = await readTar(tar.buffer, 2_500, 1 << 20, 0, "strip1");
+    expect(npm.suspicious.map((entry) => entry.kind)).not.toContain("parser-differential");
   });
 
   test.each([

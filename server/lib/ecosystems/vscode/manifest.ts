@@ -31,10 +31,18 @@ export function extensionIdFromManifest(
 export function normalizeVsixFiles(files: FileRecord[]): FileRecord[] {
   return files
     .map((file) => {
-      // VSIX ZIPs store the installed extension payload under `extension/`.
-      // Container-level metadata must not shadow payload paths after stripping.
-      if (!file.path.startsWith("extension/")) return null;
-      const path = file.path.slice("extension/".length);
+      // VS Code installs every entry whose name starts with `extension`: its
+      // zip extractor strips `^extension` with no trailing slash, so a root
+      // entry `extensionfoo.js` is written as `foo.js`. Records are mapped the
+      // same way, so each body is reviewed at the path VS Code writes, and one
+      // that lands on another entry's path (a second `package.json`) fails the
+      // unique-path check in parseVscodeExtensionManifest. vsce's root
+      // `extension.vsixmanifest` is package metadata VS Code keeps beside the
+      // payload, not extension code, so it stays out as before.
+      if (!file.path.startsWith("extension") || file.path === "extension.vsixmanifest") {
+        return null;
+      }
+      const path = file.path.slice("extension".length).replace(/^\/+/, "");
       return path ? { ...file, path } : null;
     })
     .filter((file): file is FileRecord => file !== null);

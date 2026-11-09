@@ -5,6 +5,7 @@ import {
   buildVscodeReleaseManifest,
   createVscodeExtensionReview,
   isAllowedVscodeArtifactUrl,
+  normalizeVsixFiles,
   pickVscodeBaselineVersion,
   vscodeAdapter,
   VSCODE_RULE_IDS,
@@ -157,6 +158,40 @@ describe("VS Code extension review adapter", () => {
         ]),
       }),
     ).toThrow(/duplicate path package\.json/);
+  });
+
+  test("reviews a root entry at the path VS Code's `extension` prefix strip installs it", () => {
+    const manifest = buildVscodeReleaseManifest("example.remote-text-fetcher", "1.0.0", [
+      { path: "dist/remote-text-fetcher-1.0.0.vsix", sha256: SHA },
+    ]);
+    const review = (files) => () =>
+      createVscodeExtensionReview({ manifest, artifact: artifact(files) });
+
+    // A second manifest that VS Code would write over the first fails closed.
+    expect(
+      review([
+        file("extension/package.json", extensionPackageJson()),
+        file(
+          "extensionpackage.json",
+          extensionPackageJson({ activationEvents: ["onCommand:remoteTextFetcher.run"] }),
+        ),
+        file("extension/out/extension.js", "exports.activate = () => {};"),
+      ]),
+    ).toThrow(/duplicate path package\.json/);
+
+    const files = [
+      file("extension.vsixmanifest", "<PackageManifest/>"),
+      file("extension/package.json", extensionPackageJson()),
+      file("extensionout/extra.js", "exports.x = 1;"),
+      file("extension/out/extension.js", "exports.activate = () => {};"),
+      file("readme.md", "outside the payload"),
+    ];
+    expect(normalizeVsixFiles(files).map((f) => f.path)).toEqual([
+      "package.json",
+      "out/extra.js",
+      "out/extension.js",
+    ]);
+    expect(review(files)().fileCount).toBe(3);
   });
 
   test("detects startup remote command loader behavior in a VSIX", () => {
