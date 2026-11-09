@@ -1,4 +1,5 @@
 import {
+  assertZipEndRecordConsistent,
   assertZipUnicodePath,
   decodeZipName,
   findZipEndOfCentralDirectory,
@@ -36,6 +37,14 @@ export async function extractOuterZipEntries(zip: Uint8Array): Promise<Extracted
     centralDirectoryOffset === 0xffffffff
   ) {
     throw new WorkflowArtifactError("bundle_unavailable", "zip64 archives are not supported");
+  }
+  try {
+    assertZipEndRecordConsistent(zip, eocd);
+  } catch (err) {
+    throw new WorkflowArtifactError(
+      "bundle_unavailable",
+      err instanceof Error ? err.message : "invalid zip end of central directory",
+    );
   }
   if (entryCount > MAX_OUTER_ZIP_ENTRIES) {
     throw new WorkflowArtifactError("bundle_too_large", "artifact zip contains too many entries");
@@ -138,6 +147,12 @@ export async function extractOuterZipEntries(zip: Uint8Array): Promise<Extracted
     }
     totalExpanded += body.byteLength;
     entries.push({ path, bytes: body });
+  }
+  if (offset !== eocd) {
+    throw new WorkflowArtifactError(
+      "bundle_unavailable",
+      "zip end of central directory does not match the central directory",
+    );
   }
   return entries;
 }

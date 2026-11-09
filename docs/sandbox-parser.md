@@ -39,7 +39,7 @@ Bulk demotions (budget spent, tier full) produce one `retention-tier` suspicious
 | `X` / `N` / `K` extended headers, 1 MiB metadata limit | as node-tar |
 | Typeflag `7` | regular file |
 | Root stripping | npm and atpm: `strip: 1` (first component, any name); PyPI: keep the sdist root; workflow gate with unknown ecosystem: strip a literal `package/` |
-| Body sizing pip disagrees with (`0` typeflag named with a trailing `/`; link, device, FIFO) | a declared body fails closed in parses pip may read (PyPI, gate); size 0 on the `0` shape is a `parser-differential` |
+| Body sizing pip disagrees with (directory-by-name where node-tar and CPython disagree; link, device, FIFO) and old GNU sparse `S` | a declared body, or any `S`, fails closed in parses pip may read (PyPI, gate); size 0 on the directory shape is a `parser-differential` |
 | Anything that makes readers disagree, including a path not representable as a safe relative path | `parser-differential` suspicious entry, never silently resolved or dropped |
 
 ## ZIP reading rules
@@ -49,7 +49,7 @@ Bulk demotions (budget spent, tier full) produce one `retention-tier` suspicious
 | Wheels | streamed over local headers; every central-directory record cross-checked; mismatch fails closed |
 | Data-descriptor, encrypted, zip64 entries | fail closed |
 | VSIX (yazl-packed with data descriptors) | buffered central-directory-first parse under the wire cap |
-| End record | wheels: an end-record signature inside the comment fails closed; VSIX: a comment length that misses the file end fails closed, as yauzl does |
+| End record | must name exactly the central directory read (wheels: the one streamed; VSIX and GitHub artifact zips: ending at the end record, filled by its records), with the comment reaching the file end, no second signature in it, and no zip64 locator before it; otherwise fail closed |
 | VSIX paths | mapped through VS Code's `extension` prefix strip (no slash required); a path two entries map to fails closed |
 | Entry names | cp437 unless general-purpose bit 11 marks UTF-8, as pip's `zipfile` and yauzl decode the raw name |
 | Info-ZIP Unicode Path field (0x7075) | CPython 3.12+ and yauzl rename by it, CPython 3.11 does not: an applicable field (version 1, CRC of the raw name) naming a different path, or holding invalid UTF-8, fails closed; malformed extra-field framing fails closed |
@@ -60,8 +60,8 @@ Bulk demotions (budget spent, tier full) produce one `retention-tier` suspicious
 
 | Ecosystem | Drydock path | Consumer model |
 | --- | --- | --- |
-| npm | gzip `DecompressionStream` + `readTarStream`, `strip1` | node-tar `Parser` with pacote's filter (links dropped, `.gitignore` rename) and an in-memory model of `Unpack`'s path checks and file/directory conflicts |
-| PyPI sdist | `readTarStream`, `keep`, then `preparePyPiArtifact`'s root strip | `test/helpers/cpython-archive-consumer.py`: pip's `untar_file` (leading-dir strip, `data_filter`), replayed in memory; no `pyproject.toml`/`setup.py` at the top is a refused build |
+| npm | gzip `DecompressionStream` + `readTarStream`, `strip1` | node-tar `Parser` with pacote's filter (links dropped, `.gitignore` rename) and an in-memory model of `Unpack`'s path checks and file/directory conflicts. Checked against both node-tar 7.5.22 (npm 12) and 7.5.15 (npm 11, bundled with Node 22 and 24), which size a pax `size` before a long-name header differently |
+| PyPI sdist | `readTarStream`, `keep`, then `preparePyPiArtifact`'s root strip | `test/helpers/cpython-archive-consumer.py`: pip 25.1's `untar_file` (leading-dir strip on names and same-root hardlink targets, `data_filter`), replayed in memory; no `pyproject.toml`/`setup.py` at the top is a refused build |
 | PyPI wheel | `readZipStream` | the same script: `zipfile` `namelist()` + `normpath` + `open(getinfo(name))` |
 | VS Code | `readZipArchiveBuffered`, then the adapter's `normalizeVsixFiles` | yauzl as VS Code's `vs/base/node/zip` extractor drives it (`^extension` stripped, `extension.vsixmanifest` aliased to `.vsixmanifest`) |
 
@@ -70,16 +70,17 @@ Bulk demotions (budget spent, tier full) produce one `retention-tier` suspicious
 | Same entry set | yes |
 | Consumer refuses the archive, or Drydock's parse throws | yes (fail closed) |
 | Every disagreement covered by an archive-level `parser-differential`, a per-path `parser-differential`/`duplicate`/`unicode-confusable`/non-directory `non-regular`, or bytes Drydock reviewed under a disclosed path | yes |
+| Only extra reviewed files the consumer could not write (a file already at a parent path, or a populated directory at the same path) | yes: the reviewer sees more than is installed |
 | Anything else | no; the message names each `missing`/`extra`/`body`/`type` path |
 
 | Input | Source |
 | --- | --- |
 | Repository fixtures | e2e package directories packed as `npm pack` lays them out; security-corpus file layouts packed into their ecosystem's archive kind |
 | Crafted shapes | `NPM_CASES`, `PYPI_CASES`, `VSIX_CASES` in the test |
-| Properties | fast-check structural tar/zip mutations; seed `DIFFERENTIAL_SEED`, runs `DIFFERENTIAL_RUNS` (default 150). PyPI samples are drawn up front and checked in one interpreter; failures print the seed, run, and generated shape |
+| Properties | fast-check structural tar/zip mutations over six fixed seeds, `DIFFERENTIAL_RUNS` (default 250) each. `DIFFERENTIAL_SEED` pins one seed; `DIFFERENTIAL_RANDOM_SEEDS=<n>` draws fresh ones for a long local run. Samples are drawn up front (PyPI's in one interpreter); failures print the seed, run, and generated shape |
 
-1. Python: `DRYDOCK_DIFFERENTIAL_PYTHON`, else `/opt/homebrew/bin/python3.13`, `python3.13`, `python3`, always with `-I`. Without one the PyPI block skips with a warning. CI pins 3.13; 3.12+ is needed for the Unicode Path cases.
-2. A case may carry `accepted: "<reason>"`, which runs it as `test.fails` with the reason in its name. Today only the npm file-then-child shape is accepted (low risk: Drydock reviews both entries, node-tar skips the child). Fix a new differential rather than accepting it unless it cannot hide content.
+1. Python: `DRYDOCK_DIFFERENTIAL_PYTHON`, else `/opt/homebrew/bin/python3.13`, `python3.13`, `python3`, always with `-I`. Without one the PyPI block skips with a warning locally and fails under `CI`. CI pins 3.13; 3.12+ is needed for the Unicode Path cases.
+2. Fix a new differential rather than widening the passing outcomes; only the reviewer-sees-more direction is accepted.
 3. Not modeled: case-insensitive or Windows filesystems, workerd's `DecompressionStream` (Node's stands in), and build steps after extraction.
 
 ## Native-binary sniffing

@@ -6,6 +6,7 @@
 // the installed entry set, fails closed, or discloses the disagreement. See
 // docs/sandbox-parser.md#differential-harness and test/helpers/archive-consumers.mjs.
 
+import { randomInt } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +21,7 @@ import {
   drydockVsix,
   drydockWheel,
   findPython,
+  NPM_TAR_READERS,
   npmInstall,
   pipInstallBatch,
   vscodeInstall,
@@ -38,13 +40,52 @@ import {
 } from "./helpers/archive-fixtures";
 
 const TEST_DIR = fileURLToPath(new URL(".", import.meta.url));
-const SEED = Number(process.env.DIFFERENTIAL_SEED) || 0x0d1ff;
-const RUNS = Number(process.env.DIFFERENTIAL_RUNS) || 150;
+// CI checks fixed seeds so every failure reproduces. DIFFERENTIAL_SEED pins one
+// seed; DIFFERENTIAL_RANDOM_SEEDS=<n> draws n fresh ones for a long local run
+// (with DIFFERENTIAL_RUNS raised). Seeds appear in test names, and a failure
+// names its seed, run, and generated shape.
+const FIXED_SEEDS = [0x0d1ff, 0x5eed01, 0x5eed02, 0x5eed03, 0x5eed04, 0x5eed05];
+const SEEDS = process.env.DIFFERENTIAL_SEED
+  ? [Number(process.env.DIFFERENTIAL_SEED)]
+  : Number(process.env.DIFFERENTIAL_RANDOM_SEEDS) > 0
+    ? Array.from({ length: Number(process.env.DIFFERENTIAL_RANDOM_SEEDS) }, () =>
+        randomInt(2 ** 31),
+      )
+    : FIXED_SEEDS;
+const RUNS = Number(process.env.DIFFERENTIAL_RUNS) || 250;
 
-const PASSING = new Set(["agree", "consumer-refused", "drydock-failed-closed", "disclosed"]);
+// fast-check samples rather than `fc.assert`: the PyPI consumer runs out of
+// process, so every ecosystem draws its archives up front the same way.
+function seededSamples(arbitrary, seed) {
+  return fc
+    .sample(arbitrary, { seed, numRuns: RUNS })
+    .map((archive, run) => ({ seed, run, archive }));
+}
+
+function sampleLabel(kind, sample) {
+  return `${kind} seed ${sample.seed} run ${sample.run}: ${JSON.stringify(sample.archive)}`;
+}
+
+const PASSING = new Set([
+  "agree",
+  "consumer-refused",
+  "drydock-failed-closed",
+  "disclosed",
+  "reviewed-unwritable-child",
+]);
 
 function expectAgreement(label, comparison) {
   expect(PASSING.has(comparison.outcome), describeDifferential(label, comparison)).toBe(true);
+}
+
+async function expectNpmAgreement(label, bytes) {
+  const drydock = await drydockNpm(bytes);
+  for (const reader of NPM_TAR_READERS) {
+    expectAgreement(
+      `${label} [${reader.label}]`,
+      compareInstalled(drydock, await npmInstall(bytes, reader.Parser)),
+    );
+  }
 }
 
 const gz = (tar) => new Uint8Array(gzipSync(tar));
@@ -160,8 +201,7 @@ function block(body) {
 
 const endOfArchive = () => new Uint8Array(TAR_BLOCK * 2);
 
-// Each case names the consumer it targets. `accepted` marks a known
-// disagreement left in place on purpose; its test is expected to fail.
+// Each case names the consumer it targets.
 const NPM_CASES = [
   {
     name: "plain package",
@@ -221,6 +261,27 @@ const NPM_CASES = [
       ),
   },
   {
+    // node-tar 7.5.15 (npm 11) sizes the long-name header's body with the
+    // pending pax `size`; 7.5.22 (npm 12) applies it only to the member.
+    name: "pending pax size before a GNU long name",
+    bytes: () =>
+      gz(
+        concatBytes([
+          tarEntriesOnly(
+            buildTar([{ name: "PaxHeader/x", type: "x", body: paxBody([["size", "1024"]]) }]),
+          ),
+          rawHeader({ name: "././@LongLink", type: "L", size: 20 }),
+          block("package/a.js"),
+          rawHeader({ name: "package/b.js", size: 1024 }),
+          rawHeader({ name: "package/a.js", size: 1024 }),
+          block("x".repeat(512)),
+          rawHeader({ name: "package/c.js", size: 512 }),
+          block("y".repeat(512)),
+          endOfArchive(),
+        ]),
+      ),
+  },
+  {
     name: "ustar prefix field",
     bytes: () => gz(buildTar([{ name: "index.js", prefix: "package/lib", body: "prefixed" }])),
   },
@@ -253,7 +314,6 @@ const NPM_CASES = [
   },
   {
     name: "file then a child under the same name",
-    accepted: "low risk: Drydock reviews both entries, node-tar skips the child it cannot create",
     bytes: () =>
       gz(
         buildTar([
@@ -512,12 +572,6 @@ const VSIX_CASES = [
   },
 ];
 
-function caseTest(entry) {
-  return entry.accepted
-    ? { run: test.fails, named: `${entry.name} (accepted: ${entry.accepted})` }
-    : { run: test, named: entry.name };
-}
-
 // --- property generators --------------------------------------------------------
 
 const BODIES = fc.constantFrom("", "alpha\n", "beta\n", "x".repeat(700));
@@ -676,12 +730,9 @@ const NPM_NAMES = [
   "./package/index.js",
   "other/index.js",
   `package/${"d".repeat(110)}.js`,
+  "package/lib",
 ];
-// A file named like a directory that also has children is an accepted npm
-// disagreement (NPM_CASES), so only the sdist pool, where pip refuses it, has it.
-const SDIST_NAMES = [...NPM_NAMES, "package/lib"].map((name) =>
-  name.replaceAll("package", "demo-1.0"),
-);
+const SDIST_NAMES = NPM_NAMES.map((name) => name.replaceAll("package", "demo-1.0"));
 const WHEEL_NAMES = [
   "demo/__init__.py",
   "demo/__init__.py",
@@ -713,37 +764,25 @@ const VSIX_NAMES = [
 
 describe("archive differential: npm (node-tar as pacote extracts)", () => {
   test.each(e2ePackages())("$name", async ({ name, files }) => {
-    const bytes = npmTarball(files);
-    expectAgreement(name, compareInstalled(await drydockNpm(bytes), await npmInstall(bytes)));
+    await expectNpmAgreement(name, npmTarball(files));
   });
 
   test("security-corpus npm layouts", async () => {
     for (const { name, files } of corpusArchives().npm) {
-      const bytes = npmTarball(files);
-      expectAgreement(name, compareInstalled(await drydockNpm(bytes), await npmInstall(bytes)));
+      await expectNpmAgreement(name, npmTarball(files));
     }
   });
 
   for (const entry of NPM_CASES) {
-    const { run, named } = caseTest(entry);
-    run(named, async () => {
-      const bytes = entry.bytes();
-      expectAgreement(
-        entry.name,
-        compareInstalled(await drydockNpm(bytes), await npmInstall(bytes)),
-      );
+    test(entry.name, async () => {
+      await expectNpmAgreement(entry.name, entry.bytes());
     });
   }
 
-  test(`structural tar mutations (seed ${SEED}, ${RUNS} runs)`, async () => {
-    await fc.assert(
-      fc.asyncProperty(tarArchiveArbitrary(NPM_NAMES), async (archive) => {
-        const bytes = encodeTarArchive(archive);
-        const comparison = compareInstalled(await drydockNpm(bytes), await npmInstall(bytes));
-        expect(PASSING.has(comparison.outcome), describeDifferential("npm", comparison)).toBe(true);
-      }),
-      { seed: SEED, numRuns: RUNS },
-    );
+  test.each(SEEDS)(`structural tar mutations (seed %i, ${RUNS} runs)`, async (seed) => {
+    for (const sample of seededSamples(tarArchiveArbitrary(NPM_NAMES), seed)) {
+      await expectNpmAgreement(sampleLabel("npm", sample), encodeTarArchive(sample.archive));
+    }
   });
 });
 
@@ -758,8 +797,7 @@ describe("archive differential: VS Code (yauzl as VS Code extracts)", () => {
   });
 
   for (const entry of VSIX_CASES) {
-    const { run, named } = caseTest(entry);
-    run(named, async () => {
+    test(entry.name, async () => {
       const bytes = entry.bytes();
       expectAgreement(
         entry.name,
@@ -768,31 +806,33 @@ describe("archive differential: VS Code (yauzl as VS Code extracts)", () => {
     });
   }
 
-  test(`structural zip mutations (seed ${SEED}, ${RUNS} runs)`, async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        zipArchiveArbitrary(VSIX_NAMES, { dataDescriptors: true }),
-        async (archive) => {
-          const bytes = encodeZipArchive(archive, VSIX_NAMES);
-          const comparison = compareInstalled(await drydockVsix(bytes), await vscodeInstall(bytes));
-          expect(PASSING.has(comparison.outcome), describeDifferential("vsix", comparison)).toBe(
-            true,
-          );
-        },
-      ),
-      { seed: SEED, numRuns: RUNS },
-    );
+  test.each(SEEDS)(`structural zip mutations (seed %i, ${RUNS} runs)`, async (seed) => {
+    const arbitrary = zipArchiveArbitrary(VSIX_NAMES, { dataDescriptors: true });
+    for (const sample of seededSamples(arbitrary, seed)) {
+      const bytes = encodeZipArchive(sample.archive, VSIX_NAMES);
+      expectAgreement(
+        sampleLabel("vsix", sample),
+        compareInstalled(await drydockVsix(bytes), await vscodeInstall(bytes)),
+      );
+    }
   });
 });
 
 // --- PyPI ----------------------------------------------------------------------
 
 const python = findPython();
+const pythonMissing = `need Python 3.12+ (found ${python ? `${python.command} ${python.version}` : "none"}; set DRYDOCK_DIFFERENTIAL_PYTHON)`;
 if (!python?.supported) {
-  console.warn(
-    `archive differential: PyPI cases skipped; need Python 3.12+ (found ${python ? `${python.command} ${python.version}` : "none"}; set DRYDOCK_DIFFERENTIAL_PYTHON)`,
-  );
+  console.warn(`archive differential: PyPI cases skipped; ${pythonMissing}`);
 }
+
+// Locally a missing interpreter skips the PyPI block; CI must run it.
+test.runIf(!python?.supported && Boolean(process.env.CI))(
+  "archive differential: PyPI interpreter is available in CI",
+  () => {
+    expect.fail(`the PyPI differential cases cannot run: ${pythonMissing}`);
+  },
+);
 
 describe.skipIf(!python?.supported)(
   `archive differential: PyPI (CPython ${python?.version} as pip reads)`,
@@ -814,32 +854,28 @@ describe.skipIf(!python?.supported)(
     });
     // fast-check cannot drive an out-of-process consumer per run, so the samples
     // are drawn up front from the seed and checked in one interpreter.
-    const samples = [
-      ...fc
-        .sample(tarArchiveArbitrary(SDIST_NAMES), { seed: SEED, numRuns: RUNS })
-        .map((archive, run) => ({
-          kind: "sdist",
-          run,
-          archive,
-          bytes: encodeTarArchive(archive, { lead: [tarEntriesOnly(buildTar([PYPROJECT]))] }),
-        })),
-      ...fc
-        .sample(zipArchiveArbitrary(WHEEL_NAMES, { dataDescriptors: false }), {
-          seed: SEED,
-          numRuns: RUNS,
-        })
-        .map((archive, run) => ({
+    const samples = SEEDS.flatMap((seed) => [
+      ...seededSamples(tarArchiveArbitrary(SDIST_NAMES), seed).map((sample) => ({
+        ...sample,
+        kind: "sdist",
+        bytes: encodeTarArchive(sample.archive, {
+          lead: [tarEntriesOnly(buildTar([PYPROJECT]))],
+        }),
+      })),
+      ...seededSamples(zipArchiveArbitrary(WHEEL_NAMES, { dataDescriptors: false }), seed).map(
+        (sample) => ({
+          ...sample,
           kind: "wheel",
-          run,
-          archive,
-          bytes: encodeZipArchive(archive, WHEEL_NAMES),
-        })),
-    ].map((sample) => ({ ...sample, index: enqueue(sample.kind, sample.bytes) }));
+          bytes: encodeZipArchive(sample.archive, WHEEL_NAMES),
+        }),
+      ),
+    ]).map((sample) => ({ ...sample, index: enqueue(sample.kind, sample.bytes) }));
 
     let results;
+    // Long random runs batch thousands of archives into one interpreter.
     beforeAll(() => {
       results = pipInstallBatch(jobs);
-    });
+    }, 600_000);
 
     const drydock = (kind, bytes) => (kind === "sdist" ? drydockSdist(bytes) : drydockWheel(bytes));
 
@@ -854,8 +890,7 @@ describe.skipIf(!python?.supported)(
 
     for (const job of caseJobs) {
       const { entry } = job;
-      const { run, named } = caseTest(entry);
-      run(named, async () => {
+      test(entry.name, async () => {
         expectAgreement(
           entry.name,
           compareInstalled(await drydock(entry.kind, job.bytes), results[job.index]),
@@ -864,16 +899,13 @@ describe.skipIf(!python?.supported)(
     }
 
     for (const kind of ["sdist", "wheel"]) {
-      test(`structural ${kind} mutations (seed ${SEED}, ${RUNS} runs)`, async () => {
-        for (const sample of samples.filter((candidate) => candidate.kind === kind)) {
-          const comparison = compareInstalled(
-            await drydock(kind, sample.bytes),
-            results[sample.index],
+      test.each(SEEDS)(`structural ${kind} mutations (seed %i, ${RUNS} runs)`, async (seed) => {
+        const mine = samples.filter((sample) => sample.kind === kind && sample.seed === seed);
+        for (const sample of mine) {
+          expectAgreement(
+            sampleLabel(kind, sample),
+            compareInstalled(await drydock(kind, sample.bytes), results[sample.index]),
           );
-          expect(
-            PASSING.has(comparison.outcome),
-            `${describeDifferential(kind, comparison)}\nseed ${SEED} run ${sample.run}: ${JSON.stringify(sample.archive)}`,
-          ).toBe(true);
         }
       });
     }

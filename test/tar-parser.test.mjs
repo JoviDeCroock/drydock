@@ -2112,6 +2112,69 @@ describe("readTar limits and malformed archives", () => {
     },
   );
 
+  test.each(["keep", "package-prefix"])(
+    "fails closed under the %s parse when node-tar and pip disagree on a directory",
+    async (rootStrip) => {
+      const cases = [
+        // NUL typeflag: CPython goes by the header's own name, node-tar by the
+        // final pax or GNU long name.
+        [{ name: "demo-1.0/x/", type: "\0", size: 1024 }, ["path", "demo-1.0/readme.txt"], "x"],
+        [{ name: "demo-1.0/lib", type: "\0", size: 1024 }, ["path", "demo-1.0/lib/"], "x"],
+        [{ name: "demo-1.0/x/", type: "\0", size: 1024 }, null, "L", "demo-1.0/readme.txt"],
+        [{ name: "demo-1.0/lib", type: "\0", size: 1024 }, null, "L", "demo-1.0/lib/"],
+      ];
+      for (const [entry, record, metaType, longName] of cases) {
+        const meta =
+          metaType === "x"
+            ? { name: "PaxHeader", type: "x", body: paxBody([record]) }
+            : { name: "././@LongLink", type: "L", body: `${longName}\0` };
+        const tar = concatBytes([
+          tarEntriesOnly(buildTar([meta])),
+          buildTarHeaderOnly(entry),
+          buildTar([{ name: "demo-1.0/setup.py", body: "x\n" }]),
+        ]);
+        await expect(readTar(tar.buffer, 2_500, 1 << 20, 0, rootStrip)).rejects.toThrow(
+          /declares a body that readers size differently/,
+        );
+        // npm's parse answers to node-tar alone and reads on.
+        await expect(readTar(tar.buffer, 2_500, 1 << 20, 0, "strip1")).resolves.toBeDefined();
+      }
+    },
+  );
+
+  test("discloses a bodiless NUL entry that pip reads as a directory and node-tar as a file", async () => {
+    const tar = concatBytes([
+      tarEntriesOnly(
+        buildTar([
+          { name: "PaxHeader", type: "x", body: paxBody([["path", "demo-1.0/readme.txt"]]) },
+        ]),
+      ),
+      buildTarHeaderOnly({ name: "demo-1.0/x/", type: "\0", size: 0 }),
+      buildTar([{ name: "demo-1.0/setup.py", body: "x\n" }]),
+    ]);
+    const { suspicious } = await readTar(tar.buffer, 2_500, 1 << 20, 0, "keep");
+    expect(suspicious).toContainEqual(
+      expect.objectContaining({
+        kind: "parser-differential",
+        path: "demo-1.0/readme.txt",
+        detail: expect.stringContaining("creates a directory there"),
+      }),
+    );
+  });
+
+  test("fails closed on an old GNU sparse record when pip may read the archive", async () => {
+    const tar = concatBytes([
+      buildTarHeaderOnly({ name: "demo-1.0/setup.py", type: "S", size: 0 }),
+      buildTar([{ name: "demo-1.0/pyproject.toml", body: "x\n" }]),
+    ]);
+    for (const rootStrip of ["keep", "package-prefix"]) {
+      await expect(readTar(tar.buffer, 2_500, 1 << 20, 0, rootStrip)).rejects.toThrow(
+        /old GNU sparse record/,
+      );
+    }
+    await expect(readTar(tar.buffer, 2_500, 1 << 20, 0, "strip1")).resolves.toBeDefined();
+  });
+
   test("discloses a bodiless `0` entry named like a directory when pip may read it", async () => {
     const tar = concatBytes([
       buildTarHeaderOnly({ name: "demo-1.0/data/", type: "0", size: 0 }),
@@ -2123,7 +2186,9 @@ describe("readTar limits and malformed archives", () => {
       expect.objectContaining({
         kind: "parser-differential",
         path: "demo-1.0/data",
-        detail: expect.stringContaining("regular-file typeflag `0`"),
+        detail: expect.stringContaining(
+          "pip's CPython tarfile, which spots a directory only by a NUL typeflag",
+        ),
       }),
     );
     const npm = await readTar(tar.buffer, 2_500, 1 << 20, 0, "strip1");

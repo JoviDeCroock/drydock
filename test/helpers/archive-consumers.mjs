@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Parser } from "tar";
+import { Parser as NpmElevenParser } from "tar-npm11";
 import yauzl from "yauzl";
 import { preparePyPiArtifact } from "../../server/lib/ecosystems/pypi/acquire";
 import { normalizeVsixFiles } from "../../server/lib/ecosystems/vscode/manifest";
@@ -201,12 +202,20 @@ function treeEntries(tree, root) {
   return entries;
 }
 
-export function npmInstall(gzBytes) {
+// npm 12 depends on node-tar ^7.5.22; npm 11, which Node 22 and 24 bundle,
+// ships 7.5.15. They disagree on whether a pending pax `size` also sizes an
+// intervening long-name header, so each archive is checked against both.
+export const NPM_TAR_READERS = [
+  { label: "npm 12 (node-tar 7.5.22)", Parser },
+  { label: "npm 11 (node-tar 7.5.15)", Parser: NpmElevenParser },
+];
+
+export function npmInstall(gzBytes, TarParser = Parser) {
   return new Promise((resolve) => {
     const tree = new Map();
     const sawIgnores = new Set();
     let fatal = null;
-    const parser = new Parser({
+    const parser = new TarParser({
       // pacote's #tarxOptions filter: links are dropped, directories are
       // implied by their files, `.gitignore` becomes `.npmignore`.
       filter: (_name, entry) => {
@@ -435,7 +444,11 @@ function samePath(disclosed, installed) {
  * Passing outcomes: `agree`, `consumer-refused` (the install fails),
  * `drydock-failed-closed` (the parse throws), `disclosed` (every disagreement
  * is covered by an archive-level `parser-differential` or a per-path
- * disclosure). Otherwise `differential`, with each disagreement's kind.
+ * disclosure), `reviewed-unwritable-child` (the only disagreements are files
+ * Drydock reviews where the consumer had already written a file at a parent
+ * path or a populated directory at the same path, so it could not create
+ * them: the reviewer sees more than is installed). Otherwise
+ * `differential`, with each disagreement's kind.
  */
 export function compareInstalled(drydock, consumer) {
   if (!consumer.ok)
@@ -460,11 +473,25 @@ export function compareInstalled(drydock, consumer) {
       disagreements.push({ kind: "body", path: installedPath, sha256: entry.sha256 });
     }
   }
+  let unwritableChildren = 0;
   for (const [reviewedPath, file] of reviewed) {
-    if (!consumer.entries.has(reviewedPath))
-      disagreements.push({ kind: "extra", path: reviewedPath, sha256: file.sha256 });
+    if (consumer.entries.has(reviewedPath)) continue;
+    const parts = reviewedPath.split("/");
+    const underInstalledFile = parts
+      .slice(1)
+      .some(
+        (_part, index) =>
+          consumer.entries.get(parts.slice(0, index + 1).join("/"))?.type === "file",
+      );
+    const overInstalledDirectory = [...consumer.entries.keys()].some((installed) =>
+      installed.startsWith(`${reviewedPath}/`),
+    );
+    if (underInstalledFile || overInstalledDirectory) unwritableChildren += 1;
+    else disagreements.push({ kind: "extra", path: reviewedPath, sha256: file.sha256 });
   }
-  if (!disagreements.length) return { outcome: "agree", disagreements };
+  if (!disagreements.length) {
+    return { outcome: unwritableChildren ? "reviewed-unwritable-child" : "agree", disagreements };
+  }
   const disclosures = drydock.suspicious.filter(isDisclosure);
   const archiveWide = disclosures.some(
     (entry) => entry.kind === "parser-differential" && entry.path === "<archive>",

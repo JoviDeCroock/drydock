@@ -43,7 +43,7 @@
         {
           "kind": "parser-differential",
           "path": "demo_package-1.2.0/demo_package/__init__.py",
-          "detail": "member has a regular-file typeflag `0` and a name ending in `/`; node-tar reads it as a directory, while pip's CPython tarfile writes an empty file at that name"
+          "detail": "node-tar reads the member as a directory because its name ends in `/`, while pip's CPython tarfile, which spots a directory only by a NUL typeflag and a header name ending in `/`, writes an empty file there"
         }
       ]
     }

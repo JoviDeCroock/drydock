@@ -72,6 +72,7 @@ const SANDBOX_TAR_PARSER_EXPORTS = [
   tarParser.inflateRetainedZipEntry,
   tarParser.readZipStream,
   tarParser.findZipEndOfCentralDirectory,
+  tarParser.assertZipEndRecordConsistent,
   tarParser.inflateRawBounded,
   tarParser.readStreamBounded,
   tarParser.readZipArchiveBuffered,

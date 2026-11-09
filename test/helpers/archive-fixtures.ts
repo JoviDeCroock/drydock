@@ -40,6 +40,8 @@ export interface ZipEntry {
   crc?: number;
   /** Raw name bytes for the central record only, when it should differ from the local one. */
   centralNameBytes?: Uint8Array;
+  /** File comment bytes for the central record. */
+  centralComment?: Uint8Array;
 }
 
 type TarHeaderInput = Omit<TarEntry, "body"> & { size?: number };
@@ -254,7 +256,10 @@ function zipEntry(
   local.set(descriptor, 30 + name.length + localExtra.length + compressed.length);
 
   const centralName = entry.centralNameBytes ?? name;
-  const central = new Uint8Array(46 + centralName.length + centralExtra.length);
+  const centralComment = entry.centralComment ?? new Uint8Array(0);
+  const central = new Uint8Array(
+    46 + centralName.length + centralExtra.length + centralComment.length,
+  );
   const centralView = new DataView(central.buffer);
   u32(centralView, 0, 0x02014b50);
   u16(centralView, 4, 20);
@@ -266,9 +271,11 @@ function zipEntry(
   u32(centralView, 24, body.length);
   u16(centralView, 28, centralName.length);
   u16(centralView, 30, centralExtra.length);
+  u16(centralView, 32, centralComment.length);
   u32(centralView, 42, localOffset);
   central.set(centralName, 46);
   central.set(centralExtra, 46 + centralName.length);
+  central.set(centralComment, 46 + centralName.length + centralExtra.length);
 
   return { local, central };
 }

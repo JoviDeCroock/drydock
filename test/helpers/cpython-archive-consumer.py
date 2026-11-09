@@ -5,10 +5,11 @@ list on stdin, each `{"kind": "sdist" | "wheel", "path": "<archive file>"}`,
 and prints one JSON result per job. Archive bytes are only read and hashed:
 nothing is extracted to disk and no member is ever executed or imported.
 
-sdist mirrors pip's `untar_file`: strip the leading directory when every member
-shares one, apply `tarfile.data_filter` (falling back to `tar_filter` on
-`LinkOutsideDestinationError`), then replay `extractall` against an in-memory
-tree. Wheel mirrors pip's `install_wheel`: `namelist()` minus directories,
+sdist mirrors pip 25.1's `untar_file`: when every member shares a leading
+directory, strip it from member names and from hardlink targets under the same
+directory, apply `tarfile.data_filter` (pip falls back to `tar_filter` only on
+the three CPython patch releases whose filter rejected valid links), then replay
+`extractall` against an in-memory tree. Wheel mirrors pip's `install_wheel`: `namelist()` minus directories,
 `os.path.normpath`, a traversal check, then `open(getinfo(name)).read()`.
 An sdist with neither `pyproject.toml` nor `setup.py` at its top is refused,
 as pip refuses to build it.
@@ -79,7 +80,12 @@ class Tree:
                     raise OSError("absolute symlink in path")
                 base = "/".join(out[:-1])
                 joined = posixpath.join(base, target) if base else target
-                out = self.resolve(joined, depth + 1).split("/") if joined else []
+                resolved = self.resolve(joined, depth + 1) if joined else ""
+                # tarfile only creates parents that do not exist, so a symlink
+                # parent whose target is missing or a file fails the member.
+                if resolved and self.nodes.get(resolved) != ("dir",):
+                    raise OSError("symlink parent is not a directory: " + current)
+                out = resolved.split("/") if resolved else []
         return "/".join(out)
 
     def ensure_parents(self, rel):
@@ -140,23 +146,32 @@ class Tree:
         return node[1] if node and node[0] == "file" else None
 
 
-def pip_filter_factory(leading):
-    def pip_filter(member, path):
-        if leading:
-            member = member.replace(name=split_leading_dir(member.name)[1])
-        try:
-            return tarfile.data_filter(member, path)
-        except tarfile.LinkOutsideDestinationError:
-            return tarfile.tar_filter(member, path)
+# CPython releases whose `data_filter` raised LinkOutsideDestinationError on
+# valid links (cpython#107845); pip retries with `tar_filter` only on these.
+LAX_FILTER_RELEASES = {(3, 9, 17), (3, 10, 12), (3, 11, 4)}
 
-    return pip_filter
+
+def pip_filter(member, path):
+    try:
+        return tarfile.data_filter(member, path)
+    except tarfile.LinkOutsideDestinationError:
+        if sys.version_info[:3] in LAX_FILTER_RELEASES:
+            return tarfile.tar_filter(member, path)
+        raise
 
 
 def sdist_entries(path):
     with tarfile.open(path, "r:gz", encoding="utf-8") as tar:
         members = tar.getmembers()
-        leading = has_leading_dir([member.name for member in members])
-        pip_filter = pip_filter_factory(leading)
+        if has_leading_dir([member.name for member in members]):
+            # pip edits the members in place, so `_find_link_target` below
+            # looks links up by the stripped names too.
+            for member in members:
+                name_lead, member.name = split_leading_dir(member.name)
+                if member.islnk():
+                    link_lead, link_rest = split_leading_dir(member.linkname)
+                    if link_lead == name_lead:
+                        member.linkname = link_rest
         tree = Tree()
         for original in members:
             member = pip_filter(original, DEST)
@@ -172,9 +187,8 @@ def sdist_entries(path):
             elif member.issym():
                 tree.symlink(name, member.linkname)
             elif member.islnk():
-                # makelink: os.link to the already-extracted target (pip does
-                # not strip the leading dir from linkname), else the bytes of
-                # the archive member the link names.
+                # makelink: os.link to the already-extracted target, else the
+                # bytes of the archive member the link names.
                 data = tree.read(member.linkname)
                 if data is None:
                     data = tar.extractfile(tar._find_link_target(member)).read()

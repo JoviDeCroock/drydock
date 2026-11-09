@@ -91,6 +91,7 @@
     "oxlint": "^1.83.0",
     "tailwindcss": "^4.3.3",
     "tar": "7.5.22",
+    "tar-npm11": "npm:tar@7.5.15",
     "tsrs": "0.18.0-ts7.1.0-dev.20260929",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
