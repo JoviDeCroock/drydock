@@ -16,7 +16,8 @@ import { parseYarnLock } from "./yarn-lock";
 // registries configured in `.npmrc` / `.yarnrc.yml` are not visible from the
 // lockfile, so callers still filter names against that config.
 
-export { diffLockfileSnapshots } from "./diff";
+export { diffLockfileChanges, diffLockfileSnapshots } from "./diff";
+export { mergeBump, PUBLIC_ROUTE, routedBump, type NameRoute } from "./mirror";
 
 // Whether the requirement lines that name no version changed. A new file
 // with any such line counts as changed.
@@ -29,7 +30,12 @@ export function unpinnedRequirementsChanged(
     before.length !== head.unpinned.length || before.some((line, i) => line !== head.unpinned[i])
   );
 }
-export { MAX_LOCKFILE_CHARS, type LockfilePackage, type LockfileSnapshot } from "./snapshot";
+export {
+  MAX_LOCKFILE_CHARS,
+  type LockfilePackage,
+  type LockfileSnapshot,
+  type LockfileSource,
+} from "./snapshot";
 
 const LOCKFILE_PATHS: Array<[RegExp, LockfileKind]> = [
   [/(?:^|\/)(?:package-lock|npm-shrinkwrap)\.json$/, "npm"],

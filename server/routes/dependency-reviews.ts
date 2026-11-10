@@ -16,7 +16,10 @@ import {
 } from "../lib/auth/active-organization";
 import { roleCanManageIntegrations } from "../lib/auth/roles";
 import { dependencyReviewAvailable } from "../lib/dependency-review/flag";
-import { parseDependencyReviewPolicy } from "../lib/dependency-review/policy";
+import {
+  dependencyReviewPolicyInputError,
+  parseDependencyReviewPolicy,
+} from "../lib/dependency-review/policy";
 import { listInstallationsForOrganization } from "../lib/github-app/persistence";
 import { isRecord } from "../lib/platform/guards";
 import { readJsonObject } from "../lib/platform/http";
@@ -80,6 +83,8 @@ dependencyReviewRoutes.put("/settings", async (c) => {
       400,
     );
   }
+  const policyError = dependencyReviewPolicyInputError(body.policy);
+  if (policyError) return c.json({ error: policyError }, 400);
   const policy = parseDependencyReviewPolicy(body.policy);
   const session = c.get("authSession");
   await saveDependencyReviewSettings(

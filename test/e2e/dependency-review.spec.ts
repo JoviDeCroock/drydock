@@ -14,6 +14,8 @@ const POLICY = {
   holdOnUninspectedFiles: false,
   holdOnUnreviewed: false,
   holdOnNewPackages: false,
+  unreadMinimumAgeDays: 3,
+  publicMirrors: [],
 };
 
 const REVIEW = {
@@ -130,6 +132,11 @@ test("dependency review settings save the hold policy", async ({ page }) => {
   await section.getByLabel("Or reaches release risk").selectOption("critical");
   await section.getByText("Self-hosted Renovate or other dependency bots").click();
   await section.getByLabel("Extra bot logins").fill("my-renovate[bot], deps-bot");
+  await expect(section.getByLabel("Minimum age for unread updates")).toHaveValue("3");
+  await section.getByLabel("Minimum age for unread updates").fill("7");
+  await section.getByText("Registry mirrors of npm or PyPI").click();
+  await expect(section.getByText(/sends the names and versions of the packages/)).toBeVisible();
+  await section.getByLabel("Mirror URL prefixes").fill("https://artifacts.example.com/npm/");
   await section.screenshot({ path: `${SCREENSHOTS}/settings.png` });
   await section.getByRole("button", { name: "Save dependency review" }).click();
   await expect(section.getByText("Saved.")).toBeVisible();
@@ -137,7 +144,13 @@ test("dependency review settings save the hold policy", async ({ page }) => {
   expect(writes).toEqual([
     {
       enabled: true,
-      policy: { ...POLICY, holdOnNativeBinaries: false, holdAtReleaseRisk: "critical" },
+      policy: {
+        ...POLICY,
+        holdOnNativeBinaries: false,
+        holdAtReleaseRisk: "critical",
+        unreadMinimumAgeDays: 7,
+        publicMirrors: ["https://artifacts.example.com/npm/"],
+      },
       extraBotLogins: ["my-renovate[bot]", "deps-bot"],
     },
   ]);
@@ -238,7 +251,7 @@ test("updates allowed by policy are not described as clear", async ({ page }) =>
 
   await expect(
     page.getByText(
-      "No updates are held. 2 updates passed without a diff under this organization's policy.",
+      "No updates are held. 2 updates passed under this organization's policy without a full read.",
     ),
   ).toBeVisible();
   await expect(page.getByText("All 3 updates are clear.")).toHaveCount(0);

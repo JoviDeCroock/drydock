@@ -7,7 +7,8 @@ import { createPackumentExtractor, type PackumentExtract } from "./packument-str
 export { compareSemver } from "../semver";
 
 interface RegistryVersionMetadata {
-  dist?: { tarball?: string };
+  // `integrity` is kept only by reads that ask for it (`integrity` option).
+  dist?: { tarball?: string; integrity?: string };
   /**
    * Whether npm lists SLSA provenance for this version (`dist.attestations.provenance`).
    * Undefined when the registry entry had no `dist` object, or the document was
@@ -77,6 +78,8 @@ export interface FetchPackageMetadataOptions {
    * publish times are needed: `time` exists only in the full document.
    */
   abbreviated?: boolean;
+  /** Keep each version's `dist.integrity`; it costs retained bytes per version. */
+  integrity?: boolean;
 }
 
 export async function fetchPackageMetadata(
@@ -114,7 +117,7 @@ export async function fetchPackageMetadata(
     await res.body?.cancel().catch(() => undefined);
     throw new Error(`metadata fetch failed: ${res.status}`);
   }
-  return readPackument(res);
+  return readPackument(res, options.integrity ?? false);
 }
 
 // Decoded JSON, after fetch's content decoding. The largest real packuments
@@ -146,12 +149,13 @@ export class RegistryMetadataTooLargeError extends Error {
  * parsed full document costs several times its size in heap, which for a
  * mature package is more than the 128 MiB isolate has.
  */
-async function readPackument(res: Response): Promise<RegistryMetadata> {
+async function readPackument(res: Response, integrity: boolean): Promise<RegistryMetadata> {
   // `RegistryMetadata` reads no per-version name, version or shasum.
   const extractor = createPackumentExtractor({
     maxVersions: MAX_PACKUMENT_VERSIONS,
     maxRetainedBytes: MAX_PACKUMENT_RETAINED_BYTES,
     identityFields: false,
+    integrityField: integrity,
   });
   let outcome: BoundedStreamOutcome;
   try {
@@ -186,8 +190,7 @@ export function projectPackumentExtract(extract: PackumentExtract): RegistryMeta
     // fromEntries defines own properties, so a `__proto__` version stays data.
     projected.versions = Object.fromEntries(
       [...extract.versions].map(([version, entry]): [string, RegistryVersionMetadata] => {
-        const projectedEntry: RegistryVersionMetadata =
-          entry?.tarball != null ? { dist: { tarball: entry.tarball } } : {};
+        const projectedEntry = projectDist(entry?.tarball, entry?.integrity);
         if (entry && entry.provenance !== null) projectedEntry.hasProvenance = entry.provenance;
         return [version, projectedEntry];
       }),
@@ -196,6 +199,13 @@ export function projectPackumentExtract(extract: PackumentExtract): RegistryMeta
   if (extract.distTags.size > 0) projected["dist-tags"] = Object.fromEntries(extract.distTags);
   if (extract.time.size > 0) projected.time = Object.fromEntries(extract.time);
   return projected;
+}
+
+function projectDist(tarball: unknown, integrity: unknown): RegistryVersionMetadata {
+  const dist: NonNullable<RegistryVersionMetadata["dist"]> = {};
+  if (typeof tarball === "string") dist.tarball = tarball;
+  if (typeof integrity === "string") dist.integrity = integrity;
+  return Object.keys(dist).length > 0 ? { dist } : {};
 }
 
 // Statuses a registry might answer with when it does not understand
@@ -210,7 +220,8 @@ export function mayRejectVendorMediaType(status: number): boolean {
  * Narrow an already-parsed registry document to the fields Drydock reads, for
  * documents that are not fetched here (fixtures, corpus helpers). Registry
  * reads go through `readPackument`, whose `projectPackumentExtract` must equal
- * this. `RegistryMetadata` is the whole contract — every consumer is typed
+ * this when it keeps `integrity`, the one field a read may leave out.
+ * `RegistryMetadata` is the whole contract — every consumer is typed
  * against it — so nothing downstream can read a field dropped here, and the
  * cached copy stays small.
  */
@@ -223,11 +234,12 @@ export function projectRegistryMetadata(raw: unknown): RegistryMetadata {
     const versions: Record<string, RegistryVersionMetadata> = {};
     for (const [version, entry] of Object.entries(doc.versions)) {
       const dist: unknown = entry?.dist;
-      const tarball = isRecord(dist) ? dist.tarball : undefined;
       // Every published version must survive as a truthy entry: baseline
       // selection walks the key set and dist-tag resolution checks presence.
-      const projectedEntry: RegistryVersionMetadata =
-        typeof tarball === "string" ? { dist: { tarball } } : {};
+      const projectedEntry = projectDist(
+        isRecord(dist) ? dist.tarball : undefined,
+        isRecord(dist) ? dist.integrity : undefined,
+      );
       if (isRecord(dist)) {
         const attestations = dist.attestations;
         projectedEntry.hasProvenance = isRecord(attestations) && isRecord(attestations.provenance);

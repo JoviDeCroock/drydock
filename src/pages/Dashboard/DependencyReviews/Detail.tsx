@@ -23,6 +23,9 @@ import {
   HOLD_REASON_TEXT,
   UNREVIEWED_TEXT,
   checkRunUrl,
+  hasUnreadContent,
+  holdReasonPhrases,
+  unreadContentText,
   dependencyReviewPath,
   pullRequestUrl,
   reviewState,
@@ -275,14 +278,18 @@ function ReviewReport({
         allClear={
           !partial &&
           bumps.length === review.bumpCount &&
-          bumps.every((bump) => bump.verdict.status === "clear")
+          bumps.every(
+            (bump) => bump.verdict.status === "clear" && !hasUnreadContent(bump.verdict.evidence),
+          )
         }
         partial={partial}
         approvable={approvable}
         stale={newerReviewId !== null}
         // A review cut at the storage limit can't count what it didn't keep.
-        passedWithoutDiff={
-          bumps.length === review.bumpCount ? groups.unreviewed.length + groups.added.length : null
+        passedUnread={
+          bumps.length === review.bumpCount
+            ? groups.unreviewed.length + groups.added.length + groups.unread.length
+            : null
         }
         pollingStalled={model.pollingStalled.value}
         onResume={() => model.resumePolling()}
@@ -323,6 +330,11 @@ function ReviewReport({
         note="Passed: there is no previous version to compare against."
         bumps={groups.added}
       />
+      <BumpGroup
+        title="Passed with unread changes"
+        note="Passed under this organization's policy, but Drydock did not read everything these releases changed."
+        bumps={groups.unread}
+      />
       <BumpGroup title="Clear" bumps={groups.clear} />
     </>
   );
@@ -338,7 +350,7 @@ function ReviewHeadline({
   partial,
   approvable,
   stale,
-  passedWithoutDiff,
+  passedUnread,
   pollingStalled,
   onResume,
 }: {
@@ -348,7 +360,7 @@ function ReviewHeadline({
   partial: boolean;
   approvable: boolean;
   stale: boolean;
-  passedWithoutDiff: number | null;
+  passedUnread: number | null;
   pollingStalled: boolean;
   onResume: () => void;
 }) {
@@ -424,10 +436,10 @@ function ReviewHeadline({
           ? `${review.bumpCount === 1 ? "The update is" : `All ${review.bumpCount} updates are`} clear.`
           : partial
             ? "No updates are held under this organization's policy, but this review is incomplete (see Review coverage)."
-            : passedWithoutDiff === null
-              ? "No updates are held. Some passed without a diff under this organization's policy."
-              : passedWithoutDiff > 0
-                ? `No updates are held. ${passedWithoutDiff} ${passedWithoutDiff === 1 ? "update" : "updates"} passed without a diff under this organization's policy.`
+            : passedUnread === null
+              ? "No updates are held. Some passed under this organization's policy without a full read."
+              : passedUnread > 0
+                ? `No updates are held. ${passedUnread} ${passedUnread === 1 ? "update" : "updates"} passed under this organization's policy without a full read.`
                 : "No updates are held."}
     </Muted>
   );
@@ -480,6 +492,7 @@ function groupBumps(bumps: ReviewedBump[]) {
     approved: [] as ReviewedBump[],
     unreviewed: [] as ReviewedBump[],
     added: [] as ReviewedBump[],
+    unread: [] as ReviewedBump[],
     clear: [] as ReviewedBump[],
   };
   for (const bump of bumps) {
@@ -487,6 +500,7 @@ function groupBumps(bumps: ReviewedBump[]) {
     if (status === "hold") (bump.approved ? groups.approved : groups.held).push(bump);
     else if (status === "unreviewed") groups.unreviewed.push(bump);
     else if (status === "new-package") groups.added.push(bump);
+    else if (hasUnreadContent(bump.verdict.evidence)) groups.unread.push(bump);
     else groups.clear.push(bump);
   }
   return groups;
@@ -526,7 +540,7 @@ function BumpRow({ reviewed }: { reviewed: ReviewedBump }) {
     bump.fromVersion && !bump.privateSource
       ? packageDiffPath(bump.ecosystem, bump.name, bump.fromVersion, bump.toVersion)
       : null;
-  const reason = verdictReason(verdict, evidence);
+  const reason = verdictReason(verdict, evidence, bump.fromVersion === null);
   // A release-risk hold names the grade in its reason; don't say it twice.
   const riskInReason = verdict.status === "hold" && verdict.reasons.includes("release-risk");
   return (
@@ -619,10 +633,24 @@ const REASON_COUNT: Partial<Record<HoldReason, (evidence: BumpEvidence) => numbe
   "uninspected-files": (e) => e.uninspectedFiles,
 };
 
-function verdictReason(verdict: BumpVerdict, evidence: BumpEvidence | null): string | null {
+function verdictReason(
+  verdict: BumpVerdict,
+  evidence: BumpEvidence | null,
+  newPackage: boolean,
+): string | null {
   if (verdict.status === "unreviewed") return sentence(UNREVIEWED_TEXT[verdict.unreviewed]);
+  if (verdict.status === "clear") {
+    const unread = unreadContentText(verdict.evidence);
+    return unread ? sentence(unread) : null;
+  }
   if (verdict.status !== "hold") return null;
+  // The age hold's phrase names what went unread and when it passes.
+  const ageHold = holdReasonPhrases(
+    { ...verdict, reasons: ["too-new"] },
+    { newPackage, formatTime: formatDateTime },
+  )[0];
   const reasons = verdict.reasons.map((reason) => {
+    if (reason === "too-new") return ageHold;
     if (reason === "unreviewed" && verdict.unreviewed) {
       return `${HOLD_REASON_TEXT.unreviewed} (${UNREVIEWED_TEXT[verdict.unreviewed]})`;
     }

@@ -1,0 +1,50 @@
+[
+  {
+    "repo": "vitejs/vite",
+    "note": "Renovate, pnpm-lock.yaml; grouped non-major and single bumps"
+  },
+  {
+    "repo": "pypa/warehouse",
+    "note": "Dependabot, hash-pinned requirements/*.txt; grouped"
+  },
+  {
+    "repo": "github/docs",
+    "note": "Dependabot, package-lock.json; grouped and single"
+  },
+  {
+    "repo": "fastapi/fastapi",
+    "note": "Dependabot, uv.lock single bumps"
+  },
+  {
+    "repo": "freeCodeCamp/freeCodeCamp",
+    "note": "Renovate, pnpm-lock.yaml; single bumps"
+  },
+  {
+    "repo": "django/djangoproject.com",
+    "note": "Dependabot, requirements/*.txt single bumps"
+  },
+  {
+    "repo": "vuejs/core",
+    "note": "Renovate, pnpm-lock.yaml; grouped updates"
+  },
+  {
+    "repo": "fastapi/full-stack-fastapi-template",
+    "note": "Dependabot, uv.lock and npm groups"
+  },
+  {
+    "repo": "prettier/prettier",
+    "note": "Renovate, Yarn Berry yarn.lock"
+  },
+  {
+    "repo": "nodejs/nodejs.org",
+    "note": "Dependabot, pnpm-lock.yaml; transitive security bumps"
+  },
+  {
+    "repo": "getsentry/sentry-javascript",
+    "note": "Dependabot, Yarn v1 yarn.lock monorepo"
+  },
+  {
+    "repo": "mdn/content",
+    "note": "Dependabot, grouped npm-dev updates"
+  }
+]

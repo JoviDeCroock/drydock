@@ -1,4 +1,5 @@
-import { and, desc, eq, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { parseDependencyReviewPolicy } from "../lib/dependency-review/policy";
 import type {
   DependencyBump,
@@ -110,6 +111,8 @@ export interface DependencyReviewRecord {
   conclusion: DependencyReviewConclusion | null;
   bumpCount: number;
   heldCount: number;
+  // The claim counter (`claimDependencyReviewAttempt`).
+  attempt: number;
   approvedByLogin: string | null;
   approvedAt: Date | null;
   createdAt: Date;
@@ -131,6 +134,7 @@ const RECORD_COLUMNS = {
   conclusion: dependencyReviews.conclusion,
   bumpCount: dependencyReviews.bumpCount,
   heldCount: dependencyReviews.heldCount,
+  attempt: dependencyReviews.attempt,
   approvedByLogin: dependencyReviews.approvedByLogin,
   approvedAt: dependencyReviews.approvedAt,
   createdAt: dependencyReviews.createdAt,
@@ -250,42 +254,76 @@ export async function getDependencyReviewForHead(
 export const DEPENDENCY_REVIEW_LEASE_MS = 15 * 60 * 1000;
 
 /**
- * Move a review to `running` for one attempt. A queued, failed, or superseded
+ * Move a review to `running` for one pass. A queued, failed, or superseded
  * review can be claimed: the job checks the PR's live head first, so a
  * superseded review whose commit is the head again (reopened) is reviewed. A
- * completed one only for an explicit `rerun` (the Re-run button). A duplicate
- * message for a review running inside its lease, or one already completed,
- * exits without posting another run.
+ * completed one only for an explicit `rerun` (the Re-run button), or for an
+ * age recheck of the held result still on `recheckOfRun`. A `continuation`
+ * (the next pass) takes only a queued review or one whose lease expired. A duplicate message
+ * for a review running inside its lease, or one already completed, exits
+ * without posting another run.
+ *
+ * Returns the claim's `attempt`, which every write of the pass names, or null.
+ * A queued review keeps its progress (the next pass of a multi-pass review);
+ * a running one past its lease does too (its worker died mid-pass). Any other
+ * claim starts the review over.
  */
+export async function claimDependencyReviewAttempt(
+  db: AppDb,
+  reviewId: string,
+  options: { rerun?: boolean; recheckOfRun?: number; continuation?: boolean; now?: Date } = {},
+): Promise<number | null> {
+  const now = options.now ?? new Date();
+  const restart = Boolean(options.rerun) || options.recheckOfRun !== undefined;
+  const claimable = (
+    options.continuation
+      ? ["queued"]
+      : ["queued", "failed", "superseded", ...(options.rerun ? ["completed"] : [])]
+  ) as DependencyReviewStatus[];
+  const leaseExpired = and(
+    eq(dependencyReviews.status, "running"),
+    lt(dependencyReviews.updatedAt, new Date(now.getTime() - DEPENDENCY_REVIEW_LEASE_MS)),
+  );
+  const claimed = await db
+    .update(dependencyReviews)
+    .set({
+      status: "running",
+      attempt: sql`${dependencyReviews.attempt} + 1`,
+      // SET reads the row's old values, so this tests the status being left.
+      progressJson: restart
+        ? null
+        : sql`CASE WHEN ${dependencyReviews.status} IN ('queued', 'running') THEN ${dependencyReviews.progressJson} ELSE NULL END`,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(dependencyReviews.id, reviewId),
+        options.recheckOfRun !== undefined
+          ? and(
+              eq(dependencyReviews.status, "completed"),
+              eq(dependencyReviews.conclusion, "held"),
+              eq(dependencyReviews.checkRunId, options.recheckOfRun),
+            )
+          : or(inArray(dependencyReviews.status, claimable), leaseExpired),
+      ),
+    )
+    .returning({ attempt: dependencyReviews.attempt });
+  return claimed[0]?.attempt ?? null;
+}
+
 export async function claimDependencyReview(
   db: AppDb,
   reviewId: string,
   options: { rerun?: boolean; now?: Date } = {},
 ): Promise<boolean> {
-  const now = options.now ?? new Date();
-  const claimable = [
-    "queued",
-    "failed",
-    "superseded",
-    ...(options.rerun ? ["completed"] : []),
-  ] as DependencyReviewStatus[];
-  const claimed = await db
-    .update(dependencyReviews)
-    .set({ status: "running", updatedAt: now })
-    .where(
-      and(
-        eq(dependencyReviews.id, reviewId),
-        or(
-          inArray(dependencyReviews.status, claimable),
-          and(
-            eq(dependencyReviews.status, "running"),
-            lt(dependencyReviews.updatedAt, new Date(now.getTime() - DEPENDENCY_REVIEW_LEASE_MS)),
-          ),
-        ),
-      ),
-    )
-    .returning({ id: dependencyReviews.id });
-  return claimed.length > 0;
+  return (await claimDependencyReviewAttempt(db, reviewId, options)) !== null;
+}
+
+// A pass's writes land only while its claim is the newest one.
+function ownsClaim(attempt: number | undefined) {
+  return attempt === undefined
+    ? undefined
+    : and(eq(dependencyReviews.status, "running"), eq(dependencyReviews.attempt, attempt));
 }
 
 /** Give a claim back before a retry, so the retried message can take it. */
@@ -293,8 +331,9 @@ export async function releaseDependencyReview(
   db: AppDb,
   reviewId: string,
   checkRunId: number | null,
-): Promise<void> {
-  await db
+  attempt?: number,
+): Promise<boolean> {
+  const released = await db
     .update(dependencyReviews)
     .set({ status: "queued", updatedAt: new Date() })
     .where(
@@ -304,19 +343,55 @@ export async function releaseDependencyReview(
         checkRunId === null
           ? isNull(dependencyReviews.checkRunId)
           : eq(dependencyReviews.checkRunId, checkRunId),
+        ownsClaim(attempt),
       ),
-    );
+    )
+    .returning({ id: dependencyReviews.id });
+  return released.length > 0;
 }
 
 export async function setDependencyReviewCheckRun(
   db: AppDb,
   reviewId: string,
   checkRunId: number,
+  attempt?: number,
 ): Promise<void> {
   await db
     .update(dependencyReviews)
     .set({ checkRunId, updatedAt: new Date() })
-    .where(eq(dependencyReviews.id, reviewId));
+    .where(and(eq(dependencyReviews.id, reviewId), ownsClaim(attempt)));
+}
+
+/** The stored progress of a running review, as written by its passes. */
+export async function readDependencyReviewProgress(
+  db: AppDb,
+  reviewId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ progressJson: dependencyReviews.progressJson })
+    .from(dependencyReviews)
+    .where(eq(dependencyReviews.id, reviewId))
+    .limit(1);
+  return row?.progressJson ?? null;
+}
+
+/**
+ * Store a pass's progress while its claim is current. The `updated_at` bump
+ * doubles as a heartbeat: the lease runs from the last write. False means a
+ * newer claim owns the review and this pass must stop.
+ */
+export async function saveDependencyReviewProgress(
+  db: AppDb,
+  reviewId: string,
+  attempt: number,
+  progressJson: string,
+): Promise<boolean> {
+  const saved = await db
+    .update(dependencyReviews)
+    .set({ progressJson, updatedAt: new Date() })
+    .where(and(eq(dependencyReviews.id, reviewId), ownsClaim(attempt)))
+    .returning({ id: dependencyReviews.id });
+  return saved.length > 0;
 }
 
 export async function completeDependencyReview(
@@ -335,6 +410,8 @@ export async function completeDependencyReview(
     // not land on a review a Re-run has claimed since the click.
     ifCompletedOnRun?: number;
     ifRunningOnRun?: number;
+    // With `ifRunningOnRun`: the claim of the pass that completes.
+    ifAttempt?: number;
   },
 ): Promise<boolean> {
   const now = new Date();
@@ -351,6 +428,7 @@ export async function completeDependencyReview(
       unreadLockfilesJson: JSON.stringify(input.coverage.unreadLockfiles),
       listingComplete: input.coverage.listingComplete,
       failureReason: null,
+      progressJson: null,
       ...(input.approvedByLogin ? { approvedByLogin: input.approvedByLogin, approvedAt: now } : {}),
       completedAt: now,
       updatedAt: now,
@@ -364,6 +442,7 @@ export async function completeDependencyReview(
               : and(
                   eq(dependencyReviews.status, "running"),
                   eq(dependencyReviews.checkRunId, input.ifRunningOnRun),
+                  ownsClaim(input.ifAttempt),
                 ),
           )
         : and(
@@ -381,11 +460,12 @@ export async function failDependencyReview(
   reviewId: string,
   failureReason: string,
   checkRunId?: number | null,
+  attempt?: number,
 ): Promise<boolean> {
   const now = new Date();
   const updated = await db
     .update(dependencyReviews)
-    .set({ status: "failed", failureReason, updatedAt: now })
+    .set({ status: "failed", failureReason, progressJson: null, updatedAt: now })
     .where(
       and(
         eq(dependencyReviews.id, reviewId),
@@ -394,6 +474,7 @@ export async function failDependencyReview(
           : checkRunId === null
             ? isNull(dependencyReviews.checkRunId)
             : eq(dependencyReviews.checkRunId, checkRunId),
+        ownsClaim(attempt),
       ),
     )
     .returning({ id: dependencyReviews.id });
@@ -480,19 +561,44 @@ export async function findNewerDependencyReviewId(
 }
 
 export function dependencyChangeKey(
-  bump: Pick<DependencyBump, "ecosystem" | "name" | "fromVersion" | "toVersion" | "privateSource">,
+  bump: Pick<
+    DependencyBump,
+    "ecosystem" | "name" | "fromVersion" | "toVersion" | "privateSource" | "mirror"
+  >,
 ) {
-  return [
+  return changeKey(
     bump.ecosystem,
     bump.name,
     bump.fromVersion ?? "",
     bump.toVersion,
     changeSource(bump),
-  ].join("\u0000");
+  );
 }
 
-function changeSource(bump: Pick<DependencyBump, "privateSource">): "public" | "private" {
-  return bump.privateSource ? "private" : "public";
+function changeKey(
+  ecosystem: string,
+  name: string,
+  fromVersion: string,
+  toVersion: string,
+  source: string,
+): string {
+  return [ecosystem, name, fromVersion, toVersion, source].join("\u0000");
+}
+
+/**
+ * The `source` an approval is stored under. A mirror pin nobody proved equal
+ * to the public release names its pinned hashes: the same versions re-pinned
+ * to other bytes on the mirror are a different change, and an approval must
+ * not carry over to them. A proven mirror bump arrives here as public.
+ */
+function changeSource(bump: Pick<DependencyBump, "privateSource" | "mirror">): string {
+  if (!bump.privateSource) return "public";
+  if (!bump.mirror) return "private";
+  const pins = JSON.stringify([
+    [...(bump.mirror.fromHashes ?? [])].sort(),
+    [...bump.mirror.toHashes].sort(),
+  ]);
+  return `mirror:${createHash("sha256").update(pins).digest("hex")}`;
 }
 
 /** Which of `bumps` someone already approved in this repository. */
@@ -523,13 +629,7 @@ export async function findApprovedChanges(
       );
     for (const row of rows) {
       approved.add(
-        dependencyChangeKey({
-          ecosystem: row.ecosystem as DependencyBump["ecosystem"],
-          name: row.packageName,
-          fromVersion: row.fromVersion || null,
-          toVersion: row.toVersion,
-          privateSource: row.source === "private" ? true : undefined,
-        }),
+        changeKey(row.ecosystem, row.packageName, row.fromVersion, row.toVersion, row.source),
       );
     }
   }
@@ -575,9 +675,16 @@ export async function supersedeDependencyReview(
   db: AppDb,
   reviewId: string,
   checkRunId: number,
+  attempt?: number,
 ): Promise<void> {
   await db
     .update(dependencyReviews)
-    .set({ status: "superseded", updatedAt: new Date() })
-    .where(and(eq(dependencyReviews.id, reviewId), eq(dependencyReviews.checkRunId, checkRunId)));
+    .set({ status: "superseded", progressJson: null, updatedAt: new Date() })
+    .where(
+      and(
+        eq(dependencyReviews.id, reviewId),
+        eq(dependencyReviews.checkRunId, checkRunId),
+        ownsClaim(attempt),
+      ),
+    );
 }

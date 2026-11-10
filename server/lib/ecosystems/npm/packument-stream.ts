@@ -1,8 +1,8 @@
 /**
  * Streaming extraction of the few packument fields Drydock reads: top-level
  * `name`, `dist-tags` and `time`, and each version's `name`, `version`,
- * `dist.tarball`, `dist.shasum` and whether `dist.attestations.provenance` is
- * an object.
+ * `dist.tarball`, `dist.shasum`, optionally `dist.integrity`, and whether
+ * `dist.attestations.provenance` is an object.
  *
  * The packument is a hostile registry document, and only npm's full document
  * carries per-version publish times, so a mature package's packument can be
@@ -29,6 +29,8 @@ export interface PackumentVersion {
   version: string | null;
   tarball: string | null;
   shasum: string | null;
+  /** Present only with the `integrityField` option. */
+  integrity?: string | null;
   /** `dist.attestations.provenance` is an object; null when `dist` is not one. */
   provenance: boolean | null;
 }
@@ -48,7 +50,7 @@ export interface PackumentExtract {
   distTagsTruncated: boolean;
   versionLimitExceeded: boolean;
   /**
-   * `maxRetainedBytes` ran out: some version, tarball, `time` entry or tag was
+   * `maxRetainedBytes` ran out: some version, dist field, `time` entry or tag was
    * not kept. Sticky, so a reader treating it as "too large" cannot be fooled.
    */
   retainedLimitExceeded: boolean;
@@ -86,6 +88,7 @@ const SLOT_TIME_VALUE = 12;
 const SLOT_TAG_VALUE = 13;
 const SLOT_ATTESTATIONS = 14;
 const SLOT_PROVENANCE = 15;
+const SLOT_INTEGRITY = 16;
 
 // Parser states.
 const S_VALUE = 0;
@@ -132,6 +135,7 @@ const ENTRY_KEYS: Record<string, number> = {
 const DIST_KEYS: Record<string, number> = {
   tarball: SLOT_TARBALL,
   shasum: SLOT_SHASUM,
+  integrity: SLOT_INTEGRITY,
   attestations: SLOT_ATTESTATIONS,
 };
 const ATTESTATION_KEYS: Record<string, number> = { provenance: SLOT_PROVENANCE };
@@ -141,6 +145,7 @@ const STRING_SLOTS: ReadonlySet<number> = new Set([
   SLOT_ENTRY_VERSION,
   SLOT_TARBALL,
   SLOT_SHASUM,
+  SLOT_INTEGRITY,
   SLOT_TIME_VALUE,
   SLOT_TAG_VALUE,
 ]);
@@ -195,6 +200,11 @@ export function createPackumentExtractor(
      */
     identityFields?: boolean;
     /**
+     * Keep each version's `dist.integrity` (default false), for a reader that
+     * compares lockfile pins with the registry's own digest.
+     */
+    integrityField?: boolean;
+    /**
      * Budget on what the extract holds: the source bytes (the JSON string
      * token as it appeared, quotes and escapes included) of every kept version
      * key, captured version field, `time` and dist-tag key and value, plus
@@ -210,6 +220,7 @@ export function createPackumentExtractor(
   const versionKeysOnly = limits.versionKeysOnly ?? false;
   const maxVersionKeyChars = limits.maxVersionKeyChars ?? Infinity;
   const identityFields = limits.identityFields ?? true;
+  const integrityField = limits.integrityField ?? false;
   const maxRetainedBytes = limits.maxRetainedBytes ?? Infinity;
   const maxDistTags = limits.maxDistTags ?? 1_000;
   const maxCaptured = limits.maxCapturedBytes ?? 4_096;
@@ -322,6 +333,7 @@ export function createPackumentExtractor(
       case SLOT_ENTRY_DIST:
         entry!.tarball = null;
         entry!.shasum = null;
+        if (integrityField) entry!.integrity = null;
         entry!.provenance = null;
         break;
       case SLOT_ATTESTATIONS:
@@ -333,6 +345,9 @@ export function createPackumentExtractor(
         break;
       case SLOT_SHASUM:
         entry!.shasum = null;
+        break;
+      case SLOT_INTEGRITY:
+        entry!.integrity = null;
         break;
       case SLOT_TIME_VALUE:
         out.time.delete(pendingKey);
@@ -365,6 +380,9 @@ export function createPackumentExtractor(
         break;
       case SLOT_SHASUM:
         entry!.shasum = retain(capturedLength, false) ? value : null;
+        break;
+      case SLOT_INTEGRITY:
+        entry!.integrity = retain(capturedLength, false) ? value : null;
         break;
       case SLOT_TIME_VALUE: {
         const fresh = !out.time.has(pendingKey);
@@ -412,7 +430,14 @@ export function createPackumentExtractor(
           out.versions.set(pendingKey, null);
           return null;
         }
-        entry = { name: null, version: null, tarball: null, shasum: null, provenance: null };
+        entry = {
+          name: null,
+          version: null,
+          tarball: null,
+          shasum: null,
+          ...(integrityField ? { integrity: null } : {}),
+          provenance: null,
+        };
         out.versions.set(pendingKey, entry);
         return ENTRY;
       case SLOT_ENTRY_DIST:
@@ -532,6 +557,7 @@ export function createPackumentExtractor(
       ) {
         slot = SLOT_SKIP;
       }
+      if (!integrityField && slot === SLOT_INTEGRITY) slot = SLOT_SKIP;
       if (slot === SLOT_VERSIONS) out.versionsPresent = true;
     }
     state = S_COLON;

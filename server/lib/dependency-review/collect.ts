@@ -8,19 +8,28 @@ import {
   type PullRequestFile,
 } from "./github";
 import {
-  diffLockfileSnapshots,
+  diffLockfileChanges,
   lockfileKindForPath,
+  mergeBump,
   parseLockfile,
+  PUBLIC_ROUTE,
+  routedBump,
   unpinnedRequirementsChanged,
 } from "./lockfiles";
 import { npmManifestHasOnlyMetadataChanges } from "./manifests";
 import {
   collectCustomRegistries,
   emptyCustomRegistries,
-  isPublicNpmName,
+  npmNameRoute,
+  unreadableCustomRegistries,
   type CustomRegistries,
 } from "./registry-config";
-import type { DependencyBump, DependencyEcosystem, LockfileKind } from "./types";
+import type {
+  DependencyBump,
+  DependencyEcosystem,
+  DependencyReviewPolicy,
+  LockfileKind,
+} from "./types";
 
 const MAX_LOCKFILES = 20;
 const MAX_MANIFESTS = 20;
@@ -65,6 +74,7 @@ export async function collectBumps(
   context: ReviewContext,
   baseSha: string,
   changedFiles: number | null,
+  policy: DependencyReviewPolicy,
 ): Promise<CollectedBumps> {
   const { review, repo, token } = context;
   const listing = await listPullRequestFiles(token, repo, review.pullNumber);
@@ -144,14 +154,15 @@ export async function collectBumps(
       if (!registries.has(dir)) registries.set(dir, readCustomRegistries(context, dir));
       custom = await (registries.get(dir) as Promise<CustomRegistries>);
     }
-    for (const found of diffLockfileSnapshots(baseSnapshot, headSnapshot, file.filename)) {
+    for (const change of diffLockfileChanges(baseSnapshot, headSnapshot, file.filename)) {
       // A name the repository routes to another registry is kept, never
-      // diffed: dropping it would let its change pass unseen.
-      const bump: DependencyBump =
-        custom && !isPublicNpmName(custom, found.name) ? { ...found, privateSource: true } : found;
+      // diffed (unless proven a mirror copy): dropping it would let its
+      // change pass unseen.
+      const route = custom ? npmNameRoute(custom, change.bump.name) : PUBLIC_ROUTE;
+      const bump = routedBump(change, route, policy.publicMirrors);
       const key = dependencyChangeKey(bump);
       const existing = byChange.get(key);
-      if (existing) existing.direct ||= bump.direct;
+      if (existing) mergeBump(existing, bump);
       else byChange.set(key, { ...bump });
     }
   }
@@ -192,7 +203,7 @@ async function readCustomRegistries(
       readRepositoryFile(context.token, context.repo, `${base}.yarnrc.yml`, context.review.headSha),
     ]);
     // Config too large to read could name any registry, so it drops every name.
-    if (npmrc === "too-large" || yarnrc === "too-large") return { all: true, scopes: new Set() };
+    if (npmrc === "too-large" || yarnrc === "too-large") return unreadableCustomRegistries();
     collectCustomRegistries(found, { npmrc, yarnrc });
   }
   return found;

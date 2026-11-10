@@ -4,7 +4,8 @@ import type {
   DependencyReviewConclusion,
   ReviewedBump,
 } from "./types";
-import { HOLD_REASON_TEXT, UNREVIEWED_TEXT } from "./wording";
+import { hasUnreadContent } from "./evidence";
+import { holdReasonPhrases, unreadContentText, UNREVIEWED_TEXT } from "./wording";
 
 export const DEPENDENCY_REVIEW_CHECK_NAME = "Drydock dependency review";
 export const APPROVE_ACTION_IDENTIFIER = "approve-holds";
@@ -73,7 +74,9 @@ export function listsEveryHold(input: RenderDependencyReviewInput): boolean {
 export function renderDependencyReviewCheck(input: RenderDependencyReviewInput): CheckRunOutput {
   const held = openHolds(input.bumps);
   const approved = input.bumps.filter((b) => b.verdict.status === "hold" && b.approved);
-  const clear = input.bumps.filter((b) => b.verdict.status === "clear");
+  // A diff that left content unread passed under policy; it is not "clear".
+  const unread = input.bumps.filter(isPassedUnread);
+  const clear = input.bumps.filter((b) => b.verdict.status === "clear" && !isPassedUnread(b));
   const unreviewed = input.bumps.filter((b) => b.verdict.status === "unreviewed");
   const added = input.bumps.filter((b) => b.verdict.status === "new-package");
   const complete = input.unreadLockfiles.length === 0 && input.listingComplete !== false;
@@ -97,8 +100,8 @@ export function renderDependencyReviewCheck(input: RenderDependencyReviewInput):
     lines.push("");
   }
   // Next to the holds: an Approve accepts these too, so they must not be cut.
-  const unread = renderUnread(input);
-  if (unread) lines.push(unread, "");
+  const unreadFiles = renderUnread(input);
+  if (unreadFiles) lines.push(unreadFiles, "");
   // Held on coverage alone: say what Approve would accept, or why it can't.
   if (input.conclusion === "held" && held.length === 0) {
     lines.push(
@@ -126,6 +129,15 @@ export function renderDependencyReviewCheck(input: RenderDependencyReviewInput):
   if (added.length > 0) {
     lines.push(`### New packages (${added.length})`, "");
     lines.push(listLine(added, input), "");
+  }
+  if (unread.length > 0) {
+    lines.push(`### Passed with unread changes (${unread.length})`, "");
+    for (const bump of unread.slice(0, MAX_LISTED_BUMPS)) {
+      const what =
+        bump.verdict.status === "clear" ? unreadContentText(bump.verdict.evidence) : null;
+      lines.push(`- ${link(bump.bump, input)}: ${what ?? ""}`);
+    }
+    lines.push("");
   }
   if (clear.length > 0) {
     lines.push(`### Clear (${clear.length})`, "");
@@ -158,20 +170,21 @@ function renderTitle(
   }
   if (conclusion === "approved") return "Held updates approved";
   if (total === 0 && complete) return "No npm or PyPI dependency updates";
-  // "Clear" claims a diff was read; unreviewed and new packages passing by
-  // policy were not.
+  // "Clear" claims every diff was read in full; unreviewed bumps, new
+  // packages, and diffs with unread changes passing by policy were not.
   if (!complete || clearCount < total) return "No updates held";
   return `${total === 1 ? "Update" : `All ${total} updates`} clear`;
+}
+
+/** A bump policy let pass on a diff that left part of the release unread. */
+function isPassedUnread(bump: ReviewedBump): boolean {
+  return bump.verdict.status === "clear" && hasUnreadContent(bump.verdict.evidence);
 }
 
 function renderHeld(reviewed: ReviewedBump, input: RenderDependencyReviewInput): string[] {
   const { verdict } = reviewed;
   if (verdict.status !== "hold") return [];
-  const reasons = verdict.reasons.map((reason) =>
-    reason === "unreviewed" && verdict.unreviewed
-      ? `${HOLD_REASON_TEXT.unreviewed} (${UNREVIEWED_TEXT[verdict.unreviewed]})`
-      : HOLD_REASON_TEXT[reason],
-  );
+  const reasons = holdReasonPhrases(verdict, { newPackage: reviewed.bump.fromVersion === null });
   const lines = [`- ${link(reviewed.bump, input)}: ${reasons.join("; ")}`];
   if (verdict.evidence) lines.push(...renderEvidence(verdict.evidence));
   return lines;

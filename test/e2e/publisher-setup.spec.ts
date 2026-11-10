@@ -231,6 +231,8 @@ async function installSetupMocks(
             holdOnUninspectedFiles: true,
             holdOnUnreviewed: true,
             holdOnNewPackages: false,
+            unreadMinimumAgeDays: 3,
+            publicMirrors: [],
           },
           extraBotLogins: [],
         },

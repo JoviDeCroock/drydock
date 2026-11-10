@@ -1,6 +1,6 @@
 import { createDb, type AppDb } from "../../db/client";
 import {
-  claimDependencyReview,
+  claimDependencyReviewAttempt,
   completeDependencyReview,
   DEPENDENCY_REVIEW_LEASE_MS,
   failDependencyReview,
@@ -8,7 +8,9 @@ import {
   getDependencyReview,
   getDependencyReviewSettings,
   isChangeApproved,
+  readDependencyReviewProgress,
   releaseDependencyReview,
+  saveDependencyReviewProgress,
 } from "../../db/dependency-reviews";
 import type { DependencyReviewStatus } from "../../db/enums";
 import { recordProductEvent } from "../analytics";
@@ -19,15 +21,30 @@ import { parseRepositoryFullName } from "../github-app/validation";
 import { dependencyReviewUrl } from "../notify/links";
 import { describeOperationalError, emitOperationalEvent } from "../platform/observability";
 import { applyApproval, isOpenHold } from "./approval";
-import { cancelSupersededReview, ensureCheckRun, publishResult } from "./check-run";
+import { cancelSupersededReview, ensureCheckRun, publishResult, reportProgress } from "./check-run";
 import { collectBumps } from "./collect";
 import type { DependencyReviewJobInput, ReviewContext } from "./context";
 import { DependencyReviewGithubError, fetchPullRequest, updateCheckRun } from "./github";
-import { concludeDependencyReview } from "./policy";
+import { concludeDependencyReview, decideBump } from "./policy";
+import {
+  DependencyReviewStalePassError,
+  parseProgress,
+  ProgressWriter,
+  storableCollection,
+  type DependencyReviewProgress,
+} from "./progress";
+import { ageRecheckAt, recheckApplies, recheckEarly, sendAgeRecheck } from "./recheck";
 import { MAX_STORED_BUMPS } from "./render";
-import { reviewBumps } from "./review-bumps";
+import { PASS_BUDGET_MS, runReviewStage } from "./review-bumps";
 import { postSkippedCheck } from "./skip";
 import type { ReviewedBump } from "./types";
+
+// 500 stored bumps at 12 cold diffs a pass need 42; the rest is slack for
+// passes cut short. Past it, what is left reads as over the cap.
+const MAX_REVIEW_PASSES = 50;
+// Sent before the claim is released, so it must outlast the release; one
+// arriving early waits out the lease like any duplicate.
+const CONTINUATION_DELAY_SECONDS = 10;
 
 export type { DependencyReviewJobInput } from "./context";
 
@@ -46,9 +63,10 @@ export class DependencyReviewLeaseError extends Error {
 
 /**
  * Review one dependency-update PR commit, or apply an Approve click to a
- * finished review. Retryable GitHub failures rethrow for the queue to retry;
- * anything else fails the review and, when a check run exists, fails the check
- * so the PR never sits on an in-progress run forever.
+ * finished review. A review runs in passes, one per queue invocation, until
+ * its bumps are settled (`runReview`). Retryable GitHub failures rethrow for
+ * the queue to retry; anything else fails the review and, when a check run
+ * exists, fails the check so the PR never sits on an in-progress run forever.
  */
 export async function executeDependencyReviewJob(
   env: Cloudflare.Env,
@@ -64,6 +82,13 @@ export async function executeDependencyReviewJob(
   if (!input.reviewId) return;
   const review = await getDependencyReview(db, input.organizationId, input.reviewId);
   if (!review) return;
+  if (input.recheck) {
+    if (!recheckApplies(review, input.recheck)) return;
+    if (recheckEarly(input.recheck, Date.now())) {
+      await sendAgeRecheck(env, review, input.recheck, Date.now());
+      return;
+    }
+  }
   const repo = parseRepositoryFullName(review.repositoryFullName);
   if (!repo) {
     await failDependencyReview(db, review.id, "invalid repository name");
@@ -95,7 +120,21 @@ export async function executeDependencyReviewJob(
     await applyApproval(context, input.approver);
     return;
   }
-  if (!(await claimDependencyReview(db, review.id, { rerun: input.rerun }))) {
+  if (input.recheck) {
+    // A merged or closed PR keeps its finished check as it is: the recheck
+    // claims nothing and posts nothing unless the commit is still the head.
+    const pr = await fetchPullRequest(token, repo, review.pullNumber);
+    if (!pr || pr.headSha !== review.headSha || pr.state !== "open") return;
+  }
+  const attempt = await claimDependencyReviewAttempt(
+    db,
+    review.id,
+    input.recheck
+      ? { recheckOfRun: input.recheck.checkRunId }
+      : { rerun: input.rerun, continuation: input.continuation },
+  );
+  if (attempt === null) {
+    if (input.recheck) return;
     const current = await getDependencyReview(db, review.organizationId, review.id);
     // A redelivery may be the only survivor of a terminated worker. Do not
     // acknowledge it while its claim is still leased; retry after it can be
@@ -105,27 +144,52 @@ export async function executeDependencyReviewJob(
     }
     return;
   }
+  context.attempt = attempt;
   try {
     // Another attempt may have moved the review to a newer run since it was read.
     context.review = (await getDependencyReview(db, review.organizationId, review.id)) ?? review;
-    await runReview(context, review.status);
+    await runReview(context, review.status, attempt);
   } catch (err) {
+    // A newer claim owns the review; it posts the result.
+    if (err instanceof DependencyReviewStalePassError) return;
     const retryable = err instanceof DependencyReviewGithubError ? err.retryable : true;
     if (retryable && !options.finalAttempt) {
-      await releaseDependencyReview(db, review.id, context.review.checkRunId);
+      await releaseDependencyReview(db, review.id, context.review.checkRunId, attempt);
       throw err;
     }
     await failReview(context, err);
   }
 }
 
+function progressLine(progress: Pick<DependencyReviewProgress, "settled" | "total">): string {
+  return `Reviewed ${progress.settled} of ${progress.total} ${progress.total === 1 ? "update" : "updates"} so far. The review continues on its own; nothing can be approved until it finishes.`;
+}
+
+/**
+ * One pass. Each pass claims the review, re-checks that the commit is still
+ * the open PR's head before spending anything, collects the bumps again, and
+ * spends one pass budget on the bumps not yet settled. Progress is stored on
+ * the review row as it lands. While bumps remain, the pass queues the next
+ * one and gives the claim back; the check stays in progress with no Approve.
+ * The pass that finds nothing left applies the policy and the approvals once,
+ * so one check never mixes two policies.
+ */
 async function runReview(
   context: ReviewContext,
   statusBeforeClaim: DependencyReviewStatus,
+  attempt: number,
 ): Promise<void> {
   const { db, review, repo, token } = context;
-  const startedAtMs = Date.now();
-  const checkRunId = await ensureCheckRun(context, statusBeforeClaim);
+  const passStartedAtMs = Date.now();
+  const progress = parseProgress(
+    await readDependencyReviewProgress(db, review.id),
+    passStartedAtMs,
+  );
+  const checkRunId = await ensureCheckRun(
+    context,
+    statusBeforeClaim,
+    progress.passes > 0 ? progressLine(progress) : null,
+  );
 
   const pr = await fetchPullRequest(token, repo, review.pullNumber);
   if (!pr || pr.headSha !== review.headSha || pr.state !== "open") {
@@ -133,17 +197,71 @@ async function runReview(
     return;
   }
 
+  const writer = new ProgressWriter(progress, (json) =>
+    saveDependencyReviewProgress(db, review.id, attempt, json),
+  );
+  // Counted before any work, so a pass the platform kills still counts.
+  progress.passes += 1;
+  await writer.flush();
+
   const settings = await getDependencyReviewSettings(db, review.organizationId);
-  const collected = await collectBumps(context, pr.baseSha, pr.changedFiles);
+  // The head is fixed, so what the first pass collected still holds; a pass
+  // reads the lockfiles again only when the mirror list changed or the
+  // collection was too large to keep.
+  const mirrors = settings.policy.publicMirrors;
+  const kept = progress.collected;
+  const collected =
+    kept && kept.publicMirrors.join("\n") === mirrors.join("\n")
+      ? kept
+      : await collectBumps(context, pr.baseSha, pr.changedFiles, settings.policy);
+  if (collected !== kept) {
+    progress.collected = storableCollection({
+      publicMirrors: mirrors,
+      bumps: collected.bumps,
+      unreadLockfiles: collected.unreadLockfiles,
+      listingComplete: collected.listingComplete,
+    });
+  }
+  const stage = await runReviewStage(
+    context,
+    collected.bumps,
+    settings.policy,
+    writer,
+    passStartedAtMs + PASS_BUDGET_MS,
+  );
+  progress.total = collected.bumps.length;
+  progress.settled = stage.settled;
+  await writer.flush();
+
+  if (!stage.complete && progress.passes < MAX_REVIEW_PASSES && context.env.SCAN_QUEUE) {
+    await reportProgress(context, checkRunId, progressLine(progress));
+    // Sent before the claim is given back: a crash between the two leaves a
+    // running review whose lease expires and a message that reclaims it. The
+    // other order could strand a queued review with no message to run it.
+    await context.env.SCAN_QUEUE.send(
+      {
+        kind: "dependency_review",
+        organizationId: review.organizationId,
+        reviewId: review.id,
+        continuation: true,
+      },
+      { delaySeconds: CONTINUATION_DELAY_SECONDS },
+    );
+    await releaseDependencyReview(db, review.id, checkRunId, attempt);
+    return;
+  }
+
+  // Approvals are keyed on the change as the review stage resolved it: a
+  // mirror-proven bump is looked up under its public identity.
   const approvedChanges = await findApprovedChanges(
     db,
     review.organizationId,
     review.repositoryId,
-    collected.bumps,
+    stage.bumps,
   );
-  const verdicts = await reviewBumps(context, collected.bumps, settings.policy, startedAtMs);
-  const reviewed: ReviewedBump[] = collected.bumps.map((bump, index) => {
-    const verdict = verdicts[index];
+  const decidedAtMs = Date.now();
+  const reviewed: ReviewedBump[] = stage.bumps.map((bump, index) => {
+    const verdict = decideBump(stage.outcomes[index], settings.policy, decidedAtMs);
     return {
       bump,
       verdict,
@@ -155,9 +273,8 @@ async function runReview(
   // An unread lockfile, or a listing GitHub cut short, may hide bumps, so the
   // review can't call the PR clear on what it saw.
   const partial = collected.unreadLockfiles.length > 0 || !collected.listingComplete;
-  if (partial && settings.policy.holdOnUnreviewed && conclusion !== "held") {
-    conclusion = "held";
-  }
+  const heldOnCoverage = partial && settings.policy.holdOnUnreviewed;
+  if (heldOnCoverage && conclusion !== "held") conclusion = "held";
   // Diffs can run for minutes. A bot may have rebased or closed its PR after
   // the first head check; never publish that work as the current review.
   const currentPr = await fetchPullRequest(token, repo, review.pullNumber);
@@ -167,6 +284,7 @@ async function runReview(
   }
   // A later attempt owns the newest run; its result is the one to store.
   if (!(await publishResult(context, checkRunId, reviewed, conclusion, collected, null))) return;
+  const completedOnRun = context.review.checkRunId ?? checkRunId;
   const completed = await completeDependencyReview(db, review.id, {
     conclusion,
     bumps: storedBumps(reviewed),
@@ -176,16 +294,33 @@ async function runReview(
       unreadLockfiles: collected.unreadLockfiles,
       listingComplete: collected.listingComplete,
     },
-    ifRunningOnRun: context.review.checkRunId ?? checkRunId,
+    ifRunningOnRun: completedOnRun,
+    ifAttempt: attempt,
   });
   if (!completed) return;
+  const recheckAt = ageRecheckAt(reviewed, conclusion, heldOnCoverage);
+  if (recheckAt) {
+    await sendAgeRecheck(
+      context.env,
+      review,
+      { checkRunId: completedOnRun, at: recheckAt },
+      Date.now(),
+    ).catch((err: unknown) =>
+      emitOperationalEvent("warn", "dependency_review.recheck_not_scheduled", {
+        organizationId: review.organizationId,
+        reviewId: review.id,
+        error: describeOperationalError(err),
+      }),
+    );
+  }
   recordProductEvent(context.env, {
     name: "dependency_review.completed",
     organizationId: review.organizationId,
     conclusion,
     bumpCount: reviewed.length,
     heldCount: reviewed.filter((b) => b.verdict.status === "hold" && !b.approved).length,
-    durationMs: Date.now() - startedAtMs,
+    // Across every pass of this attempt, not just the final one.
+    durationMs: Date.now() - progress.startedAt,
   });
 }
 
@@ -210,6 +345,7 @@ async function failReview(context: ReviewContext, err: unknown): Promise<void> {
     context.review.id,
     reason,
     context.review.checkRunId,
+    context.attempt,
   );
   if (!failed) return;
   if (!context.review.checkRunId) return;

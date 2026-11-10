@@ -2,9 +2,17 @@ import type { DependencyReviewPolicy } from "../../../server/lib/dependency-revi
 import type { RiskLevel } from "../../../server/lib/review/types";
 import type { DependencyReview } from "../../models/dependency-review";
 
-export { HOLD_REASON_TEXT, UNREVIEWED_TEXT } from "../../../server/lib/dependency-review/wording";
+export {
+  HOLD_REASON_TEXT,
+  holdReasonPhrases,
+  unreadContentText,
+  UNREVIEWED_TEXT,
+} from "../../../server/lib/dependency-review/wording";
+export { hasUnreadContent } from "../../../server/lib/dependency-review/evidence";
 
-type PolicySwitch = Exclude<keyof DependencyReviewPolicy, "holdAtReleaseRisk">;
+type PolicySwitch = {
+  [K in keyof DependencyReviewPolicy]: DependencyReviewPolicy[K] extends boolean ? K : never;
+}[keyof DependencyReviewPolicy];
 
 /** One settings checkbox per policy switch, phrased to finish "Hold an update that…". */
 export const POLICY_SWITCHES: ReadonlyArray<{ key: PolicySwitch; label: string; hint?: string }> = [
@@ -15,12 +23,12 @@ export const POLICY_SWITCHES: ReadonlyArray<{ key: PolicySwitch; label: string; 
   {
     key: "holdOnUninspectedFiles",
     label: "changes files or artifacts Drydock could not read",
-    hint: "Minified bundles, oversized or unknown binary files, and PyPI wheels the diff did not read.",
+    hint: "Minified bundles, oversized or unknown binary files, changed native binaries, and PyPI wheels the diff did not read.",
   },
   {
     key: "holdOnUnreviewed",
     label: "has no Drydock verdict",
-    hint: "From a private registry, over the per-PR limit, missing from the registry, a failed diff, or an unread lockfile. Off lets them pass.",
+    hint: "From a private registry or a git or URL source, over the per-PR limit, missing from the registry, a failed diff, or an unread lockfile.",
   },
   {
     key: "holdOnNewPackages",

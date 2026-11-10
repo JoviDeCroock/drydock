@@ -59,7 +59,11 @@ export interface DependencyReviewQueueMessage {
   reviewId?: string;
   // Re-run a completed review: the check's Re-run button, or a skip raced it.
   rerun?: boolean;
+  // The next pass of a multi-pass review.
+  continuation?: true;
   approver?: { login: string; githubId: number; checkRunId?: number };
+  // Re-run a review held only by age once its earliest hold passes.
+  recheck?: { checkRunId: number; at: string };
   // Post a passing `skipped` check on a PR no dependency bot opened.
   skip?: {
     installationRowId: string;

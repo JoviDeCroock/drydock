@@ -211,6 +211,23 @@ export async function loadPublicPackageDiff(
   return payload;
 }
 
+/**
+ * A cached diff, or null without computing one: the cache-hit half of
+ * `loadPublicPackageDiff`, validation included, so a caller can tell a KV read
+ * from a cold diff before spending a budget on it.
+ */
+export async function readCachedPublicPackageDiff(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  input: PublicDiffInput,
+): Promise<PublicPackageDiff | null> {
+  const adapter = requirePublicDiffAdapter(input.ecosystem);
+  const cached = await readPublicDiffCache(env, await computePublicDiffCacheKey(input));
+  if (!cached) return null;
+  await adapter.validateCachedPair?.(env, ctx, input);
+  return cached;
+}
+
 export async function computePublicDiffCacheKey(input: {
   ecosystem: string;
   packageName: string;

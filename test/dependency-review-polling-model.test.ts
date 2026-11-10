@@ -27,6 +27,7 @@ function review(overrides: Partial<DependencyReview> = {}): DependencyReview {
     conclusion: null,
     bumpCount: 1,
     heldCount: 0,
+    attempt: 0,
     approvedByLogin: null,
     approvedAt: null,
     createdAt: "2026-11-07T00:00:00.000Z",

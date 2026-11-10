@@ -7,8 +7,14 @@ export interface DependencyReviewJobInput {
   reviewId?: string;
   // Re-run a completed review (the check's Re-run button, or a skip raced it).
   rerun?: boolean;
+  // The next pass of a review still in progress: it only continues a queued
+  // review (or one whose pass died), never starts one over.
+  continuation?: true;
   // `checkRunId` is the run clicked; a Re-run since then made it history.
   approver?: { login: string; githubId: number; checkRunId?: number };
+  // Re-run a review held only by age once its earliest hold passes (`at`),
+  // if its held result is still the one on `checkRunId`.
+  recheck?: { checkRunId: number; at: string };
   // A PR outside the review scope, or a legacy queued skip.
   skip?: {
     installationRowId: string;
@@ -33,4 +39,7 @@ export interface ReviewContext {
   token: string;
   appId: string;
   detailsUrl: string | null;
+  // The claim a review pass holds (`claimDependencyReviewAttempt`); its writes
+  // name it. Absent outside a pass (an approval).
+  attempt?: number;
 }

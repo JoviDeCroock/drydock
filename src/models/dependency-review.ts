@@ -12,6 +12,7 @@ import type {
 } from "../../server/db/dependency-reviews";
 import {
   DEFAULT_DEPENDENCY_REVIEW_POLICY,
+  MAX_UNREAD_MINIMUM_AGE_DAYS,
   type DependencyReviewPolicy,
   type ReviewedBump,
 } from "../../server/lib/dependency-review/types";
@@ -56,6 +57,23 @@ export function parseBotLoginsInput(text: string): string[] {
     .filter(Boolean);
 }
 
+/** Days typed into the minimum-age field: empty is off. */
+export function parseMinimumAgeInput(text: string): number | null | "invalid" {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  if (!/^\d+$/.test(trimmed)) return "invalid";
+  const days = Number(trimmed);
+  return days >= 1 && days <= MAX_UNREAD_MINIMUM_AGE_DAYS ? days : "invalid";
+}
+
+/** Mirror URL prefixes typed as one comma- or whitespace-separated line. */
+export function parseMirrorsInput(text: string): string[] {
+  return text
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 function sameSettings(a: DependencyReviewSettings, b: DependencyReviewSettings): boolean {
   return (
     a.enabled === b.enabled &&
@@ -80,6 +98,8 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
   const draftEnabled = signal(false);
   const draftPolicy = signal<DependencyReviewPolicy>(DEFAULT_DEPENDENCY_REVIEW_POLICY);
   const draftBotLogins = signal("");
+  const draftMinimumAge = signal("");
+  const draftMirrors = signal("");
   const saving = signal(false);
   const saveError = signal<string | null>(null);
   const justSaved = signal(false);
@@ -119,21 +139,43 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
     });
   }
 
-  const draft = computed<DependencyReviewSettings>(() => ({
-    enabled: draftEnabled.value,
-    policy: draftPolicy.value,
-    extraBotLogins: parseBotLoginsInput(draftBotLogins.value),
-  }));
+  const minimumAge = computed(() => parseMinimumAgeInput(draftMinimumAge.value));
+  const minimumAgeError = computed(() =>
+    minimumAge.value === "invalid"
+      ? `Enter a whole number of days from 1 to ${MAX_UNREAD_MINIMUM_AGE_DAYS}, or leave it empty for off.`
+      : null,
+  );
+  const draft = computed<DependencyReviewSettings>(() => {
+    const age = minimumAge.value;
+    const policy = draftPolicy.value;
+    const mirrors = draftMirrors.value;
+    const botLogins = draftBotLogins.value;
+    return {
+      enabled: draftEnabled.value,
+      policy: {
+        ...policy,
+        unreadMinimumAgeDays: age === "invalid" ? policy.unreadMinimumAgeDays : age,
+        publicMirrors: parseMirrorsInput(mirrors),
+      },
+      extraBotLogins: parseBotLoginsInput(botLogins),
+    };
+  });
   const dirty = computed(() => {
     const current = saved.value;
     const next = draft.value;
-    return current !== null && !sameSettings(current, next);
+    const ageInvalid = minimumAge.value === "invalid";
+    return current !== null && (ageInvalid || !sameSettings(current, next));
   });
 
   function resetDraft(settings: DependencyReviewSettings) {
     draftEnabled.value = settings.enabled;
     draftPolicy.value = settings.policy;
     draftBotLogins.value = settings.extraBotLogins.join(", ");
+    draftMinimumAge.value =
+      settings.policy.unreadMinimumAgeDays === null
+        ? ""
+        : String(settings.policy.unreadMinimumAgeDays);
+    draftMirrors.value = settings.policy.publicMirrors.join(", ");
   }
 
   return {
@@ -146,6 +188,9 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
     draftEnabled,
     draftPolicy,
     draftBotLogins,
+    draftMinimumAge,
+    draftMirrors,
+    minimumAgeError,
     saving,
     saveError,
     justSaved,
@@ -200,6 +245,16 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
       justSaved.value = false;
     },
 
+    setMinimumAge(value: string) {
+      draftMinimumAge.value = value;
+      justSaved.value = false;
+    },
+
+    setMirrors(value: string) {
+      draftMirrors.value = value;
+      justSaved.value = false;
+    },
+
     discard() {
       const current = saved.peek();
       if (current) resetDraft(current);
@@ -207,7 +262,7 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
     },
 
     async save(): Promise<boolean> {
-      if (saving.peek()) return false;
+      if (saving.peek() || minimumAgeError.peek()) return false;
       const id = requestId;
       saving.value = true;
       saveError.value = null;

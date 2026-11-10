@@ -234,8 +234,9 @@ settings.
 Settings → Integrations → Dependency review (`/api/v1/dependency-reviews`).
 Members read it, and owners and admins (`roleCanManageIntegrations`) change it.
 Each change writes `dependency_review.settings_updated`. The policy is stored as
-JSON and parsed field by field with defaults, so a missing or invalid field
-holds more, never less, and a new field needs no migration.
+JSON and parsed field by field, so a missing or invalid field takes that
+field's default (one bad value cannot switch every hold off) and a new field
+needs no migration.
 
 Extra bot logins identify trusted dependency automation, such as self-hosted
 Renovate, whose account may not have repository collaborator permission. Human

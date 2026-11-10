@@ -7,36 +7,84 @@ import {
   unpinnedRequirementsChanged,
   type LockfilePackage,
   type LockfileSnapshot,
+  type LockfileSource,
 } from "../server/lib/dependency-review/lockfiles";
 
 type Summary = Record<string, { versions: string[]; direct: boolean; privateSource?: true }>;
 
-// `privateSource` appears only when set, so public-only expectations stay short.
+// `privateSource` (some recorded version is not public) appears only when
+// set, so public-only expectations stay short.
 function summary(snapshot: LockfileSnapshot): Summary {
   const out: Summary = {};
   for (const [key, pkg] of snapshot.packages) {
     out[key] = {
       versions: [...pkg.versions].sort(),
       direct: pkg.direct,
-      ...(pkg.privateSource ? { privateSource: true as const } : {}),
+      ...([...pkg.sources.values()].some((source) => source.kind !== "public")
+        ? { privateSource: true as const }
+        : {}),
     };
   }
   return out;
 }
 
+// Each recorded identity's source kind, for the packages that have a
+// non-public one.
+function kinds(snapshot: LockfileSnapshot): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  for (const [key, pkg] of snapshot.packages) {
+    if ([...pkg.sources.values()].every((source) => source.kind === "public")) continue;
+    out[key] = Object.fromEntries([...pkg.sources].map(([id, source]) => [id, source.kind]));
+  }
+  return out;
+}
+
+type SourceSpec = LockfileSource["kind"] | Partial<LockfileSource>;
+
 function snapshotOf(
   ecosystem: LockfilePackage["ecosystem"],
-  packages: Record<string, { versions: string[]; direct?: boolean; privateSource?: boolean }>,
+  packages: Record<
+    string,
+    {
+      versions: string[];
+      direct?: boolean;
+      privateSource?: boolean;
+      // Per identity, overriding `privateSource`.
+      sources?: Record<string, SourceSpec>;
+    }
+  >,
   complete = true,
 ): LockfileSnapshot {
+  const sourceOf = (
+    id: string,
+    spec: SourceSpec | undefined,
+    fallback: boolean,
+  ): LockfileSource => {
+    const given = typeof spec === "string" ? { kind: spec } : (spec ?? {});
+    const kind = given.kind ?? (fallback ? "registry" : "public");
+    return {
+      kind,
+      version: kind === "remote" ? null : id,
+      location: null,
+      hashes: null,
+      mixed: false,
+      ...given,
+    };
+  };
   return {
     complete,
     unpinned: [],
     packages: new Map(
       Object.entries(packages).map(
-        ([name, { versions, direct = false, privateSource = false }]) => [
+        ([name, { versions, direct = false, privateSource = false, sources = {} }]) => [
           `${ecosystem}:${name}`,
-          { ecosystem, name, versions: new Set(versions), direct, privateSource },
+          {
+            ecosystem,
+            name,
+            versions: new Set(versions),
+            sources: new Map(versions.map((id) => [id, sourceOf(id, sources[id], privateSource)])),
+            direct,
+          },
         ],
       ),
     ),
@@ -45,12 +93,13 @@ function snapshotOf(
 
 const bumpsOf = (base: LockfileSnapshot | null, head: LockfileSnapshot) =>
   diffLockfileSnapshots(base, head, "package-lock.json").map(
-    ({ name, fromVersion, toVersion, direct, privateSource }) => ({
+    ({ name, fromVersion, toVersion, direct, privateSource, remoteSource }) => ({
       name,
       fromVersion,
       toVersion,
       direct,
       ...(privateSource ? { privateSource } : {}),
+      ...(remoteSource ? { remoteSource } : {}),
     }),
   );
 
@@ -178,8 +227,9 @@ describe("package-lock.json", () => {
         direct: false,
         privateSource: true,
       },
-      // A non-string `resolved` has no reference, so the version stands in.
-      "npm:numeric": { versions: ["1.0.0"], direct: false, privateSource: true },
+      // A non-string `resolved` has no reference, so the version stands in,
+      // marked so it cannot equal the public 1.0.0.
+      "npm:numeric": { versions: ["1.0.0 (unknown source)"], direct: false, privateSource: true },
     });
   });
 
@@ -198,7 +248,7 @@ describe("package-lock.json", () => {
     });
   });
 
-  test("one private copy marks the package private", () => {
+  test("a private copy is its own private identity; the public copies stay public", () => {
     const text = lock({
       "node_modules/a": { version: "1.0.0" },
       "node_modules/x/node_modules/a": {
@@ -210,6 +260,13 @@ describe("package-lock.json", () => {
         resolved: "https://registry.npmjs.org/a/-/a-1.0.1.tgz",
       },
     });
+    expect(kinds(parseLockfile("npm", text))).toEqual({
+      "npm:a": {
+        "1.0.0": "public",
+        "1.0.1": "public",
+        "https://npm.internal.example/a.tgz": "remote",
+      },
+    });
     expect(summary(parseLockfile("npm", text))).toEqual({
       "npm:a": {
         versions: ["1.0.0", "1.0.1", "https://npm.internal.example/a.tgz"],
@@ -219,7 +276,7 @@ describe("package-lock.json", () => {
     });
   });
 
-  test("drops invalid names and versions and ignores prototype keys", () => {
+  test("drops invalid names, keeps a version npm would resolve itself as remote, and ignores prototype keys", () => {
     const text =
       '{"lockfileVersion":3,"packages":{"":{"dependencies":{"__proto__":"1","constructor":"1"}},' +
       '"node_modules/__proto__":{"version":"1.0.0"},' +
@@ -236,6 +293,11 @@ describe("package-lock.json", () => {
     expect(summary(snapshot)).toEqual({
       "npm:constructor": { versions: ["1.0.0"], direct: true },
       "npm:x": { versions: ["1.0.0"], direct: false },
+      // With no `resolved`, npm fetches `name@<version>` as a spec: these pin
+      // nothing, so they are remote rather than silently absent.
+      "npm:loose": { versions: ["v1.0.0"], direct: false, privateSource: true },
+      "npm:zero": { versions: ["01.0.0"], direct: false, privateSource: true },
+      "npm:range": { versions: ["^1.0.0"], direct: false, privateSource: true },
     });
     expect(Object.hasOwn(Object.prototype, "version")).toBe(false);
   });
@@ -344,8 +406,10 @@ describe("pnpm-lock.yaml", () => {
       "npm:react": { versions: ["18.3.1"], direct: true },
       "npm:string-width": { versions: ["4.2.3", "5.1.2"], direct: true },
       "npm:loose-envify": { versions: ["1.4.0"], direct: false },
+      // A private registry's identity carries its integrity, so a re-pin of
+      // the same URL is a change.
       "npm:priv": {
-        versions: ["https://npm.corp.example/priv/-/priv-1.0.0.tgz"],
+        versions: ["https://npm.corp.example/priv/-/priv-1.0.0.tgz (sha512-p)"],
         direct: false,
         privateSource: true,
       },
@@ -483,8 +547,8 @@ describe("pnpm-lock.yaml", () => {
       "npm:react-dom": { versions: ["17.0.2"], direct: true },
       "npm:react": { versions: ["17.0.2"], direct: false },
       "npm:@scope/real": { versions: ["2.0.0"], direct: true },
-      // No URL in a host-prefixed key, so the version identifies it.
-      "npm:private": { versions: ["1.0.0"], direct: true, privateSource: true },
+      // No URL in a host-prefixed key, so the version and its pin identify it.
+      "npm:private": { versions: ["1.0.0 (sha512-d)"], direct: true, privateSource: true },
       "npm:b": {
         versions: ["https://codeload.github.com/a/b/tar.gz/0123456789abcdef"],
         direct: false,
@@ -521,7 +585,7 @@ describe("yarn.lock", () => {
       "",
       '"@babel/core@^7.0.0", "@babel/core@^7.1.0":',
       '  version "7.2.0"',
-      '  resolved "https://registry.yarnpkg.com/@babel/core/-/core-7.2.0.tgz#abc"',
+      '  resolved "https://registry.yarnpkg.com/@babel/core/-/core-7.2.0.tgz#0123456789abcdef0123456789abcdef01234567"',
       "  dependencies:",
       '    debug "^4.1.0"',
       '    version "^1.0.0"',
@@ -612,7 +676,8 @@ describe("yarn.lock", () => {
         direct: false,
         privateSource: true,
       },
-      "npm:noref": { versions: ["3.0.0"], direct: false, privateSource: true },
+      // Nothing resolved: the descriptor's range identifies it.
+      "npm:noref": { versions: ["github:org/noref"], direct: false, privateSource: true },
     });
   });
 
@@ -740,6 +805,7 @@ describe("yarn.lock", () => {
         toVersion: "https://github.com/org/lib.git#commit=bbb",
         direct: false,
         privateSource: true,
+        remoteSource: true,
       },
     ]);
   });
@@ -878,7 +944,12 @@ describe("uv.lock", () => {
       "pypi:socksio": { versions: ["1.0.0"], direct: true },
       "pypi:rich": { versions: ["13.7.1"], direct: true },
       "pypi:numpy": { versions: ["1.26.4", "2.0.0"], direct: false },
-      "pypi:internal": { versions: ["1.0.0"], direct: false, privateSource: true },
+      // No hashes recorded, so the index URL marks it apart from PyPI's 1.0.0.
+      "pypi:internal": {
+        versions: ["1.0.0 (https://pypi.corp.example/simple)"],
+        direct: false,
+        privateSource: true,
+      },
       "pypi:gitpkg": {
         versions: ["https://github.com/a/b?rev=abc#abc"],
         direct: false,
@@ -1115,7 +1186,8 @@ describe("hostile input", () => {
     for (const line of lines) {
       for (const [kind, first] of Object.entries(opener)) {
         const text = `${first}\n  ${line}\n${line}\n`;
-        expect(parseLockfile(kind as keyof typeof opener, text).complete).toBe(true);
+        // A uv package table with no readable name or source is unread.
+        expect(parseLockfile(kind as keyof typeof opener, text).complete).toBe(kind !== "uv");
       }
     }
     expect(parseLockfile("requirements", "\n".repeat(n)).complete).toBe(true);
@@ -1225,7 +1297,7 @@ describe("diffLockfileSnapshots", () => {
     expect(bumpsOf(pre, post).map((bump) => bump.toVersion)).toEqual(order);
   });
 
-  test("a package private on either side marks its bumps private", () => {
+  test("a bump private on either of its own sides is private", () => {
     const base = snapshotOf("npm", {
       priv: { versions: ["1.0.0"], privateSource: true },
       moved: { versions: ["1.0.0"], privateSource: true },

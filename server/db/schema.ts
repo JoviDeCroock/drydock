@@ -738,6 +738,13 @@ export const dependencyReviews = sqliteTable(
     // What the review couldn't see, kept so an approval re-renders the same notices.
     unreadLockfilesJson: text("unread_lockfiles_json").notNull().default("[]"),
     listingComplete: integer("listing_complete", { mode: "boolean" }).notNull().default(true),
+    // Counts claims. Each pass's writes name the value its claim returned, so a
+    // pass that lost its claim can't overwrite a newer pass's progress or result.
+    attempt: integer("attempt").notNull().default(0),
+    // Policy-independent per-bump outcomes while a review runs over several
+    // queue invocations (`dependency-review/progress.ts`), bounded like
+    // `bumps_json`. Cleared on completion and when a fresh attempt starts.
+    progressJson: text("progress_json"),
     failureReason: text("failure_reason"),
     approvedByLogin: text("approved_by_login"),
     approvedAt: integer("approved_at", { mode: "timestamp_ms" }),
@@ -778,8 +785,10 @@ export const dependencyReviewApprovals = sqliteTable(
     packageName: text("package_name").notNull(),
     fromVersion: text("from_version").notNull(),
     toVersion: text("to_version").notNull(),
-    // "public" or "private": approving a change resolved from a private
-    // registry must not approve the same versions resolved from a public one.
+    // "public", "private", or "mirror:<sha256 of the pinned hashes>" for a
+    // mirror pin nobody proved public: approving a change resolved from a
+    // private registry must not approve the same versions resolved from a
+    // public one, or re-pinned to other bytes.
     source: text("source").notNull().default("public"),
     approvedByLogin: text("approved_by_login").notNull(),
     approvedByGithubId: integer("approved_by_github_id").notNull(),

@@ -89,6 +89,7 @@ Always spell lint as `pnpm run lint`: bare `pnpm lint` can collide with workspac
 | --- | --- |
 | `pnpm run eval` | Deterministic detection eval over the security corpus ([detection-eval.md](./detection-eval.md)). |
 | `pnpm run eval:npm-sweep` | Replay real npm release pairs through production rules for false positives (network-bound, report-only). |
+| `pnpm run eval:dependency-review-replay` | Replay real Dependabot/Renovate PRs through dependency review to measure hold rates and cold-diff cost (network-bound, report-only; optional `GITHUB_TOKEN`). |
 | `pnpm run eval:ai` | Offline AI-review eval on recorded fixtures ([ai-review-eval.md](./ai-review-eval.md)). |
 | `pnpm run eval:ai:live` | Paid live AI-review comparison. |
 | `pnpm run eval:clef:live` | Paid Clef injection-screen eval. |

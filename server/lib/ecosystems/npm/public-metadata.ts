@@ -45,7 +45,12 @@ export async function fetchPublicPackageMetadata(
 
   let metadata: RegistryMetadata;
   try {
-    metadata = await fetchPackageMetadata(env, packageName, { npmRegistry: registryUrl });
+    // Integrity is kept so dependency review can compare a mirror's lockfile
+    // pin with the public release (`publicReleaseDigests`).
+    metadata = await fetchPackageMetadata(env, packageName, {
+      npmRegistry: registryUrl,
+      integrity: true,
+    });
   } catch (err) {
     // A missing package is cheap to re-ask and costs no cache write.
     if (err instanceof Error && err.message.includes("404")) {

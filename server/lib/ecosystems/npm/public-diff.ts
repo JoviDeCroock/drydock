@@ -27,6 +27,7 @@ import {
 export const PUBLIC_NPM_REGISTRY = "https://registry.npmjs.org";
 
 const NPM_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
+const SHA512_INTEGRITY = /^sha512-[A-Za-z0-9+/]{86}==$/;
 
 /**
  * Anonymous public diff for npm.
@@ -94,6 +95,18 @@ export const npmPublicDiff: PublicDiffAdapter = {
       versions,
       suggested: latest && previous ? { from: previous, to: latest } : null,
     };
+  },
+
+  async publicReleaseDigests(env, ctx, packageName, versions) {
+    const metadata = await fetchPublicPackageMetadata(env, ctx, packageName, PUBLIC_NPM_REGISTRY);
+    const published = metadata.versions ?? {};
+    return versions.map((version) => {
+      if (!Object.hasOwn(published, version)) return null;
+      const integrity = published[version]?.dist?.integrity;
+      if (typeof integrity !== "string") return null;
+      const sha512 = integrity.split(/\s+/).filter((token) => SHA512_INTEGRITY.test(token));
+      return sha512.length > 0 ? new Set(sha512) : null;
+    });
   },
 
   async acquire(env, ctx, input): Promise<PublicDiffAcquiredSources> {

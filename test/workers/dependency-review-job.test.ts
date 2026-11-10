@@ -251,7 +251,7 @@ describe("dependency review job", () => {
     });
   });
 
-  test("bumps past the per-review cap are held as unreviewed", async () => {
+  test("cached pairs cost no cold-diff budget, so 40 cached and one cold finish in one pass", async () => {
     const prefix = uniquePackageName("cap");
     const names = Array.from({ length: 41 }, (_, i) => `${prefix}-${String(i).padStart(2, "0")}`);
     const { api, review, input } = await scenario({
@@ -265,13 +265,15 @@ describe("dependency review job", () => {
     const row = await readReview(review.id);
     expect(row).toMatchObject({ conclusion: "held", bumpCount: 41, heldCount: 1 });
     expect(row.bumps.filter((b) => b.verdict.status === "clear")).toHaveLength(40);
-    // Holds are stored first, so a capped list never drops one.
+    // Holds are stored first, so a capped list never drops one. The one cold
+    // pair reaches the (stubbed, empty) registry.
     expect(row.bumps[0]).toMatchObject({
       bump: { name: names[40] },
-      verdict: { status: "hold", reasons: ["unreviewed"], unreviewed: "over-cap" },
+      verdict: { status: "hold", reasons: ["unreviewed"], unreviewed: "not-found" },
     });
     expect(api.lastCheckRunState()).toMatchObject({ conclusion: "action_required" });
-    expect(api.requests.filter((r) => r.host === "registry.npmjs.org")).toEqual([]);
+    const registryCalls = api.requests.filter((r) => r.host === "registry.npmjs.org");
+    expect(registryCalls.every((r) => r.url.includes(names[40]))).toBe(true);
     expectTokenStaysOnGithub(api);
   });
 
@@ -293,8 +295,10 @@ describe("dependency review job", () => {
     expectTokenStaysOnGithub(api);
   });
 
-  test("with holdOnUnreviewed off, a not-found bump no longer blocks the check", async () => {
-    const { api, review, input } = await scenario({ policy: { holdOnUnreviewed: false } });
+  test("with holdOnUnreviewed and the age fallback off, a not-found bump no longer blocks the check", async () => {
+    const { api, review, input } = await scenario({
+      policy: { holdOnUnreviewed: false, unreadMinimumAgeDays: null },
+    });
 
     await runDependencyReviewJob(input);
 
@@ -637,8 +641,9 @@ describe("dependency review job", () => {
       const error = await original;
       await waitOnExecutionContext(ctx);
 
-      if (outcome === "retries") expect(error).toBeInstanceOf(Error);
-      else expect(error).toBeNull();
+      // The expired pass stops at its first fenced progress write, before it
+      // reaches GitHub again, whatever GitHub would have answered.
+      expect(error).toBeNull();
       expect(await readReview(review.id)).toMatchObject({
         status: "completed",
         conclusion: "held",

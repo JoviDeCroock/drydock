@@ -1,9 +1,13 @@
 import {
+  classifyNpmTarball,
   createSnapshotBuilder,
-  sourceOf,
+  isLocalSource,
+  npmIntegrity,
+  validLockfileVersion,
   validNpmName,
   type LockfileSnapshot,
   type SnapshotBuilder,
+  type TarballSource,
 } from "./snapshot";
 import { yamlLines } from "./lines";
 
@@ -103,12 +107,17 @@ interface PnpmEntry {
 
 // Directory resolutions are repository code and are skipped. Git resolutions
 // and off-registry tarballs are remote sources identified by commit or URL.
+// The installer fetches a registry entry by the `name:` / `version:` fields
+// when they are present and by its key otherwise, so a registry entry whose
+// fields name something other than its key is not that key's release: it is
+// remote.
 function recordEntry(builder: SnapshotBuilder, entry: PnpmEntry): void {
   const name = entry.fields.get("name") ?? entry.name;
   const version = entry.fields.get("version") ?? entry.ref;
   const res = entry.resolution;
   const type = res.get("type");
-  if (type === "directory" || res.has("directory") || sourceOf(entry.ref) === "local") return;
+  if (type === "directory" || res.has("directory") || isLocalSource(entry.ref)) return;
+  const { pin, hashes } = npmIntegrity(res.get("integrity"));
   if (type === "git" || res.has("repo") || res.has("commit")) {
     const repo = res.get("repo");
     const commit = res.get("commit");
@@ -120,16 +129,29 @@ function recordEntry(builder: SnapshotBuilder, entry: PnpmEntry): void {
     return;
   }
   const tarball = res.get("tarball");
-  const source = tarball === undefined ? null : sourceOf(tarball);
-  if (source === "local") return;
-  if (source === "remote") builder.addRemote(name, tarball, version);
-  else if (entry.host) builder.addRemote(name, null, version);
-  else if (SEMVER_SHAPED.test(entry.ref) || source === "public") builder.add(name, entry.ref);
-  // Neither a version nor a local path: a URL or git reference in the key.
-  else builder.addRemote(name, entry.ref, version);
+  if (tarball !== undefined && isLocalSource(tarball)) return;
+  const keyed =
+    validLockfileVersion("npm", entry.ref) && name === entry.name && version === entry.ref;
+  if (tarball !== undefined) {
+    const source: TarballSource = keyed
+      ? classifyNpmTarball(tarball, name, version)
+      : { kind: "remote" };
+    if (source.kind === "public") builder.add(name, version, { hashes, pin });
+    else if (source.kind === "registry") {
+      builder.add(name, version, {
+        registry: { location: source.location, ref: tarball },
+        hashes,
+        pin,
+      });
+    } else builder.addRemote(name, tarball, version, pin);
+  } else if (keyed && entry.host) {
+    // A v5/v6 key with another registry's hostname records no URL.
+    builder.add(name, version, { registry: { location: null, ref: null }, hashes, pin });
+  } else if (keyed) builder.add(name, version, { hashes, pin });
+  // Neither a version nor a local path: a URL or git reference in the key, or
+  // fields that disagree with it.
+  else builder.addRemote(name, entry.ref, version, pin);
 }
-
-const SEMVER_SHAPED = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]*)?$/;
 
 // The fields of a flow-style `{integrity: ..., tarball: ...}` resolution.
 function flowFields(flow: string): Array<[string, string]> {
@@ -181,7 +203,7 @@ function registryHost(key: string): { body: string; host: boolean } {
 // name is used: it marks which installed package the importer declares.
 function importerPackageName(dep: string, value: string): string | null {
   let v = before(value, "(");
-  if (sourceOf(v) === "local") return null;
+  if (isLocalSource(v)) return null;
   if (v.includes("://") || /^(?:git|github|gitlab|bitbucket)[+:]/.test(v)) return dep;
   v = registryHost(v).body;
   if (/^\d+\.\d+\.\d+/.test(v)) return dep;

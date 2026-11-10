@@ -1,38 +1,59 @@
 import { compareSemver } from "../../ecosystems/semver";
 import type { DependencyBump, DependencyEcosystem } from "../types";
-import type { LockfileSnapshot } from "./snapshot";
+import type { LockfileSource, LockfileSnapshot } from "./snapshot";
+
+/** One bump, with the recorded source of each side it pairs. */
+export interface LockfileChange {
+  bump: DependencyBump;
+  from: LockfileSource | null;
+  to: LockfileSource;
+}
 
 // Pairs each version a lockfile gains with a version it had, per package.
 //
-// For one package, `added` are head versions the base lacked and `removed`
-// the reverse; two spellings of one release cancel out. Lowest added version
-// first, each takes the highest removed version below it (an upgrade). Added
-// versions still unpaired then take the closest removed version left (a
-// downgrade). Each removed version pairs once. An added version left over
-// after that is an extra copy beside versions the base kept, and pairs with
-// the closest base version; it is `fromVersion: null` only when the base had
-// no version of the package at all. A removed version nothing pairs with is
-// not a bump.
-export function diffLockfileSnapshots(
+// For one package, `added` are head identities the base lacked and `removed`
+// the reverse; two spellings of one public release cancel out. Identities
+// order by the release they name (a registry source's version, a public
+// identity itself), then by their text. Lowest added version first, each
+// takes the highest removed version below it (an upgrade). Added versions
+// still unpaired then take the closest removed version left (a downgrade).
+// Each removed version pairs once. An added version left over after that is
+// an extra copy beside versions the base kept, and pairs with the closest base
+// version; it is `fromVersion: null` only when the base had no version of the
+// package at all. A removed version nothing pairs with is not a bump.
+//
+// A bump is private when either of its own two sides is not public: a package
+// that moved off a private registry would otherwise be diffed against a public
+// same-named release it never was. Another copy of the name elsewhere in the
+// tree does not make it private. It is remote when either side is a remote
+// source.
+export function diffLockfileChanges(
   base: LockfileSnapshot | null,
   head: LockfileSnapshot,
   lockfilePath: string,
-): DependencyBump[] {
+): LockfileChange[] {
   if (!head.complete || (base !== null && !base.complete)) return [];
-  const bumps: DependencyBump[] = [];
+  const changes: LockfileChange[] = [];
   for (const [key, pkg] of head.packages) {
-    const compare = COMPARE[pkg.ecosystem];
     const basePkg = base?.packages.get(key);
-    const baseVersions = basePkg?.versions ?? new Set<string>();
-    // Either side counts: a package that moved off a private registry would
-    // otherwise be diffed against a public same-named release it never was.
-    const privateSource = pkg.privateSource || basePkg?.privateSource === true;
-    const before = [...baseVersions].sort(compare);
-    let added = [...pkg.versions].filter((v) => !baseVersions.has(v));
-    let removed = before.filter((v) => !pkg.versions.has(v));
-    const equivalent = added.filter((v) => removed.some((r) => compare(v, r) === 0));
-    added = added.filter((v) => !equivalent.includes(v));
-    removed = removed.filter((r) => !equivalent.some((v) => compare(v, r) === 0));
+    const baseSources = basePkg?.sources ?? new Map<string, LockfileSource>();
+    const sourceOf = (id: string) => (pkg.sources.get(id) ?? baseSources.get(id))!;
+    const release = (id: string) => {
+      const source = sourceOf(id);
+      return source.kind === "remote" ? id : (source.version ?? id);
+    };
+    const versionOrder = COMPARE[pkg.ecosystem];
+    const compare: Compare = (a, b) => versionOrder(release(a), release(b)) || ordinal(a, b);
+    // Equivalent spellings (PyPI `1.0` and `1.0.0`) are one release only when
+    // both are public; a non-public identity changes with its source or pin.
+    const equivalent = (a: string, b: string) =>
+      sourceOf(a).kind === "public" && sourceOf(b).kind === "public" && versionOrder(a, b) === 0;
+    const before = [...baseSources.keys()].sort(compare);
+    let added = [...pkg.sources.keys()].filter((v) => !baseSources.has(v));
+    let removed = before.filter((v) => !pkg.sources.has(v));
+    const same = added.filter((v) => removed.some((r) => equivalent(v, r)));
+    added = added.filter((v) => !same.includes(v));
+    removed = removed.filter((r) => !same.some((v) => equivalent(v, r)));
     added.sort(compare);
     const from = new Map<string, string | null>();
     for (const toVersion of added) {
@@ -48,24 +69,48 @@ export function diffLockfileSnapshots(
       );
     }
     for (const toVersion of added) {
-      bumps.push({
-        ecosystem: pkg.ecosystem,
-        name: pkg.name,
-        fromVersion: from.get(toVersion) ?? null,
-        toVersion,
-        direct: pkg.direct,
-        lockfilePath,
-        ...(privateSource ? { privateSource: true as const } : {}),
+      const fromVersion = from.get(toVersion) ?? null;
+      const to = pkg.sources.get(toVersion)!;
+      const fromSource = fromVersion === null ? null : baseSources.get(fromVersion)!;
+      const kinds = [to.kind, fromSource?.kind];
+      changes.push({
+        bump: {
+          ecosystem: pkg.ecosystem,
+          name: pkg.name,
+          fromVersion,
+          toVersion,
+          direct: pkg.direct,
+          lockfilePath,
+          ...(kinds.some((kind) => kind === "registry" || kind === "remote")
+            ? { privateSource: true as const }
+            : {}),
+          ...(kinds.includes("remote") ? { remoteSource: true as const } : {}),
+        },
+        from: fromSource,
+        to,
       });
     }
   }
-  return bumps.sort(
+  return changes.sort(
     (a, b) =>
-      ordinal(a.ecosystem, b.ecosystem) ||
-      ordinal(a.name, b.name) ||
-      COMPARE[a.ecosystem](a.toVersion, b.toVersion) ||
-      ordinal(a.toVersion, b.toVersion),
+      ordinal(a.bump.ecosystem, b.bump.ecosystem) ||
+      ordinal(a.bump.name, b.bump.name) ||
+      COMPARE[a.bump.ecosystem](a.bump.toVersion, b.bump.toVersion) ||
+      ordinal(a.bump.toVersion, b.bump.toVersion),
   );
+}
+
+export function diffLockfileSnapshots(
+  base: LockfileSnapshot | null,
+  head: LockfileSnapshot,
+  lockfilePath: string,
+): DependencyBump[] {
+  return diffLockfileChanges(base, head, lockfilePath).map((change) => change.bump);
+}
+
+/** Whether two versions name one release (PEP 440 spellings for PyPI). */
+export function sameRelease(ecosystem: DependencyEcosystem, a: string, b: string): boolean {
+  return a === b || COMPARE[ecosystem](a, b) === 0;
 }
 
 type Compare = (a: string, b: string) => number;

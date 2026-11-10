@@ -2,11 +2,10 @@ import { describe, expect, test } from "vitest";
 import type { PublicPackageDiff } from "../server/lib/public-diff";
 import {
   concludeDependencyReview,
+  decideBump,
   evaluateBumpEvidence,
   extractBumpEvidence,
-  newPackageVerdict,
   parseDependencyReviewPolicy,
-  unreviewedVerdict,
 } from "../server/lib/dependency-review/policy";
 import {
   collectCustomRegistries,
@@ -202,6 +201,8 @@ describe("evaluateBumpEvidence", () => {
       holdOnUninspectedFiles: false,
       holdOnUnreviewed: false,
       holdOnNewPackages: false,
+      unreadMinimumAgeDays: 3,
+      publicMirrors: [],
     });
   });
 
@@ -261,19 +262,22 @@ describe("evaluateBumpEvidence", () => {
   });
 
   test("unreviewed and new packages hold only when the policy says so", () => {
+    const noAge = { ...DEFAULT_DEPENDENCY_REVIEW_POLICY, unreadMinimumAgeDays: null };
+    const now = Date.parse("2026-11-10T00:00:00Z");
     expect(
-      unreviewedVerdict("over-cap", {
-        ...DEFAULT_DEPENDENCY_REVIEW_POLICY,
-        holdOnUnreviewed: true,
-      }),
+      decideBump(
+        { kind: "unreviewed", reason: "over-cap" },
+        { ...noAge, holdOnUnreviewed: true },
+        now,
+      ),
     ).toMatchObject({ status: "hold", reasons: ["unreviewed"], unreviewed: "over-cap" });
-    expect(unreviewedVerdict("not-found", DEFAULT_DEPENDENCY_REVIEW_POLICY)).toEqual({
+    expect(decideBump({ kind: "unreviewed", reason: "not-found" }, noAge, now)).toEqual({
       status: "unreviewed",
       unreviewed: "not-found",
     });
-    expect(newPackageVerdict(DEFAULT_DEPENDENCY_REVIEW_POLICY)).toEqual({ status: "new-package" });
+    expect(decideBump({ kind: "new-package" }, noAge, now)).toEqual({ status: "new-package" });
     expect(
-      newPackageVerdict({ ...DEFAULT_DEPENDENCY_REVIEW_POLICY, holdOnNewPackages: true }).status,
+      decideBump({ kind: "new-package" }, { ...noAge, holdOnNewPackages: true }, now).status,
     ).toBe("hold");
   });
 });

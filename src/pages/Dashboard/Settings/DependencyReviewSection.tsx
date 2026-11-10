@@ -5,6 +5,7 @@ import {
   POLICY_SWITCHES,
   RELEASE_RISK_THRESHOLDS,
 } from "../../../features/dependency-review/wording";
+import { MAX_PUBLIC_MIRRORS } from "../../../../server/lib/dependency-review/types";
 import type { RiskLevel } from "../../../../server/lib/review/types";
 import { Alert } from "../../../components/Alert";
 import { Button, LinkButton } from "../../../components/Button";
@@ -156,7 +157,70 @@ function DependencyReviewForm({ model }: { model: InstanceType<typeof Dependency
             ))}
           </Select>
         </Field>
+        <Field label="Minimum age for unread updates" for="dependencyReviewMinimumAge">
+          <div class="flex items-center gap-2">
+            <Input
+              id="dependencyReviewMinimumAge"
+              mono
+              inputMode="numeric"
+              class="max-w-[96px]"
+              value={model.draftMinimumAge.value}
+              placeholder="off"
+              autocomplete="off"
+              aria-describedby="dependencyReviewMinimumAgeHint"
+              aria-invalid={model.minimumAgeError.value ? true : undefined}
+              disabled={disabled}
+              onInput={(e) => model.setMinimumAge((e.target as HTMLInputElement).value)}
+            />
+            <span class="text-[13px] text-ink-muted">days</span>
+          </div>
+        </Field>
+        <p id="dependencyReviewMinimumAgeHint" class="text-[12px] m-0 max-w-[600px] text-ink-muted">
+          An update Drydock could not fully read (no diff, a package the PR adds, a git or URL
+          source, changed native binaries, or files no rule read) holds until its version is this
+          old on the public registry, or until someone approves it. An unknown publish time holds
+          too. Private-registry updates follow "has no Drydock verdict" instead. Leave empty to turn
+          this off.
+        </p>
+        {model.minimumAgeError.value ? (
+          <Alert tone="critical">{model.minimumAgeError.value}</Alert>
+        ) : null}
       </SettingsCardBody>
+
+      {/* Specialist setting: folded unless it already lists mirrors. */}
+      <details
+        class="group/mirrors border-t border-border"
+        open={(model.saved.value?.policy.publicMirrors.length ?? 0) > 0}
+      >
+        <summary class="cursor-pointer list-none px-5 py-4 text-[13px] font-medium text-ink-muted hover:text-ink">
+          <span aria-hidden class="mr-1.5 font-mono text-ink-subtle">
+            <span class="group-open/mirrors:hidden">▸</span>
+            <span class="hidden group-open/mirrors:inline">▾</span>
+          </span>
+          Registry mirrors of npm or PyPI
+        </summary>
+        <SettingsCardBody inset="belowHeader" gap="compact">
+          <Field label="Mirror URL prefixes" for="dependencyReviewMirrors">
+            <Input
+              id="dependencyReviewMirrors"
+              mono
+              value={model.draftMirrors.value}
+              placeholder="https://artifacts.example.com/api/npm/npm-remote/"
+              spellcheck={false}
+              autocomplete="off"
+              disabled={disabled}
+              onInput={(e) => model.setMirrors((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+          <Muted class="text-[12px] m-0">
+            For a registry that only proxies the public one. An update resolved under a listed
+            prefix is reviewed like a public one once its lockfile hashes match the public
+            registry's. Listing a mirror sends the names and versions of the packages resolved from
+            it to the public npm registry or PyPI. Separate with commas, up to {MAX_PUBLIC_MIRRORS}{" "}
+            https URLs.
+          </Muted>
+        </SettingsCardBody>
+      </details>
 
       {/* Specialist setting: folded unless it already holds logins. */}
       <details

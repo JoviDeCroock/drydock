@@ -1,9 +1,13 @@
 import {
+  classifyNpmTarball,
   createSnapshotBuilder,
+  isLocalSource,
   MANIFEST_DEPENDENCY_FIELDS,
-  sourceOf,
+  npmIntegrity,
   ownField,
+  validLockfileVersion,
   type LockfileSnapshot,
+  type SnapshotBuilder,
 } from "./snapshot";
 import { textLines, yamlKey } from "./lines";
 
@@ -12,6 +16,10 @@ interface YarnEntry {
   version: string | null;
   resolved: string | null;
   resolution: string | null;
+  // v1 `integrity` (ssri, like npm's) and Berry `checksum` (of Yarn's own
+  // repacked zip, so it pins the entry but matches no registry digest).
+  integrity: string | null;
+  checksum: string | null;
   // Berry workspace entries list each workspace's own dependencies.
   dependencies: Array<[string, string]>;
 }
@@ -26,8 +34,7 @@ export function parseYarnLock(text: string, manifestText: string | null): Lockfi
   for (const entry of entries) {
     const pkg = yarnPackage(entry);
     if (!pkg) continue;
-    if (pkg.remote) builder.addRemote(pkg.name, pkg.remote.ref, pkg.version);
-    else builder.add(pkg.name, pkg.version);
+    recordPackage(builder, pkg);
     for (const descriptor of entry.descriptors) byDescriptor.set(descriptor, pkg.name);
   }
   const declare = (dep: string, spec: string) => {
@@ -60,7 +67,15 @@ function readEntries(text: string, reserve: (count?: number) => boolean): YarnEn
         .map((d) => d.trim().replace(/^"|"$/g, ""))
         .filter(Boolean);
       if (!reserve(descriptors.length + 1)) break;
-      current = { descriptors, version: null, resolved: null, resolution: null, dependencies: [] };
+      current = {
+        descriptors,
+        version: null,
+        resolved: null,
+        resolution: null,
+        integrity: null,
+        checksum: null,
+        dependencies: [],
+      };
       entries.push(current);
       inDependencies = false;
       continue;
@@ -75,6 +90,8 @@ function readEntries(text: string, reserve: (count?: number) => boolean): YarnEn
       if (field?.key === "version") current.version = field.value;
       else if (field?.key === "resolved") current.resolved = field.value;
       else if (field?.key === "resolution") current.resolution = field.value;
+      else if (field?.key === "integrity") current.integrity = field.value;
+      else if (field?.key === "checksum") current.checksum = field.value;
     } else if (indent === 4 && inDependencies) {
       const dep = yamlKey(line);
       if (!dep?.value) continue;
@@ -103,39 +120,76 @@ function entryField(line: string): { key: string; value: string } | null {
 interface YarnPackage {
   name: string;
   version: string | null;
-  // Set for a remote source (git, a URL, a private registry): the resolved
-  // reference that identifies the fetched code.
-  remote: { ref: string | null } | null;
+  source:
+    | { kind: "public" }
+    | { kind: "registry"; location: string; ref: string }
+    // `ref` identifies the fetched code: a resolved URL or commit, a Berry
+    // locator, or the descriptor's own range when nothing was resolved.
+    | { kind: "remote"; ref: string | null };
+  // What pins the bytes: v1 integrity or Berry checksum.
+  pin: string | null;
+  // Mirror-comparable digests; Berry's checksum is never one.
+  hashes: string[] | null;
+}
+
+// A registry entry whose version is not an exact one (a range, a tag) pins
+// nothing: Yarn resolves it at install time, so it is a remote source rather
+// than an entry the builder would drop.
+function recordPackage(builder: SnapshotBuilder, pkg: YarnPackage): void {
+  const { name, version, source, pin, hashes } = pkg;
+  if (source.kind !== "remote" && version !== null && !validLockfileVersion("npm", version)) {
+    builder.addRemote(name, version, null, pin);
+  } else if (source.kind === "public") builder.add(name, version, { hashes, pin });
+  else if (source.kind === "registry") {
+    builder.add(name, version, {
+      registry: { location: source.location, ref: source.ref },
+      hashes,
+      pin,
+    });
+  } else builder.addRemote(name, source.ref, version, pin);
 }
 
 // The package an entry installs, or null when its code is in the repository
 // (`workspace:`, `portal:`, `link:`, `file:`, a relative path).
 function yarnPackage(entry: YarnEntry): YarnPackage | null {
-  if (entry.resolution !== null) return berryPackage(entry.resolution, entry.version);
+  if (entry.resolution !== null) {
+    const pkg = berryPackage(entry.resolution, entry.version);
+    return pkg && { ...pkg, pin: entry.checksum, hashes: null };
+  }
   // v1: one real package across descriptors. A git, URL, or `user/repo`
-  // descriptor, or a `resolved` tarball off the public registry, is remote.
+  // descriptor is remote; a `resolved` URL places the rest (see
+  // `classifyNpmTarball`).
   let name: string | null = null;
-  let remote = false;
+  let remoteRange: string | null = null;
   for (const descriptor of entry.descriptors) {
     const parsed = v1Descriptor(descriptor);
     if (parsed === null || parsed.kind === "local") return null;
     if (name !== null && parsed.name !== name) return null;
     name = parsed.name;
-    remote ||= parsed.kind === "remote";
+    if (parsed.kind === "remote") remoteRange ??= parsed.range;
   }
   if (name === null) return null;
-  const source = entry.resolved === null ? "public" : sourceOf(entry.resolved);
-  if (source === "local") return null;
+  if (entry.resolved !== null && isLocalSource(entry.resolved)) return null;
+  const { pin, hashes } = npmIntegrity(entry.integrity);
+  const pkg = { name, version: entry.version, pin, hashes };
+  if (remoteRange !== null) {
+    return { ...pkg, source: { kind: "remote", ref: entry.resolved ?? remoteRange } };
+  }
+  if (entry.resolved === null) return { ...pkg, source: { kind: "public" } };
+  const source = classifyNpmTarball(entry.resolved, name, entry.version);
+  if (source.kind === "remote") return { ...pkg, source: { kind: "remote", ref: entry.resolved } };
   return {
-    name,
-    version: entry.version,
-    remote: remote || source === "remote" ? { ref: entry.resolved } : null,
+    ...pkg,
+    source:
+      source.kind === "public"
+        ? source
+        : { kind: "registry", location: source.location, ref: entry.resolved },
   };
 }
 
 function v1Descriptor(
   descriptor: string,
-): { name: string; kind: "registry" | "remote" | "local" } | null {
+): { name: string; range: string; kind: "registry" | "remote" | "local" } | null {
   const at = descriptor.indexOf("@", 1);
   if (at <= 0) return null;
   const name = descriptor.slice(0, at);
@@ -143,27 +197,30 @@ function v1Descriptor(
   if (range.startsWith("npm:")) {
     const target = range.slice(4);
     const targetAt = target.indexOf("@", 1);
-    return { name: targetAt > 0 ? target.slice(0, targetAt) : target, kind: "registry" };
+    const real = targetAt > 0 ? target.slice(0, targetAt) : target;
+    return { name: real, range, kind: "registry" };
   }
-  if (sourceOf(range) === "local" || /^[./~]/.test(range)) return { name, kind: "local" };
+  if (isLocalSource(range) || /^[./~]/.test(range)) return { name, range, kind: "local" };
   // Semver ranges and dist-tags hold neither; `git+`, `github:`, tarball URLs
   // and `user/repo` shorthands hold one or both.
   const remote = range.includes(":") || range.includes("/");
-  return { name, kind: remote ? "remote" : "registry" };
+  return { name, range, kind: remote ? "remote" : "registry" };
 }
+
+type BerrySource = Omit<YarnPackage, "pin" | "hashes">;
 
 // Berry resolutions are `<name>@<protocol>:<reference>`. `npm:` is a registry
 // package; Berry adds `::__archiveUrl=` when the tarball is not where the
-// default registry keeps it, which marks a private source. `patch:` wraps
-// another locator and takes its source. Local protocols are skipped; any other
-// protocol (git, http(s), and unknown ones) is a remote source identified by
-// its locator. A scope routed to another registry in `.yarnrc.yml` leaves no
-// trace here.
+// default registry keeps it, and that URL places the entry the way a v1
+// `resolved` does. `patch:` wraps another locator and takes its source. Local
+// protocols are skipped; any other protocol (git, http(s), and unknown ones)
+// is a remote source identified by its locator. A scope routed to another
+// registry in `.yarnrc.yml` leaves no trace here.
 function berryPackage(
   resolution: string,
   version: string | null,
   insidePatch = false,
-): YarnPackage | null {
+): BerrySource | null {
   const at = resolution.indexOf("@", 1);
   if (at <= 0) return null;
   const name = resolution.slice(0, at);
@@ -172,28 +229,59 @@ function berryPackage(
     const reference = locator.slice(4);
     const params = reference.indexOf("::");
     const npmVersion = params === -1 ? reference : reference.slice(0, params);
-    const archived = params !== -1 && reference.includes("__archiveUrl=", params);
-    return { name, version: npmVersion, remote: archived ? { ref: reference } : null };
+    if (params === -1 || !reference.includes("__archiveUrl=", params)) {
+      return { name, version: npmVersion, source: { kind: "public" } };
+    }
+    const archiveUrl = berryArchiveUrl(reference.slice(params + 2));
+    const source =
+      archiveUrl === null
+        ? ({ kind: "remote" } as const)
+        : classifyNpmTarball(archiveUrl, name, npmVersion);
+    if (source.kind === "public") return { name, version: npmVersion, source };
+    if (source.kind === "registry") {
+      return {
+        name,
+        version: npmVersion,
+        source: { kind: "registry", location: source.location, ref: reference },
+      };
+    }
+    return { name, version: npmVersion, source: { kind: "remote", ref: reference } };
   }
-  if (sourceOf(locator) === "local") return null;
+  if (isLocalSource(locator)) return null;
   // A patch of a patch is not unwrapped: each layer would decode the rest of a
   // possibly huge line again.
   if (!locator.startsWith("patch:") || insidePatch) {
-    return { name, version, remote: { ref: locator } };
+    return { name, version, source: { kind: "remote", ref: locator } };
   }
   const hash = locator.indexOf("#");
   let inner: string;
   try {
     inner = decodeURIComponent(locator.slice(6, hash === -1 ? undefined : hash));
   } catch {
-    return { name, version, remote: { ref: locator } };
+    return { name, version, source: { kind: "remote", ref: locator } };
   }
   const innerAt = inner.indexOf("@", 1);
   if (innerAt <= 0 || inner.slice(0, innerAt) !== name) {
-    return { name, version, remote: { ref: locator } };
+    return { name, version, source: { kind: "remote", ref: locator } };
   }
   // The wrapped locator decides the source; the patch file is repository code.
   return berryPackage(inner, version, true);
+}
+
+// The one `__archiveUrl` binding in a locator's `key=value&…` parameters;
+// null when it is missing, repeated, or not decodable.
+function berryArchiveUrl(params: string): string | null {
+  let found: string | null = null;
+  for (const part of params.split("&")) {
+    if (!part.startsWith("__archiveUrl=")) continue;
+    if (found !== null) return null;
+    try {
+      found = decodeURIComponent(part.slice("__archiveUrl=".length));
+    } catch {
+      return null;
+    }
+  }
+  return found;
 }
 
 function protocolOf(resolution: string): string | null {

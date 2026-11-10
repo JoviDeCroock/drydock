@@ -143,6 +143,21 @@ export interface PublicDiffAdapter {
     registryUrl?: string,
   ): Promise<PublicDiffVersionListing>;
 
+  /**
+   * The strong digests the public registry records for each release in
+   * `versions`, spelled the way lockfiles pin them (npm `sha512-<base64>`,
+   * PyPI `sha256:<hex>` for every file of the release). Null for a release
+   * the registry does not list or records none for; rejects when the
+   * metadata cannot be read. Dependency review uses it to prove a
+   * mirror-resolved lockfile entry is the public release's bytes.
+   */
+  publicReleaseDigests?(
+    env: Cloudflare.Env,
+    ctx: ExecutionContext,
+    packageName: string,
+    versions: readonly string[],
+  ): Promise<Array<ReadonlySet<string> | null>>;
+
   acquire(
     env: Cloudflare.Env,
     ctx: ExecutionContext,

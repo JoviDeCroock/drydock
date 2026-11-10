@@ -18,6 +18,7 @@ import {
   PYPI_RELEASE_MANIFEST_SCHEMA,
   PYPI_RULES_VERSION,
   SAFE_VERSION_RE,
+  SHA256_RE,
   type PyPiArtifactInput,
   type PyPiPreparedArtifact,
   type PyPiProjectMetadata,
@@ -100,6 +101,24 @@ export const pypiPublicDiff: PublicDiffAdapter = {
     const metadata = await fetchPublicPyPiProjectMetadata(env, ctx, packageName);
     const { versions, suggested } = listPublicPyPiVersions(metadata);
     return { packageName: metadata.info?.name ?? packageName, versions, suggested };
+  },
+
+  async publicReleaseDigests(env, ctx, packageName, versions) {
+    const metadata = await fetchPublicPyPiProjectMetadata(env, ctx, packageName);
+    const releases = metadata.releases ?? {};
+    return versions.map((version) => {
+      const release = findPyPiReleaseVersion(Object.keys(releases), version);
+      const files = release === null ? null : releases[release];
+      if (!Array.isArray(files)) return null;
+      const digests = new Set<string>();
+      for (const file of files) {
+        const sha256 = file?.digests?.sha256;
+        if (typeof sha256 === "string" && SHA256_RE.test(sha256)) {
+          digests.add(`sha256:${sha256.toLowerCase()}`);
+        }
+      }
+      return digests.size > 0 ? digests : null;
+    });
   },
 
   acquire(env, ctx, input) {

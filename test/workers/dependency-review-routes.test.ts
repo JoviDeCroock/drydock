@@ -286,6 +286,59 @@ describe("dependency review routes", () => {
     expect(await settingsEvents(seeded.organizationId)).toEqual([]);
   });
 
+  test("the minimum age and mirror list are saved, normalized, and audited", async () => {
+    const seeded = await seedDependencyReviewOrg({ enabled: null });
+    const policy = {
+      ...VALID_SETTINGS.policy,
+      unreadMinimumAgeDays: 14,
+      publicMirrors: ["https://artifacts.example.com/api/npm/npm-remote"],
+    };
+
+    const res = await call(buildTestApp(mount, seeded), "PUT", `${BASE}/settings`, {
+      body: { ...VALID_SETTINGS, policy },
+    });
+
+    expect(res.status).toBe(200);
+    const saved = {
+      ...policy,
+      publicMirrors: ["https://artifacts.example.com/api/npm/npm-remote/"],
+    };
+    const stored = await getDependencyReviewSettings(createDb(env.DB), seeded.organizationId);
+    expect(stored.policy).toEqual(saved);
+    const [event] = await settingsEvents(seeded.organizationId);
+    expect(event.metadataJson).toMatchObject({ policy: saved });
+
+    const off = await call(buildTestApp(mount, seeded), "PUT", `${BASE}/settings`, {
+      body: { ...VALID_SETTINGS, policy: { ...policy, unreadMinimumAgeDays: null } },
+    });
+    expect(off.status).toBe(200);
+    expect(
+      (await getDependencyReviewSettings(createDb(env.DB), seeded.organizationId)).policy
+        .unreadMinimumAgeDays,
+    ).toBeNull();
+  });
+
+  test.each([
+    ["a zero-day minimum age", { unreadMinimumAgeDays: 0 }],
+    ["a minimum age past the limit", { unreadMinimumAgeDays: 91 }],
+    ["a fractional minimum age", { unreadMinimumAgeDays: 1.5 }],
+    ["a plain-http mirror", { publicMirrors: ["http://mirror.example/npm/"] }],
+    ["a mirror with credentials", { publicMirrors: ["https://u:p@mirror.example/npm/"] }],
+    [
+      "more than ten mirrors",
+      { publicMirrors: Array.from({ length: 11 }, (_, i) => `https://m${i}.example/`) },
+    ],
+  ])("rejects %s", async (_label, fields) => {
+    const seeded = await seedDependencyReviewOrg({ enabled: false });
+
+    const res = await call(buildTestApp(mount, seeded), "PUT", `${BASE}/settings`, {
+      body: { ...VALID_SETTINGS, policy: { ...VALID_SETTINGS.policy, ...fields } },
+    });
+
+    expect(res.status).toBe(400);
+    expect(await settingsEvents(seeded.organizationId)).toEqual([]);
+  });
+
   test.each([
     ["no enabled flag", { policy: {} }],
     ["a non-object policy", { enabled: true, policy: "strict" }],
