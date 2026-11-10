@@ -28,9 +28,9 @@ import { DependencyReviewGithubError, fetchPullRequest, updateCheckRun } from ".
 import {
   collectionPolicy,
   collectionPolicyKey,
-  currentReviewSemantics,
   concludeDependencyReview,
   decideBump,
+  REVIEW_SEMANTICS_VERSION,
 } from "./policy";
 import {
   bumpProgressKey,
@@ -259,10 +259,17 @@ async function runReview(
   // policy inputs collection reads are unchanged. A change to any of them (a
   // registry no longer trusted, a scope now private) re-collects, and stored
   // outcomes for bumps the new collection no longer has are dropped: a proof
-  // still pending for one of them must never run. Progress stored by code
-  // with other semantics (see `currentReviewSemantics`) is dropped whole: its
-  // evidence and outcomes may mean something else under the same bump, so the
-  // passes start over.
+  // still pending for one of them must never run. Work stored by code with
+  // other semantics (`REVIEW_SEMANTICS_VERSION`) is dropped whole, collection
+  // included: its evidence and outcomes may mean something else under the
+  // same bump, so the work starts over. `passes` keeps counting: it bounds
+  // the attempt, and two deployed versions alternating must not reset it.
+  if (progress.semantics !== REVIEW_SEMANTICS_VERSION) {
+    progress.bumps = {};
+    progress.settled = 0;
+    progress.collected = undefined;
+    progress.semantics = REVIEW_SEMANTICS_VERSION;
+  }
   const policyKey = collectionPolicyKey(settings.policy);
   const kept = progress.collected;
   const collected =
@@ -270,14 +277,7 @@ async function runReview(
       ? kept
       : await collectBumps(context, pr.baseSha, pr.changedFiles, collectionPolicy(settings.policy));
   if (collected !== kept) {
-    if (kept && currentReviewSemantics(kept.policyKey)) {
-      progress.bumps = keepProgressFor(progress.bumps, collected.bumps);
-    } else if (kept) {
-      // `passes` keeps counting: it bounds the attempt, and two deployed
-      // versions alternating must not reset it.
-      progress.bumps = {};
-      progress.settled = 0;
-    }
+    if (kept) progress.bumps = keepProgressFor(progress.bumps, collected.bumps);
     progress.collected = storableCollection({
       policyKey,
       bumps: collected.bumps,

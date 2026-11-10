@@ -30,6 +30,10 @@ export interface DependencyReviewProgress {
   total: number;
   settled: number;
   bumps: Record<string, StoredBumpProgress>;
+  // The `REVIEW_SEMANTICS_VERSION` the stored work was produced under. It is
+  // kept here, not only in the collection's key, because a collection too
+  // large to store leaves no key behind. Absent on work older code stored.
+  semantics?: number;
   collected?: StoredCollection;
   // Set when an age recheck started this attempt: the held run it rechecks.
   // A redelivery of that recheck may resume this attempt and nothing else.
@@ -99,6 +103,7 @@ export function parseProgress(text: string | null, nowMs: number): DependencyRev
     settled: number(value.settled, 0),
     bumps: value.bumps as Record<string, StoredBumpProgress>,
     ...(typeof value.recheckOf === "number" ? { recheckOf: value.recheckOf } : {}),
+    ...(typeof value.semantics === "number" ? { semantics: value.semantics } : {}),
     ...(isRecord(value.collected) &&
     Array.isArray(value.collected.bumps) &&
     Array.isArray(value.collected.unreadLockfiles) &&

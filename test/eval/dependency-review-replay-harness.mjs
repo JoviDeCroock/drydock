@@ -1266,15 +1266,18 @@ function youngPackageShift(before, after) {
         unreviewed: verdict.unreviewed ?? null,
         firstPublishedDays: ageDays(bump.publish?.firstPublishedAt),
         versionDays: ageDays(bump.publish?.publishedAt),
-        entered: declaredBy.length
-          ? `declared by ${declaredBy.join(", ")}`
-          : bump.direct
-            ? "direct dependency"
-            : otherNew > 0
-              ? `transitive, under another new package (${otherNew} in the PR)`
-              : namesUnknown
-                ? "not matched (a diffed release's names unrecorded)"
-                : "not declared by any diffed release (alias or other path)",
+        entered:
+          bump.fromVersion !== null
+            ? "update nothing could diff"
+            : declaredBy.length
+              ? `declared by ${declaredBy.join(", ")}`
+              : bump.direct
+                ? "direct dependency"
+                : otherNew > 0
+                  ? `transitive, under another new package (${otherNew} in the PR)`
+                  : namesUnknown
+                    ? "not matched (a diffed release's names unrecorded)"
+                    : "not declared by any diffed release (alias or other path)",
         oldRule:
           oldVerdict.status === "hold"
             ? oldVerdict.reasons.join("+")

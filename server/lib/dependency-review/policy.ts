@@ -441,7 +441,7 @@ export function collectionPolicy(policy: CollectionPolicy): CollectionPolicy {
 // for each release. Bump it whenever either would produce something
 // different for the same input; a review stored under another version is
 // collected again and its stored progress discarded (see `job.ts`).
-const REVIEW_SEMANTICS_VERSION = 3;
+export const REVIEW_SEMANTICS_VERSION = 3;
 
 /**
  * Equal for two policies exactly when collection would classify every bump
@@ -449,20 +449,6 @@ const REVIEW_SEMANTICS_VERSION = 3;
  */
 export function collectionPolicyKey(policy: CollectionPolicy): string {
   return JSON.stringify({ version: REVIEW_SEMANTICS_VERSION, ...collectionPolicy(policy) });
-}
-
-/** Whether a stored `collectionPolicyKey` was written under the current semantics. */
-export function currentReviewSemantics(policyKey: string): boolean {
-  try {
-    const parsed: unknown = JSON.parse(policyKey);
-    return (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      (parsed as { version?: unknown }).version === REVIEW_SEMANTICS_VERSION
-    );
-  } catch {
-    return false;
-  }
 }
 
 /**

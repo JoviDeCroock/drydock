@@ -398,10 +398,13 @@ describe("dependency review continuation", () => {
     const between = await readReview(review.id);
     expect(between.status).toBe("queued");
     const progress = JSON.parse(between.progressJson ?? "{}") as {
+      semantics?: number;
       collected: { policyKey: string; bumps: DependencyBump[] };
     };
     if (older) {
-      // The key older code wrote: the declarations alone, no rules version.
+      // What older code wrote: no semantics version, and a key with the
+      // declarations alone.
+      delete progress.semantics;
       const { version: _, ...declarations } = JSON.parse(progress.collected.policyKey) as Record<
         string,
         unknown
@@ -433,9 +436,14 @@ describe("dependency review continuation", () => {
   });
 
   test.each([
-    ["progress stored under another semantics version is discarded whole", true],
-    ["a policy input change under the same version prunes only", false],
-  ])("%s", async (_, older) => {
+    ["progress stored under another semantics version is discarded whole", true, true],
+    [
+      "progress under another semantics version whose collection was too large to store is discarded too",
+      true,
+      false,
+    ],
+    ["a policy input change under the same version prunes only", false, true],
+  ])("%s", async (_, older, storedCollection) => {
     const cold = manyBumps("semantics", MAX_COLD_DIFFS_PER_PASS + 5);
     const cached = manyBumps("semantics-cached", 5);
     for (const name of cached.names) await seedNpmDiff({ name, from: "1.0.0", to: "1.0.1" });
@@ -447,8 +455,9 @@ describe("dependency review continuation", () => {
     const between = await readReview(review.id);
     expect(between.status).toBe("queued");
     const progress = JSON.parse(between.progressJson ?? "{}") as {
+      semantics: number;
       bumps: Record<string, { evidence?: { installScriptsAdded: number } }>;
-      collected: { policyKey: string };
+      collected?: { policyKey: string };
     };
     // Evidence the first pass stored, as older extraction might have read the
     // same release: an install script the current code does not see.
@@ -459,10 +468,9 @@ describe("dependency review continuation", () => {
       stale += 1;
     }
     expect(stale).toBeGreaterThan(0);
-    if (older) {
-      const key = JSON.parse(progress.collected.policyKey) as { version: number };
-      progress.collected.policyKey = JSON.stringify({ ...key, version: key.version - 1 });
-    }
+    if (older) progress.semantics -= 1;
+    // A collection over the size bound is not stored at all.
+    if (!storedCollection) delete progress.collected;
     await createDb(env.DB)
       .update(schema.dependencyReviews)
       .set({ progressJson: JSON.stringify(progress) })
