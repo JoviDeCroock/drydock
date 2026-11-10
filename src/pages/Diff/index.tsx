@@ -371,7 +371,7 @@ function DiffLanding() {
 
       <DependencyPrIntegrations />
 
-      <AikidoPartnerStrip />
+      <AikidoPartnerStrip placement="diff" />
     </PageShell>
   );
 }
@@ -621,7 +621,7 @@ function PackageDiffView({ spec }: { spec: DiffSpec }) {
           {(ecosystem === "npm" || ecosystem === "pypi") && !hasPreview ? (
             <InstallProtection />
           ) : (
-            <AikidoPartnerStrip />
+            <AikidoPartnerStrip placement="diff" />
           )}
         </>
       ) : null}

@@ -6,7 +6,7 @@ import { Muted } from "../../components/Typography";
 export function InstallProtection() {
   return (
     <Card as="aside" padding="compact" class="flex flex-col gap-4">
-      <AikidoFootnote class="self-start" />
+      <AikidoFootnote placement="diff-install-protection" class="self-start" />
       <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between md:gap-6">
         <div class="flex flex-col gap-2 max-w-[680px]">
           <h2 class="m-0 text-[16px] font-medium">Before your next dependency install</h2>
@@ -18,7 +18,7 @@ export function InstallProtection() {
         <LinkButton
           href="https://github.com/AikidoSec/safe-chain#installation"
           target="_blank"
-          rel="noopener noreferrer"
+          rel="noopener"
           variant="secondary"
           class="self-start shrink-0 md:self-center"
         >

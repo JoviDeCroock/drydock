@@ -3,7 +3,19 @@ import aikidoDark from "../assets/aikido-wordmark-inverted.svg";
 import { cn } from "./cn";
 import { SectionLabel } from "./Typography";
 
-const AIKIDO_URL = "https://www.aikido.dev";
+// Static attribution only: source and placement, never package, version, scan,
+// or share-token context. Sponsor links drop `noreferrer` so the site-wide
+// strict-origin-when-cross-origin policy sends Aikido our origin, not the path.
+export type AikidoPlacement = "footer" | "landing" | "diff" | "diff-install-protection";
+
+export function aikidoUrl(placement: AikidoPlacement): string {
+  const params = new URLSearchParams({
+    utm_source: "drydock",
+    utm_medium: "referral",
+    utm_content: placement,
+  });
+  return `https://www.aikido.dev/?${params}`;
+}
 
 const markSizeClass = {
   xs: "h-[14px]",
@@ -32,12 +44,18 @@ function AikidoMark({ size = "sm", class: className }: { size?: MarkSize; class?
   );
 }
 
-export function AikidoFootnote({ class: className }: { class?: string }) {
+export function AikidoFootnote({
+  placement = "footer",
+  class: className,
+}: {
+  placement?: AikidoPlacement;
+  class?: string;
+}) {
   return (
     <a
-      href={AIKIDO_URL}
+      href={aikidoUrl(placement)}
       target="_blank"
-      rel="noopener noreferrer"
+      rel="noopener"
       class={cn(
         "text-[13px] text-ink-muted inline-flex items-center opacity-80 hover:opacity-100 transition-opacity duration-150 ease-out",
         className,
@@ -51,14 +69,20 @@ export function AikidoFootnote({ class: className }: { class?: string }) {
   );
 }
 
-export function AikidoPartnerStrip({ class: className }: { class?: string }) {
+export function AikidoPartnerStrip({
+  placement,
+  class: className,
+}: {
+  placement: AikidoPlacement;
+  class?: string;
+}) {
   return (
     <section aria-label="Sponsored by Aikido Security" class={cn("flex flex-col gap-4", className)}>
       <SectionLabel as="p">Sponsored by</SectionLabel>
       <a
-        href={AIKIDO_URL}
+        href={aikidoUrl(placement)}
         target="_blank"
-        rel="noopener noreferrer"
+        rel="noopener"
         class="group self-center inline-flex flex-col items-center gap-2"
         aria-label="Visit Aikido Security"
       >

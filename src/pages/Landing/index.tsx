@@ -63,7 +63,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <AikidoPartnerStrip />
+      <AikidoPartnerStrip placement="landing" />
 
       <UsedBy />
 

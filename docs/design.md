@@ -200,7 +200,7 @@ It stays disciplined everywhere else:
 1. Successful published npm and PyPI diffs end with a compact `InstallProtection` card after the review evidence and Drydock's release CTA: Aikido identity, Safe Chain's install-time checks, secondary `Set up Safe Chain →`.
 2. It appears regardless of findings or risk and never implies compromise or changes the verdict.
 3. npm preview builds, atpm results, the landing, and empty diff pages keep the generic sponsor strip.
-4. The destination is constant, opens with `noopener noreferrer`, and carries no package, version, scan, share token, or attribution parameters; install commands stay in Aikido's docs.
+4. The destination is constant per placement and opens with `noopener` only, so the site `Referrer-Policy` sends Aikido our origin, never the path. Aikido links carry static `utm_source=drydock`, `utm_medium=referral`, and `utm_content=<placement>` (`footer`, `landing`, `diff`, `diff-install-protection`) and never package, version, scan, or share-token context; install commands stay in Aikido's docs.
 5. No browser tracking; outbound clicks and conversion stay outside Drydock's product analytics.
 
 ### Canonical widths
