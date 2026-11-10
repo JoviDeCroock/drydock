@@ -1,5 +1,4 @@
 import type { LockfileKind } from "../types";
-import { sameRelease } from "./diff";
 import { parseNpmLock } from "./npm-lock";
 import { parsePnpmLock } from "./pnpm-lock";
 import { parseRequirements, parseUvLock } from "./python";
@@ -24,10 +23,10 @@ export { readStrictYaml } from "./lines";
 
 // Whether a requirements file changed what it installs in a way no bump
 // shows: a requirement line that names no version changed (a new file with
-// any such line counts), or a name pinned to the same release on both sides
-// changed its extras, environment marker, or install options (the extra's
-// dependencies, whether it installs at all, how it builds). A pin the PR
-// adds, removes, or moves to another version is a bump, qualifier and all.
+// any such line counts), or a name pinned on both sides changed its extras,
+// environment marker, or install options (the extra's dependencies, whether it
+// installs at all, how it builds), with or without a version change. Only a
+// pin the PR adds or removes outright is a bump, qualifier and all.
 export function unpinnedRequirementsChanged(
   base: LockfileSnapshot | null,
   head: LockfileSnapshot,
@@ -40,16 +39,9 @@ export function unpinnedRequirementsChanged(
     return true;
   }
   if (!base?.qualifiers || !head.qualifiers) return false;
-  const release = (snapshot: LockfileSnapshot, name: string) => {
-    const versions = [...(snapshot.packages.get(`pypi:${name}`)?.versions ?? [])];
-    return versions.length === 1 ? versions[0] : null;
-  };
   for (const [name, qualifiers] of head.qualifiers) {
     const was = base.qualifiers.get(name);
-    if (was === undefined || was === qualifiers) continue;
-    const from = release(base, name);
-    const to = release(head, name);
-    if (from !== null && to !== null && sameRelease("pypi", from, to)) return true;
+    if (was !== undefined && was !== qualifiers) return true;
   }
   return false;
 }

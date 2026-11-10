@@ -200,6 +200,7 @@ describe("package-lock.json", () => {
       "npm:ms": { versions: ["2.1.2", "2.1.3"], direct: false },
       "npm:chalk": { versions: ["5.3.0"], direct: true },
       "npm:bundled-parent": { versions: ["1.0.0"], direct: false },
+      "npm:inner": { versions: ["1.0.0"], direct: false },
     });
   });
 
@@ -239,7 +240,7 @@ describe("package-lock.json", () => {
     });
   });
 
-  test("git shorthands are remote sources, and link, bundled, and file entries are skipped", () => {
+  test("git shorthands are remote sources, link and file entries are skipped, and a bundled entry is read", () => {
     const text = lock({
       "": { dependencies: { a: "github:org/a#v1", b: "git://host/b.git", ws: "*" } },
       "node_modules/a": { version: "1.2.0", resolved: "github:org/a#0123abc" },
@@ -256,6 +257,7 @@ describe("package-lock.json", () => {
     expect(summary(parseLockfile("npm", text))).toEqual({
       "npm:a": { versions: ["github:org/a#0123abc"], direct: true, privateSource: true },
       "npm:b": { versions: ["git://host/b.git#fedcba"], direct: true, privateSource: true },
+      "npm:inner": { versions: ["1.0.0"], direct: false },
     });
   });
 

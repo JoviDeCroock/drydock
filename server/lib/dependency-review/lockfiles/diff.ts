@@ -131,7 +131,11 @@ export function diffLockfileChanges(
         },
         from: fromSource,
         to,
-        pinExpected: head.strongPins || hadPin(to) || (fromSource !== null && hadPin(fromSource)),
+        // A target only unpinned copies record (see `LockfileSource.pins`)
+        // has nothing its format would pin.
+        pinExpected:
+          to.pins.length > 0 &&
+          (head.strongPins || hadPin(to) || (fromSource !== null && hadPin(fromSource))),
       });
     }
   }

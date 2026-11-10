@@ -292,31 +292,40 @@ async function changedResolutionConfig(
 
 /**
  * Committed package caches and loaders the PR adds, removes, renames, or
- * changes (see `committedInstallInput`), one entry per directory. A zip
- * anywhere else is a cache archive only under a `cacheFolder` a `.yarnrc.yml`
- * in its directory or one above it sets, read at the head (a changed config
- * is unread coverage already). That costs one read per distinct directory
- * above a changed zip, and only for PRs that change a zip outside the
- * default cache; past `MAX_CONFIG_FILES` such reads, or where a config does
- * not read strictly, the zip's directory is reported instead.
+ * changes (see `committedInstallInput`), one entry per directory. A Berry
+ * cache can also sit under a `cacheFolder` named by a `.yarnrc.yml` read at
+ * the head (a changed config is unread coverage already): the configs in and
+ * above a changed zip's directory, and in and above the directory of each
+ * `yarn.lock` the PR changes, whose cache may be anywhere in the repository.
+ * A changed zip under a folder the first set names, and any changed file
+ * under a folder the second set names, reports that folder. That costs one
+ * read per distinct directory, and only for PRs that change such a zip or a
+ * `yarn.lock`; past `MAX_CONFIG_FILES` reads, or where a config does not read
+ * strictly, each changed zip's directory is reported instead.
  */
 async function changedInstallInputs(
   context: ReviewContext,
   files: readonly PullRequestFile[],
 ): Promise<string[]> {
   const found = new Set<string>();
+  const paths: string[] = [];
   const zips: string[] = [];
+  const lockDirs = new Set<string>();
   for (const file of files) {
+    if (file.status !== "removed" && lockfileKindForPath(file.filename) === "yarn") {
+      lockDirs.add(dirname(file.filename));
+    }
     for (const path of [file.filename, file.previousFilename]) {
       if (!path) continue;
+      paths.push(path);
       const input = committedInstallInput(path);
       if (input !== null) found.add(input);
       else if (path.toLowerCase().endsWith(".zip")) zips.push(path);
     }
   }
-  if (zips.length === 0) return [...found];
+  if (zips.length === 0 && lockDirs.size === 0) return [...found];
   const ancestors = new Map<string, string[] | null>();
-  for (const zip of zips) ancestors.set(zip, configAncestors(dirname(zip)));
+  for (const dir of [...zips.map(dirname), ...lockDirs]) ancestors.set(dir, configAncestors(dir));
   const dirs = [...new Set([...ancestors.values()].flatMap((list) => list ?? []))];
   const folders = new Map<string, string | null | undefined>();
   if (dirs.length <= MAX_CONFIG_FILES) {
@@ -338,17 +347,25 @@ async function changedInstallInputs(
       );
     });
   }
+  // The folders the configs applying to `dir` name; null when one of them is
+  // unbounded or may set a folder this cannot read.
+  const namedFolders = (dir: string): string[] | null => {
+    const list = ancestors.get(dir);
+    if (!list || list.some((at) => !folders.has(at) || folders.get(at) === undefined)) return null;
+    return list.map((at) => folders.get(at)).filter((folder) => typeof folder === "string");
+  };
+  // Where a cache's folder cannot be read, each changed zip's own directory
+  // stands in for the cache it may be part of.
   for (const zip of zips) {
-    const list = ancestors.get(zip);
-    // Unbounded, or a config that may set a folder this cannot read: the
-    // zip's own directory stands in for the cache it may be part of.
-    if (!list || list.some((dir) => !folders.has(dir) || folders.get(dir) === undefined)) {
-      found.add(dirname(zip));
-      continue;
-    }
-    for (const dir of list) {
-      const folder = folders.get(dir);
-      if (typeof folder === "string" && zip.startsWith(folder)) found.add(folder || "./");
+    const named = namedFolders(dirname(zip));
+    if (named === null) found.add(dirname(zip));
+    for (const folder of named ?? []) if (zip.startsWith(folder)) found.add(folder || "./");
+  }
+  for (const dir of lockDirs) {
+    const named = namedFolders(dir);
+    if (named === null) for (const zip of zips) found.add(dirname(zip));
+    for (const folder of named ?? []) {
+      if (paths.some((path) => path.startsWith(folder))) found.add(folder || "./");
     }
   }
   return [...found];

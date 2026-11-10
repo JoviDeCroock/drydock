@@ -39,7 +39,7 @@ export function parseNpmLock(text: string): LockfileSnapshot {
     }
     if (path && !path.includes(NODE_MODULES)) builder.addWorkspace(path);
     const pkg = installedPackage(path, entry, bundle);
-    if (pkg) recordInstalled(builder, pkg.name, entry);
+    if (pkg) recordInstalled(builder, pkg, entry);
   }
   for (const [importer, entry] of entries) {
     if (importer.includes(NODE_MODULES)) continue;
@@ -59,31 +59,30 @@ export function parseNpmLock(text: string): LockfileSnapshot {
 }
 
 // The package an installed entry stands for, or null when its code is in the
-// repository (a workspace link, a `file:` source) or ships inside a bundling
-// package's tarball (see `bundledPaths`). An `inBundle` flag anywhere else is
-// ignored and the entry recorded like any other: a wrongly recorded entry is
-// an extra bump, a wrongly skipped one an unreviewed install. A `name` that is
-// not a string is recorded as is, which the builder refuses (incomplete).
+// repository (a workspace link, a `file:` source). `bundled` is an entry npm
+// writes no `resolved` or pin for because it ships inside a bundling
+// package's tarball (see `bundledPaths`). It is still recorded: the tarball
+// that bundles it need not change with it, and npm fetches what a tarball
+// lacks. An `inBundle` flag anywhere else is ignored and the entry recorded
+// like any other, pin expected. A `name` that is not a string is recorded as
+// is, which the builder refuses (incomplete).
 function installedPackage(
   path: string,
   entry: unknown,
   bundle: ReadonlySet<string>,
-): { name: unknown } | null {
+): { name: unknown; bundled: boolean } | null {
   const at = path.lastIndexOf(NODE_MODULES);
   if (at === -1) return null;
   if (ownField(entry, "link") === true) return null;
   if (isLocalSource(ownField(entry, "resolved"))) return null;
-  if (
+  const bundled =
     ownField(entry, "inBundle") === true &&
     ownField(entry, "resolved") === undefined &&
-    bundle.has(path)
-  ) {
-    return null;
-  }
+    bundle.has(path);
   // An alias (`"x": "npm:real@^1"`) installs under its alias path and names the
   // real package in `name`.
   const name = ownField(entry, "name");
-  return { name: name === undefined ? path.slice(at + NODE_MODULES.length) : name };
+  return { name: name === undefined ? path.slice(at + NODE_MODULES.length) : name, bundled };
 }
 
 // The edges arborist loads for an installed (non-root) package; it loads no
@@ -92,13 +91,16 @@ const BUNDLE_EDGES = ["dependencies", "optionalDependencies", "peerDependencies"
 
 /**
  * The install paths npm takes as shipped inside a bundling package's tarball,
- * following arborist's `getBundler`: a package is bundled by `X` when its
- * install path is in `X`'s own `node_modules` and `X` names it in
- * `bundleDependencies` (`true`, as npm normalizes it, names every
- * dependency), or a package bundled by `X` depends on it (any edge it loads:
- * dependency, optional, or peer); and everything installed inside a bundled
- * package is bundled with it. A dependency that resolves anywhere outside
- * `X`'s `node_modules` is fetched, not bundled.
+ * following arborist's `getBundler` for nodes loaded from a lockfile: a
+ * package is bundled by `X` when its install path is in `X`'s own
+ * `node_modules` and `X`'s `bundleDependencies` array names it (a lockfile
+ * node's `true` is not normalized, and the `bundledDependencies` spelling is
+ * not read, so neither names anything), or a package bundled by `X` depends on
+ * it (any edge it loads: dependency, optional, or peer); and everything
+ * installed inside a bundled package is bundled with it. A dependency that
+ * resolves anywhere outside `X`'s `node_modules` is fetched, not bundled.
+ * Acceptance only waives the pin npm does not write; the entry is still a
+ * release npm may fetch (see `installedPackage`).
  */
 function bundledPaths(packages: Record<string, unknown>): Set<string> {
   const children = new Map<string, string[]>();
@@ -112,14 +114,8 @@ function bundledPaths(packages: Record<string, unknown>): Set<string> {
   const bundle = new Set<string>();
   for (const [bundler, entry] of Object.entries(packages)) {
     if (!bundler.includes(NODE_MODULES)) continue;
-    const declared =
-      ownField(entry, "bundleDependencies") ?? ownField(entry, "bundledDependencies");
-    let names: unknown[];
-    if (declared === true) {
-      const deps = ownField(entry, "dependencies");
-      names = typeof deps === "object" && deps !== null ? Object.keys(deps) : [];
-    } else if (Array.isArray(declared)) names = declared;
-    else continue;
+    const names = ownField(entry, "bundleDependencies");
+    if (!Array.isArray(names)) continue;
     const inside = `${bundler}/${NODE_MODULES}`;
     const queue: string[] = [];
     for (const name of names) {
@@ -178,9 +174,14 @@ function resolveWithin(
 // (the caller applies the repository's registry config to the name). A
 // `version` that is not an exact version is then a spec npm resolves itself
 // (a range, a URL), which pins nothing here, so it is a remote source rather
-// than a dropped entry. With a `resolved`, the URL decides (see
-// `classifyNpmTarball`); one that is not a string is a remote source.
-function recordInstalled(builder: SnapshotBuilder, name: unknown, entry: unknown): void {
+// than a dropped entry. A bundled entry is that registry release with no pin
+// expected. With a `resolved`, the URL decides (see `classifyNpmTarball`);
+// one that is not a string is a remote source.
+function recordInstalled(
+  builder: SnapshotBuilder,
+  { name, bundled }: { name: unknown; bundled: boolean },
+  entry: unknown,
+): void {
   const version = ownField(entry, "version");
   const resolved = ownField(entry, "resolved");
   const { pin, hashes } = npmIntegrity(ownField(entry, "integrity"));
@@ -188,7 +189,7 @@ function recordInstalled(builder: SnapshotBuilder, name: unknown, entry: unknown
     if (typeof version === "string" && !validLockfileVersion("npm", version)) {
       builder.addRemote(name, version, null, pin);
     } else {
-      builder.add(name, version, { hashes, pin });
+      builder.add(name, version, bundled ? { unpinned: true } : { hashes, pin });
     }
     return;
   }

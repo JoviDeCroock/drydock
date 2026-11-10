@@ -26,7 +26,9 @@ export interface LockfileSource {
   hashes: readonly string[] | null;
   // What each copy pins, as compared across the PR: the usable hashes when
   // there are any, else the pin as written, else "". Sorted and distinct. A
-  // public identity whose pins change is a re-pin of the same version.
+  // public identity whose pins change is a re-pin of the same version. A copy
+  // the format writes no pin for (npm's bundled entries) adds nothing, so an
+  // identity only such copies record has none and expects none.
   pins: readonly string[];
   // The `pins` that are usable hashes (each is `hashes` of its copies, joined
   // with spaces), so a comparison can take the hashes of just the pins a PR
@@ -145,6 +147,9 @@ interface RegistryEntry {
   // Part of a non-public identity, so a re-pin of the same reference differs;
   // compared beside a public one (see `LockfileSource.pins`).
   pin?: string | null;
+  // A public copy the format writes no pin for (see `LockfileSource.pins`);
+  // `hashes` and `pin` are then ignored.
+  unpinned?: boolean;
 }
 
 export interface SnapshotBuilder {
@@ -186,14 +191,22 @@ function union(a: readonly string[], b: readonly string[]): string[] {
 }
 
 // Two copies recorded under one identity. Copies from the same place merge
-// their pins and hashes (every hash must then match); copies that disagree
-// about the place are `mixed`, keep the worst kind, and offer no hashes.
+// their pins and hashes (every hash must then match; a copy with no pins
+// offers none and voids none); copies that disagree about the place are
+// `mixed`, keep the worst kind, and offer no hashes.
 function mergeSources(a: LockfileSource, b: LockfileSource): LockfileSource {
   const pins = union(a.pins, b.pins);
   const usablePins = union(a.usablePins, b.usablePins);
   const urls = union(a.urls, b.urls);
   if (a.kind === b.kind && a.version === b.version && a.location === b.location) {
-    const hashes = a.hashes && b.hashes ? union(a.hashes, b.hashes) : null;
+    const hashes =
+      a.pins.length === 0
+        ? b.hashes
+        : b.pins.length === 0
+          ? a.hashes
+          : a.hashes && b.hashes
+            ? union(a.hashes, b.hashes)
+            : null;
     return { ...a, urls, pins, usablePins, hashes, mixed: a.mixed || b.mixed };
   }
   const worst = KIND_RANK[b.kind] > KIND_RANK[a.kind] ? b : a;
@@ -239,6 +252,11 @@ export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotB
       const key = canonical(name);
       if (key === null || !validVersion(version)) {
         complete = false;
+        return;
+      }
+      if (entry.unpinned && !entry.registry) {
+        const source = { version, hashes: null, pins: [], usablePins: [], mixed: false };
+        record(key, version, { ...source, kind: "public", location: null, urls: [] });
         return;
       }
       const hashes = entry.hashes?.length ? [...new Set(entry.hashes)].sort() : null;

@@ -941,6 +941,66 @@ describe("dependency review job", () => {
     expect(row.conclusion).toBe(unread.length > 0 ? "held" : "clear");
   });
 
+  const berryLock = (checksum: string) =>
+    [
+      "__metadata:",
+      "  version: 8",
+      "  cacheKey: 10c0",
+      "",
+      '"lodash@npm:^4.17.21":',
+      "  version: 4.17.21",
+      '  resolution: "lodash@npm:4.17.21"',
+      `  checksum: 10c0/${checksum}`,
+      "  languageName: node",
+      "  linkType: hard",
+      "",
+    ].join("\n");
+
+  test.each([
+    // Found by its name alone, with no config pointing at it.
+    ["shared/cache/lodash-npm-4.17.21-6382451519-eb835a2e51.zip", null],
+    // Found through the cache folder of the config beside the changed lockfile.
+    ["shared/cache/lodash.zip", "cacheFolder: ../shared/cache\nenableGlobalCache: false\n"],
+  ])("a changed %s beside a lockfile whose config is %j holds", async (archive, yarnrc) => {
+    const { pr, review, input } = await scenario({
+      pr: {
+        files: [
+          { filename: "app/yarn.lock", status: "modified" },
+          { filename: archive, status: "modified" },
+        ],
+      },
+    });
+    pr.contents.set(`${pr.mergeBaseSha}:app/yarn.lock`, berryLock("a".repeat(128)));
+    pr.contents.set(`${pr.headSha}:app/yarn.lock`, berryLock("b".repeat(128)));
+    if (yarnrc !== null) pr.contents.set(`${pr.headSha}:app/.yarnrc.yml`, yarnrc);
+
+    await runDependencyReviewJob(input);
+
+    const row = await readReview(review.id);
+    expect(row.conclusion).toBe("held");
+    expect(JSON.parse(row.unreadLockfilesJson)).toEqual(["shared/cache/"]);
+  });
+
+  test("a cache folder the lockfile's config cannot name reports each changed zip's directory", async () => {
+    const { pr, review, input } = await scenario({
+      pr: {
+        files: [
+          { filename: "app/yarn.lock", status: "modified" },
+          { filename: "shared/cache/lodash.zip", status: "modified" },
+        ],
+      },
+    });
+    pr.contents.set(`${pr.mergeBaseSha}:app/yarn.lock`, berryLock("a".repeat(128)));
+    pr.contents.set(`${pr.headSha}:app/yarn.lock`, berryLock("b".repeat(128)));
+    pr.contents.set(`${pr.headSha}:app/.yarnrc.yml`, "cacheFolder: ${CACHE}\n");
+
+    await runDependencyReviewJob(input);
+
+    expect(JSON.parse((await readReview(review.id)).unreadLockfilesJson)).toEqual([
+      "shared/cache/",
+    ]);
+  });
+
   test.each([
     [
       "pnpm importers",

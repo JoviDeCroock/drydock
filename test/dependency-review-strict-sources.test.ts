@@ -65,6 +65,13 @@ function kindsOf(snapshot: LockfileSnapshot, key: string): Record<string, string
   return Object.fromEntries([...(pkg?.sources ?? [])].map(([id, source]) => [id, source.kind]));
 }
 
+// Each recorded identity's pins: `[]` for one only bundled copies record,
+// which expects none.
+function pinsOf(snapshot: LockfileSnapshot, key: string): Record<string, readonly string[]> {
+  const pkg = snapshot.packages.get(key);
+  return Object.fromEntries([...(pkg?.sources ?? [])].map(([id, source]) => [id, source.pins]));
+}
+
 function npmLock(entries: Record<string, Record<string, unknown>>): string {
   const packages: Record<string, unknown> = { "": {} };
   for (const [path, entry] of Object.entries(entries)) packages[`node_modules/${path}`] = entry;
@@ -1083,14 +1090,15 @@ describe("F10: npm lock entries npm installs are never dropped", () => {
     expect(Object.keys(kindsOf(parseLockfile("npm", text), "npm:foo"))).toEqual([`${EVIL}f.tgz`]);
   });
 
-  test("a nested bundled copy with no `resolved` inside a bundling parent ships in the parent", () => {
+  test("a nested bundled copy with no `resolved` inside a bundling parent is recorded with no pin expected", () => {
     const text = npmLock({
       parent: { version: "1.0.0", bundleDependencies: ["foo"] },
-      "parent/node_modules/foo": { version: "1.0.1", inBundle: true },
+      "parent/node_modules/foo": { version: "1.0.1", inBundle: true, integrity: sha512("x") },
     });
     const snapshot = parseLockfile("npm", text);
     expect(snapshot.complete).toBe(true);
-    expect(snapshot.packages.has("npm:foo")).toBe(false);
+    expect(kindsOf(snapshot, "npm:foo")).toEqual({ "1.0.1": "public" });
+    expect(pinsOf(snapshot, "npm:foo")).toEqual({ "1.0.1": [] });
   });
 
   test.each([
@@ -1119,13 +1127,18 @@ describe("R2-1: `inBundle` is honored only for what npm bundles", () => {
       ...extra,
     });
 
-  test("a dependency of an unbundled package is fetched, so its change is a bump", () => {
+  test("a dependency of an unbundled package is fetched, so its change is a bump that owes a pin", () => {
     expect(routed("npm", lock("1.0.0"), lock("2.0.0"))).toEqual([
-      expect.objectContaining({ name: "foo", fromVersion: "1.0.0", toVersion: "2.0.0" }),
+      expect.objectContaining({
+        name: "foo",
+        fromVersion: "1.0.0",
+        toVersion: "2.0.0",
+        pinnedHashes: [],
+      }),
     ]);
   });
 
-  test("a named bundle dependency, and what it requires inside the bundler, ship in the bundler", () => {
+  test("a named bundle dependency, and what it requires inside the bundler, are bundled", () => {
     const bundled = (foo: string) =>
       npmLock({
         parent: { version: "1.0.0", bundleDependencies: ["other"] },
@@ -1142,19 +1155,48 @@ describe("R2-1: `inBundle` is honored only for what npm bundles", () => {
         "parent/node_modules/foo": { version: foo, inBundle: true },
       });
     const snapshot = parseLockfile("npm", bundled("1.0.0"));
-    expect([...snapshot.packages.keys()]).toEqual(["npm:parent"]);
-    expect(routed("npm", bundled("1.0.0"), bundled("2.0.0"))).toEqual([]);
+    for (const name of ["other", "mid", "foo"]) {
+      expect(pinsOf(snapshot, `npm:${name}`)).toEqual({ "1.0.0": [] });
+    }
+    const bumps = routed("npm", bundled("1.0.0"), bundled("2.0.0"));
+    expect(bumps).toEqual([
+      expect.objectContaining({ name: "foo", fromVersion: "1.0.0", toVersion: "2.0.0" }),
+    ]);
+    expect(bumps[0]).not.toHaveProperty("pinnedHashes");
   });
 
-  test("`bundleDependencies: true` bundles the package's declared dependencies only", () => {
-    const text = npmLock({
-      parent: { version: "1.0.0", dependencies: { other: "*" }, bundleDependencies: true },
-      "parent/node_modules/other": { version: "1.0.0", inBundle: true },
-      "parent/node_modules/foo": { version: "1.0.0", inBundle: true },
-    });
-    expect([...parseLockfile("npm", text).packages.keys()].sort()).toEqual([
-      "npm:foo",
-      "npm:parent",
+  test("a claimed bundle child the bundler names is a release npm may fetch, with no pin expected", () => {
+    const claimed = (q: string) =>
+      npmLock({
+        x: {
+          version: "1.0.0",
+          resolved: "https://registry.npmjs.org/x/-/x-1.0.0.tgz",
+          integrity: sha512("x"),
+          dependencies: { q: "*" },
+          bundleDependencies: ["q"],
+        },
+        "x/node_modules/q": { version: q, inBundle: true },
+      });
+    const bumps = routed("npm", claimed("1.0.0"), claimed("6.6.6"));
+    expect(bumps).toEqual([
+      expect.objectContaining({ name: "q", fromVersion: "1.0.0", toVersion: "6.6.6" }),
+    ]);
+    expect(bumps[0]).not.toHaveProperty("pinnedHashes");
+  });
+
+  test.each([
+    ["`bundleDependencies: true`", { bundleDependencies: true }],
+    ["the `bundledDependencies` spelling", { bundledDependencies: ["a"] }],
+  ])("%s on a lockfile node bundles nothing, so a claimed child owes a pin", (_, declared) => {
+    const lock = (q: string) =>
+      npmLock({
+        x: { version: "1.0.0", dependencies: { a: "*" }, ...declared },
+        "x/node_modules/a": { version: "1.0.0", dependencies: { q: "*" } },
+        "x/node_modules/q": { version: q, inBundle: true },
+      });
+    expect(pinsOf(parseLockfile("npm", lock("1.0.0")), "npm:q")).toEqual({ "1.0.0": [""] });
+    expect(routed("npm", lock("1.0.0"), lock("6.6.6"))).toEqual([
+      expect.objectContaining({ name: "q", toVersion: "6.6.6", pinnedHashes: [] }),
     ]);
   });
 
@@ -1166,7 +1208,10 @@ describe("R2-1: `inBundle` is honored only for what npm bundles", () => {
       // Not on `other`'s resolution path, so not what it requires.
       "parent/node_modules/child/node_modules/foo": { version: "2.0.0", inBundle: true },
     });
-    expect(parseLockfile("npm", text).packages.get("npm:foo")?.sources.size).toBe(2);
+    expect(pinsOf(parseLockfile("npm", text), "npm:foo")).toEqual({
+      "1.0.0": [""],
+      "2.0.0": [""],
+    });
   });
 });
 
@@ -1300,6 +1345,17 @@ describe("O2-1: committed package caches and loaders are install inputs", () => 
     [".pnp.cjs", ".pnp.cjs"],
     ["app/.pnp.loader.mjs", "app/.pnp.loader.mjs"],
     [".pnp.data.json", ".pnp.data.json"],
+    // R4-1: a Berry cache archive's name places it in a cache wherever it is.
+    ["shared/cache/lodash-npm-4.17.21-6382451519-eb835a2e51.zip", "shared/cache/"],
+    ["deps/typescript-patch-5f2b0a3b9f-1234567890.zip", "deps/"],
+    ["deps/@types-node-npm-20.1.0-0123456789-abcdef0123.zip", "deps/"],
+    ["deps/foo-npm-1.0.0-rc.1+b.2-0123456789-abcdef0123.zip", "deps/"],
+    ["deps/foo-https-abcdef0123-0123456789.zip", "deps/"],
+    ["deps/foo-git+ssh-abcdef0123-0123456789.zip", "deps/"],
+    ["deps/foo-file-abcdef0123-0123456789.zip", "deps/"],
+    // No checksum: the cache key stands in for it.
+    ["lodash-npm-4.17.21-6382451519-10c0.zip", "./"],
+    ["cache/lodash-npm-4.17.21-6382451519-8.zip", "cache/"],
   ])("%s is reported as %s", (path, input) => {
     expect(committedInstallInput(path)).toBe(input);
   });
@@ -1311,12 +1367,25 @@ describe("O2-1: committed package caches and loaders are install inputs", () => 
     "src/.yarn-cache.ts",
     "docs/release.zip",
     "vendor/foo-1.0.0.tgz",
-    // Outside the default directories, a zip is a cache archive only under a
-    // configured `cacheFolder` (see `yarnrcCacheFolder`), never by its name.
+    // Outside the default directories and without an archive's name, a zip
+    // is a cache archive only under a configured `cacheFolder` (see
+    // `yarnrcCacheFolder`).
     "docs/release-npm-notes.zip",
-    "deps/typescript-patch-5f2b0a3b9f-1234567890.zip",
+    "deps/foo-https-abcdef-1234.zip",
+    "deps/lodash-npm-4.17.21-6382451519.zip",
+    "deps/lodash-npm-4.17.21-6382451519-EB835A2E51.zip",
+    "deps/lodash-npm-4.17.21-6382451519-eb835a2e51.zip/readme.md",
   ])("%s is not", (path) => {
     expect(committedInstallInput(path)).toBeNull();
+  });
+
+  test("a hostile archive-like name is tested in bounded time", () => {
+    const started = performance.now();
+    for (let i = 0; i < 1_000; i++) {
+      committedInstallInput(`${"a-".repeat(127)}!.zip`);
+      committedInstallInput(`@${"a-".repeat(10_000)}0123456789-0123456789.zip`);
+    }
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });
 
@@ -1384,7 +1453,7 @@ describe("P2-a: a re-pin proves what the PR changed, not copies it kept", () => 
   });
 });
 
-describe("P2-b: npm bundles peers and everything inside a bundled package", () => {
+describe("P2-b / R4-3: bundled entries are public releases with no pin expected", () => {
   const lock = (parent: string, foo: Record<string, unknown>, extra = {}) =>
     npmLock({
       parent: {
@@ -1397,42 +1466,84 @@ describe("P2-b: npm bundles peers and everything inside a bundled package", () =
       ...extra,
     });
 
-  test("a peer of a bundled package, inside the bundler, ships in the bundle", () => {
-    const peer = (parent: string, version: string) =>
-      lock(
-        parent,
-        { peerDependencies: { foo: "*" } },
-        { "parent/node_modules/foo": { version, inBundle: true } },
-      );
-    expect(parseLockfile("npm", peer("1.0.0", "1.0.0")).packages.has("npm:foo")).toBe(false);
-    expect(routed("npm", peer("1.0.0", "1.0.0"), peer("2.0.0", "2.0.0"))).toEqual([
+  const peer = (parent: string, version: string) =>
+    lock(
+      parent,
+      { peerDependencies: { foo: "*" } },
+      { "parent/node_modules/foo": { version, inBundle: true } },
+    );
+
+  test("a bundled peer that changes under an unchanged bundler is a public bump", () => {
+    const bumps = routed("npm", peer("1.0.0", "1.0.0"), peer("1.0.0", "2.0.0"));
+    expect(bumps).toEqual([
+      expect.objectContaining({ name: "foo", fromVersion: "1.0.0", toVersion: "2.0.0" }),
+    ]);
+    expect(bumps[0]).not.toHaveProperty("pinnedHashes");
+    expect(bumps[0]).not.toHaveProperty("privateSource");
+  });
+
+  test("a bundled peer that changes with its bundler owes no pin", () => {
+    const bumps = routed("npm", peer("1.0.0", "1.0.0"), peer("2.0.0", "2.0.0"));
+    expect(bumps).toEqual([
+      expect.objectContaining({ name: "foo", toVersion: "2.0.0" }),
       expect.objectContaining({ name: "parent", pinnedHashes: [sha512("2.0.0")] }),
+    ]);
+    expect(bumps[0]).not.toHaveProperty("pinnedHashes");
+  });
+
+  test("an unchanged bundled entry produces nothing", () => {
+    expect(routed("npm", peer("1.0.0", "1.0.0"), peer("2.0.0", "1.0.0"))).toEqual([
+      expect.objectContaining({ name: "parent" }),
     ]);
   });
 
-  test("a package inside a bundled package's own node_modules ships in the bundle", () => {
+  test("a bundled copy beside a pinned copy of the same release keeps that pin", () => {
+    const both = (version: string) =>
+      peer("1.0.0", version).replace(
+        '"packages":{',
+        `"packages":{"node_modules/foo":${JSON.stringify({
+          version,
+          resolved: `https://registry.npmjs.org/foo/-/foo-${version}.tgz`,
+          integrity: sha512(`foo-${version}`),
+        })},`,
+      );
+    expect(routed("npm", both("1.0.0"), both("2.0.0"))).toEqual([
+      expect.objectContaining({ name: "foo", pinnedHashes: [sha512("foo-2.0.0")] }),
+    ]);
+    // Moving from the pinned copy to only a bundled one installs nothing new.
+    expect(routed("npm", both("1.0.0"), peer("1.0.0", "1.0.0"))).toEqual([]);
+  });
+
+  test("a package inside a bundled package's own node_modules is bundled", () => {
     const nested = (parent: string, version: string) =>
       lock(
         parent,
         {},
         { "parent/node_modules/other/node_modules/deep": { version, inBundle: true } },
       );
-    expect(routed("npm", nested("1.0.0", "1.0.0"), nested("2.0.0", "2.0.0"))).toEqual([
+    const bumps = routed("npm", nested("1.0.0", "1.0.0"), nested("2.0.0", "2.0.0"));
+    expect(bumps).toEqual([
+      expect.objectContaining({ name: "deep", toVersion: "2.0.0" }),
       expect.objectContaining({ name: "parent" }),
     ]);
+    expect(bumps[0]).not.toHaveProperty("pinnedHashes");
   });
 
   test("a dev dependency of a bundled package is not an edge npm follows", () => {
-    const text = lock(
-      "1.0.0",
-      { devDependencies: { foo: "*" } },
-      { "parent/node_modules/foo": { version: "1.0.0", inBundle: true } },
-    );
-    expect(parseLockfile("npm", text).packages.has("npm:foo")).toBe(true);
+    const dev = (version: string) =>
+      lock(
+        "1.0.0",
+        { devDependencies: { foo: "*" } },
+        { "parent/node_modules/foo": { version, inBundle: true } },
+      );
+    expect(pinsOf(parseLockfile("npm", dev("1.0.0")), "npm:foo")).toEqual({ "1.0.0": [""] });
+    expect(routed("npm", dev("1.0.0"), dev("2.0.0"))).toEqual([
+      expect.objectContaining({ name: "foo", toVersion: "2.0.0", pinnedHashes: [] }),
+    ]);
   });
 });
 
-describe("P2-c: a conditional line a bump adds or drops is that bump, not unread", () => {
+describe("P2-c / R4-2: a conditional line a bump adds or drops is that bump, not unread", () => {
   const changed = (before: string, after: string) =>
     unpinnedRequirementsChanged(
       parseLockfile("requirements", before),
@@ -1457,8 +1568,23 @@ describe("P2-c: a conditional line a bump adds or drops is that bump, not unread
     expect(changed(click("8.1.7") + colorama, click("8.2.0"))).toBe(false);
   });
 
-  test("a qualifier that moves with a version change is that bump", () => {
-    expect(changed("requests==2.32.2\n", "requests[socks]==2.32.3\n")).toBe(false);
+  test("a qualifier change riding on a version bump still counts", () => {
+    expect(changed("parent==1.0\n", "parent[addon]==1.1\n")).toBe(true);
+    expect(changed("requests==2.32.2\n", "requests[socks]==2.32.3\n")).toBe(true);
+    expect(
+      changed(colorama, colorama.replace("0.4.6", "0.4.7").replace("'win32'", "'linux'")),
+    ).toBe(true);
+  });
+
+  test("a qualifier change counts whatever the versions' spellings", () => {
+    // PEP 440's implicit post release; the comparator does not equate these.
+    expect(changed("foo==1.0.post1\n", "foo[evil]==1.0-1\n")).toBe(true);
+    expect(changed('foo==1.0.post1 ; python_version < "3"\n', "foo==1.0-1\n")).toBe(true);
+  });
+
+  test("a version bump with identical qualifiers is not unread", () => {
+    expect(changed("parent[addon]==1.0\n", "parent[addon]==1.1\n")).toBe(false);
+    expect(changed(colorama, colorama.replace("0.4.6", "0.4.7"))).toBe(false);
   });
 
   test("on a release pinned on both sides, a qualifier change still counts", () => {

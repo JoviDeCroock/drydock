@@ -304,16 +304,27 @@ function settingLines(text: string, ini: boolean): string {
 // with nothing a lockfile diff binds: the default zip cache (zero-install;
 // Yarn checks only its own checksum, which matches no registry digest),
 // unplugged package copies, the Plug'n'Play loader, and the Yarn release and
-// plugins it runs. A cache moved by `cacheFolder` is found from the config
-// (`yarnrcCacheFolder`).
+// plugins it runs. A cache moved by `cacheFolder` is found by its archives'
+// names and from the config (`yarnrcCacheFolder`).
 const BERRY_COMMITTED_DIR = /^(.*?(?:^|\/)\.yarn\/(?:cache|unplugged|releases|plugins)\/)/;
 const PNP_FILE = /(?:^|\/)\.pnp\.(?:c?js|loader\.mjs|data\.json)$/;
+// A Berry cache archive's name, wherever `cacheFolder` puts it (yarnpkg-core
+// `Cache.getChecksumFilename` / `getVersionFilename` over
+// `structUtils.slugifyLocator`): the ident slug (`@scope-name` when scoped),
+// the protocol (`npm`, `patch`, `https`, `git+ssh`, …) and, when the reference
+// is plain semver, `-<version>`; then the first 10 hex of the locator hash,
+// then the first 10 hex of the content checksum or, for an archive with no
+// checksum, the cache key (`10`, `10c0`, `8`, …). The two leading groups
+// overlap on `-`, so a name is length-bounded before it is tested.
+const BERRY_CACHE_ARCHIVE =
+  /^@?[\w.~-]+-[a-z][\w+.-]*-[0-9a-f]{10}-(?:[0-9a-f]{10}|\d{1,4}(?:c\d)?)\.zip$/;
+const MAX_ARCHIVE_NAME = 255;
 
 /**
- * The committed install input a changed path belongs to by its place alone,
- * reported once per directory (or file, for the PnP loader); null for any
- * other path. npm, pnpm, and Yarn classic stores and offline mirrors are not
- * here: they verify every tarball against the lockfile's integrity, which the
+ * The committed install input a changed path belongs to by its place or, for
+ * a Berry cache archive, its name alone, reported once per directory (or
+ * file, for the PnP loader); null for any other path. npm, pnpm, and Yarn
+ * classic stores and offline mirrors are not here: they verify every tarball against the lockfile's integrity, which the
  * review binds, and pointing them elsewhere is a config change that already
  * counts.
  */
@@ -321,6 +332,10 @@ export function committedInstallInput(path: string): string | null {
   const dir = BERRY_COMMITTED_DIR.exec(path);
   if (dir) return dir[1];
   if (PNP_FILE.test(path)) return path;
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  if (name.length <= MAX_ARCHIVE_NAME && BERRY_CACHE_ARCHIVE.test(name)) {
+    return path.slice(0, path.length - name.length) || "./";
+  }
   return null;
 }
 
