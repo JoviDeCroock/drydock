@@ -56,6 +56,12 @@ function summarizeApiKeyDiscovery(m: Record<string, unknown>): string | null {
   return key ? `${started} by ${key}` : started;
 }
 
+function summarizeInstallationMove(m: Record<string, unknown>): string | null {
+  const account = str(m.accountLogin);
+  const owner = str(m.githubLogin);
+  return account && owner ? `${account}, authorized by GitHub user ${owner}` : account;
+}
+
 const REGISTRY: Record<string, AuditEventDef> = {
   "npm_package.management_confirmed": {
     category: "organization",
@@ -297,6 +303,20 @@ const REGISTRY: Record<string, AuditEventDef> = {
     label: "GitHub App installed",
     severity: "notice",
     summarize: (m) => str(m.accountLogin),
+  },
+  "github_app_installation.moved_here": {
+    category: "integration",
+    label: "GitHub App installation moved here",
+    severity: "notice",
+    summarize: (m) => summarizeInstallationMove(m),
+  },
+  // Written with no actor: the mover belongs to another organization. The
+  // GitHub owner who authorized the move is named instead.
+  "github_app_installation.moved_away": {
+    category: "integration",
+    label: "GitHub App installation moved away by a GitHub owner",
+    severity: "security",
+    summarize: (m) => summarizeInstallationMove(m),
   },
   "github_app_setup.pr_created": {
     category: "integration",

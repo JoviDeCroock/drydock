@@ -61,14 +61,17 @@ function statusForCode(code: GithubAppValidationCode): 400 | 403 | 404 | 409 {
   switch (code) {
     case "installation_missing":
       return 404;
-    case "installation_not_authorized":
+    case "installation_owner_required":
+    case "installation_owner_unverified":
       return 403;
     case "installation_inactive":
+    case "installation_conflict":
       return 409;
     case "repository_not_accessible":
       return 403;
     case "environment_already_mapped":
       return 409;
+    case "installation_account_unsupported":
     case "environment_unmapped":
     case "unsupported_ecosystem":
     case "invalid_input":

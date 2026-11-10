@@ -172,6 +172,8 @@ Keep the `*/15 * * * *` cron trigger: it runs staged-publish discovery, the publ
 
 Needs a GitHub App with deployment-protection webhooks and the GitHub App secrets and vars above; map repositories and environments in Settings. The publish workflow builds artifacts before the gate and publishes the reviewed bundle after approval ([workflow-gates.md](./workflow-gates.md)).
 
+Linking an installation checks that the installing GitHub user owns its account, so the App also needs **Request user authorization (OAuth) during installation** and the **Members: read** organization permission; GitHub refuses the ownership lookup without it, and linking fails closed. Existing installations must accept the added permission before they can be linked or moved again; already-linked installations keep working ([security model](./security-model.md#workflow-gates-and-publisher-setup)).
+
 ### Dependency review
 
 Uses the same GitHub App. Add the **Checks: read and write**, **Pull requests: read**, and **Contents: read** repository permissions and subscribe to the **Pull request**, **Check run**, and **Check suite** events. Check suite events deliver GitHub's **Re-run all checks** action. GitHub asks each installation's owner to accept the new permissions; until they do, reviews in that installation fail to create their check run. With `FLAGS` wired, roll it out per organization with the `dependency-review` flag; each organization then turns it on in Settings → Integrations ([dependency-review.md](./dependency-review.md)).

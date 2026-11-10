@@ -6,7 +6,7 @@ import {
 } from "../platform/crypto-utils";
 import { reliableFetch } from "../platform/reliable-fetch";
 import { GithubAppValidationError, type GithubAppConfig } from "./config";
-import { githubHeaders, paginate } from "./client";
+import { githubHeaders } from "./client";
 
 // ── HMAC-signed OAuth state token ────────────────────────────────────────────
 
@@ -111,66 +111,81 @@ export async function exchangeGithubUserCode(
   return data.access_token;
 }
 
-export interface GithubUserInstallationRef {
-  id: string;
+export interface InstallationAccountRef {
+  accountType: "Organization" | "User";
   accountLogin: string;
-  accountType: string;
+  accountId: number;
 }
 
-export async function listUserAccessibleInstallations(
+export interface VerifiedInstallationOwner {
+  githubUserId: number;
+  githubLogin: string;
+}
+
+/**
+ * Proves the user behind `userAccessToken` administers the account the App is
+ * installed on: an active org owner (`role: admin`), or the user account
+ * itself. Seeing the installation in `GET /user/installations` is not enough;
+ * GitHub lists it for anyone with access to one of its repositories.
+ *
+ * The org lookup is a user-to-server call, so GitHub requires the App's
+ * Members (read) organization permission on that installation; without it the
+ * lookup is refused and linking fails closed.
+ */
+export async function verifyUserOwnsInstallationAccount(
   userAccessToken: string,
-): Promise<GithubUserInstallationRef[]> {
-  const installations: GithubUserInstallationRef[] = [];
-  await paginate(
-    "https://api.github.com/user/installations?per_page=100",
-    { headers: githubHeaders(userAccessToken), maxPages: 10 },
-    async (response) => {
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        throw new GithubAppValidationError(
-          "invalid_input",
-          `GitHub user installation lookup failed (${response.status}): ${text.slice(0, 200)}`,
-        );
-      }
-      const data = (await response.json()) as {
-        installations?: {
-          id?: number | string;
-          account?: { login?: string; type?: string } | null;
-        }[];
-      };
-      for (const installation of data.installations ?? []) {
-        const id =
-          typeof installation.id === "number"
-            ? String(installation.id)
-            : typeof installation.id === "string"
-              ? installation.id
-              : "";
-        if (!id) continue;
-        installations.push({
-          id,
-          accountLogin:
-            typeof installation.account?.login === "string" ? installation.account.login : "",
-          accountType:
-            typeof installation.account?.type === "string" ? installation.account.type : "",
-        });
-      }
-    },
+  account: InstallationAccountRef,
+): Promise<VerifiedInstallationOwner> {
+  const notOwner = new GithubAppValidationError(
+    "installation_owner_required",
+    `you must be an owner of ${account.accountLogin} on GitHub to link this installation`,
   );
-
-  return installations;
-}
-
-export async function verifyUserCanAccessInstallation(
-  config: GithubAppConfig,
-  input: { code: string; installationId: string },
-): Promise<void> {
-  const userAccessToken = await exchangeGithubUserCode(config, input.code);
-  const installations = await listUserAccessibleInstallations(userAccessToken);
-  const authorized = installations.some((installation) => installation.id === input.installationId);
-  if (!authorized) {
+  const url =
+    account.accountType === "Organization"
+      ? `https://api.github.com/user/memberships/orgs/${encodeURIComponent(account.accountLogin)}`
+      : "https://api.github.com/user";
+  const response = await reliableFetch(url, { headers: githubHeaders(userAccessToken) });
+  // 404 from the membership lookup means "not a member" (or a hidden one).
+  if (response.status === 404 && account.accountType === "Organization") {
+    await response.body?.cancel();
+    throw notOwner;
+  }
+  if (!response.ok) {
+    await response.body?.cancel();
     throw new GithubAppValidationError(
-      "installation_not_authorized",
-      "GitHub user authorization does not include this installation",
+      "installation_owner_unverified",
+      account.accountType === "Organization"
+        ? `GitHub did not confirm who owns ${account.accountLogin} (${response.status}); the Drydock GitHub App needs the Members (read) organization permission, and an organization with SAML single sign-on needs an authorized GitHub session`
+        : `GitHub did not confirm who owns ${account.accountLogin} (${response.status})`,
     );
   }
+  const data = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  const user = account.accountType === "Organization" ? asRecord(data?.user) : asRecord(data);
+  const githubUserId = user?.id;
+  const githubLogin = user?.login;
+  if (typeof githubUserId !== "number" || typeof githubLogin !== "string" || !githubLogin) {
+    throw new GithubAppValidationError(
+      "installation_owner_unverified",
+      `GitHub returned an unexpected identity while checking who owns ${account.accountLogin}`,
+    );
+  }
+  if (account.accountType === "User") {
+    if (githubUserId !== account.accountId) throw notOwner;
+    return { githubUserId, githubLogin };
+  }
+  const organization = asRecord(data?.organization);
+  if (
+    organization?.id !== account.accountId ||
+    data?.state !== "active" ||
+    data?.role !== "admin"
+  ) {
+    throw notOwner;
+  }
+  return { githubUserId, githubLogin };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }

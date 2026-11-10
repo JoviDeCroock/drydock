@@ -308,7 +308,7 @@ Sessions are Better Auth cookies signed with `BETTER_AUTH_SECRET` (`server/lib/a
 ## Workflow gates and publisher setup
 
 1. Gates never publish: GitHub Environment protection holds the job; Drydock posts accept/reject. State binds installation/repository/run/environment/callback URL/org; approval needs the reviewed run attempt and artifacts; digests are rehashed from bytes ([workflow gates](./workflow-gates.md)).
-2. Setup requires verified session and `roleCanManageIntegrations`; reads use org-owned installations. Workflows/proposals/conversations are hostile evidence. Tools expose no shell, package execution, installation, external fetch, or GitHub writes.
+2. Setup needs a verified session and `roleCanManageIntegrations`; links need the GitHub owner; reads use org-owned installs. Workflows/proposals/conversations are hostile evidence; tools have no shell, package execution, installs, fetch, GitHub writes.
 3. Persisted `createPullRequest: true` authorizes draft-PR writes. Each mutation rechecks authorization/membership/installation/killswitch/source revision/proposal digest/independent verdict. Multi-file commits are atomic; recovery never overwrites collaborator edits.
 4. The write token is repository-scoped and needs already-granted Contents, Pull requests, and Workflows permissions. Setup cannot grant permissions, enable environment protection, approve, merge, or publish. Setup status reports observed configuration; it never certifies workflow code.
 5. Private setup state: org-scoped R2; authorization/safe metadata: D1. Logs exclude prompts, tool payloads, raw errors; Gateway retains no workflow payloads. Deletion/expiry removes private data; late writes cannot restore it ([publisher setup](./publisher-setup.md)).

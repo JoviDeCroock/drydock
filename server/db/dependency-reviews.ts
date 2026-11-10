@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, lt, ne, not, or, sql } from "drizzle-orm";
 import { parseDependencyReviewPolicy } from "../lib/dependency-review/policy";
 import type {
   DependencyBump,
@@ -9,7 +9,12 @@ import type {
 import type { AppDb } from "./client";
 import { chunkForD1 } from "./d1-chunk";
 import type { DependencyReviewStatus } from "./enums";
-import { dependencyReviewApprovals, dependencyReviewSettings, dependencyReviews } from "./schema";
+import {
+  dependencyReviewApprovals,
+  dependencyReviewSettings,
+  dependencyReviews,
+  githubAppInstallations,
+} from "./schema";
 
 export interface DependencyReviewSettings {
   enabled: boolean;
@@ -153,32 +158,54 @@ export interface CreateDependencyReviewInput {
  * redelivers webhooks, and `opened` plus `synchronize` can race for one sha.
  * Whether a review is still the PR's head is decided by the job against
  * GitHub, not here: webhooks arrive out of order and can be redelivered.
+ *
+ * The head's unique key has no organization, and an installation can move
+ * between organizations, so the batch is pinned to whoever owns the
+ * installation when it commits: the owner replaces another organization's
+ * row for the head, and a webhook that read the previous owner gets null and
+ * leaves nothing behind.
  */
 export async function createDependencyReview(
   db: AppDb,
   input: CreateDependencyReviewInput,
-): Promise<{ review: DependencyReviewRecord; created: boolean }> {
+): Promise<{ review: DependencyReviewRecord; created: boolean } | null> {
   const now = new Date();
   const id = crypto.randomUUID();
-  const inserted = await db
-    .insert(dependencyReviews)
-    .values({ id, ...input, status: "queued", createdAt: now, updatedAt: now })
-    .onConflictDoNothing()
-    .returning(RECORD_COLUMNS);
-  if (inserted[0]) return { review: inserted[0], created: true };
-  const [existing] = await db
-    .select(RECORD_COLUMNS)
-    .from(dependencyReviews)
-    .where(
-      and(
-        eq(dependencyReviews.installationRowId, input.installationRowId),
-        eq(dependencyReviews.repositoryId, input.repositoryId),
-        eq(dependencyReviews.headSha, input.headSha),
+  const ownsInstallation = sql`exists (select 1 from ${githubAppInstallations}
+    where ${githubAppInstallations.id} = ${input.installationRowId}
+    and ${githubAppInstallations.organizationId} = ${input.organizationId})`;
+  const [, inserted, withdrawn] = await db.batch([
+    db
+      .delete(dependencyReviews)
+      .where(
+        and(
+          eq(dependencyReviews.installationRowId, input.installationRowId),
+          eq(dependencyReviews.repositoryId, input.repositoryId),
+          eq(dependencyReviews.headSha, input.headSha),
+          ne(dependencyReviews.organizationId, input.organizationId),
+          ownsInstallation,
+        ),
       ),
-    )
-    .limit(1);
-  if (!existing) throw new Error("dependency review insert conflicted but no row was found");
-  return { review: existing, created: false };
+    db
+      .insert(dependencyReviews)
+      .values({ id, ...input, status: "queued", createdAt: now, updatedAt: now })
+      .onConflictDoNothing()
+      .returning(RECORD_COLUMNS),
+    db
+      .delete(dependencyReviews)
+      .where(and(eq(dependencyReviews.id, id), not(ownsInstallation)))
+      .returning({ id: dependencyReviews.id }),
+  ]);
+  if (withdrawn[0]) return null;
+  if (inserted[0]) return { review: inserted[0], created: true };
+  const existing = await getDependencyReviewForHead(
+    db,
+    input.organizationId,
+    input.installationRowId,
+    input.repositoryId,
+    input.headSha,
+  );
+  return existing ? { review: existing, created: false } : null;
 }
 
 export async function getDependencyReview(
@@ -203,6 +230,7 @@ export async function getDependencyReview(
  */
 export async function getDependencyReviewByCheckRun(
   db: AppDb,
+  organizationId: string,
   installationRowId: string,
   repositoryId: number,
   checkRunId: number,
@@ -213,6 +241,7 @@ export async function getDependencyReviewByCheckRun(
     .from(dependencyReviews)
     .where(
       and(
+        eq(dependencyReviews.organizationId, organizationId),
         eq(dependencyReviews.installationRowId, installationRowId),
         eq(dependencyReviews.repositoryId, repositoryId),
         externalId
@@ -226,6 +255,34 @@ export async function getDependencyReviewByCheckRun(
 
 /** The review of one head commit, whatever its status. */
 export async function getDependencyReviewForHead(
+  db: AppDb,
+  organizationId: string,
+  installationRowId: string,
+  repositoryId: number,
+  headSha: string,
+): Promise<DependencyReviewRecord | null> {
+  const [row] = await db
+    .select(RECORD_COLUMNS)
+    .from(dependencyReviews)
+    .where(
+      and(
+        eq(dependencyReviews.organizationId, organizationId),
+        eq(dependencyReviews.installationRowId, installationRowId),
+        eq(dependencyReviews.repositoryId, repositoryId),
+        eq(dependencyReviews.headSha, headSha),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Any organization's review of one commit. Only for deciding whether a passing
+ * skip may land on the commit: check runs belong to the commit, so a review
+ * recorded by whichever organization owns the installation by then must block
+ * the skip even when the skip was queued for the previous owner.
+ */
+export async function findReviewOfCommit(
   db: AppDb,
   installationRowId: string,
   repositoryId: number,

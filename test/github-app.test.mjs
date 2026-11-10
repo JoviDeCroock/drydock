@@ -11,10 +11,9 @@ import { generateGithubAppJwt } from "../server/lib/github-app/jwt";
 import {
   buildInstallUrl,
   exchangeGithubUserCode,
-  listUserAccessibleInstallations,
   signOAuthState,
   verifyOAuthState,
-  verifyUserCanAccessInstallation,
+  verifyUserOwnsInstallationAccount,
 } from "../server/lib/github-app/oauth";
 import { validateReleaseTargetShape } from "../server/lib/github-app/validation";
 
@@ -110,41 +109,110 @@ describe("github user authorization", () => {
       exchangeGithubUserCode(readGithubAppConfig(VALID_ENV), "callback-code"),
     ).resolves.toBe("user-token");
   });
+});
 
-  test("lists installations accessible to a GitHub user token", async () => {
-    const fetchMock = vi.fn(async () =>
-      Response.json({
-        installations: [
-          { id: 123, account: { login: "octo", type: "Organization" } },
-          { id: "456", account: { login: "personal", type: "User" } },
-        ],
-      }),
-    );
+describe("installation account ownership", () => {
+  const ORG = { accountType: "Organization", accountLogin: "acme", accountId: 77 };
+  const USER = { accountType: "User", accountLogin: "octocat", accountId: 9 };
+
+  function membership(overrides = {}) {
+    return {
+      state: "active",
+      role: "admin",
+      organization: { id: 77, login: "acme" },
+      user: { id: 5, login: "owner" },
+      ...overrides,
+    };
+  }
+
+  function respondWith(response) {
+    const fetchMock = vi.fn(async () => response);
     globalThis.fetch = fetchMock;
+    return fetchMock;
+  }
 
-    await expect(listUserAccessibleInstallations("user-token")).resolves.toEqual([
-      { id: "123", accountLogin: "octo", accountType: "Organization" },
-      { id: "456", accountLogin: "personal", accountType: "User" },
-    ]);
+  test("asks GitHub for the token holder's own membership in the installation's organization", async () => {
+    const fetchMock = respondWith(Response.json(membership()));
+
+    await expect(verifyUserOwnsInstallationAccount("user-token", ORG)).resolves.toEqual({
+      githubUserId: 5,
+      githubLogin: "owner",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("https://api.github.com/user/memberships/orgs/acme");
+    expect(init.headers.Authorization).toBe("Bearer user-token");
+    expect(init.method ?? "GET").toBe("GET");
   });
 
-  test("rejects installation ids that are not visible to the GitHub user token", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(Response.json({ access_token: "user-token" }))
-      .mockResolvedValueOnce(
-        Response.json({
-          installations: [{ id: 123, account: { login: "octo", type: "Organization" } }],
-        }),
-      );
-    globalThis.fetch = fetchMock;
+  test.each([
+    ["a plain member", { role: "member" }],
+    ["a billing manager", { role: "billing_manager" }],
+    ["an admin whose invitation is pending", { state: "pending" }],
+    ["an admin of a different organization", { organization: { id: 78, login: "acme" } }],
+    ["a response without the organization", { organization: undefined }],
+  ])("refuses %s", async (_label, overrides) => {
+    respondWith(Response.json(membership(overrides)));
 
-    await expect(
-      verifyUserCanAccessInstallation(readGithubAppConfig(VALID_ENV), {
-        code: "callback-code",
-        installationId: "999",
-      }),
-    ).rejects.toMatchObject({ code: "installation_not_authorized" });
+    await expect(verifyUserOwnsInstallationAccount("user-token", ORG)).rejects.toMatchObject({
+      code: "installation_owner_required",
+      message: "you must be an owner of acme on GitHub to link this installation",
+    });
+  });
+
+  test("refuses users GitHub reports are not members, such as outside collaborators", async () => {
+    respondWith(new Response('{"message":"Not Found"}', { status: 404 }));
+
+    await expect(verifyUserOwnsInstallationAccount("user-token", ORG)).rejects.toMatchObject({
+      code: "installation_owner_required",
+    });
+  });
+
+  test.each([403, 401, 422])(
+    "fails closed without echoing GitHub's body when the lookup returns %i",
+    async (status) => {
+      respondWith(new Response('{"message":"raw GitHub detail"}', { status }));
+
+      const error = await verifyUserOwnsInstallationAccount("user-token", ORG).catch((err) => err);
+      expect(error).toBeInstanceOf(GithubAppValidationError);
+      expect(error.code).toBe("installation_owner_unverified");
+      expect(error.message).toContain("Members (read)");
+      expect(error.message).not.toContain("raw GitHub detail");
+    },
+  );
+
+  test("fails closed on a membership without a user identity", async () => {
+    respondWith(Response.json(membership({ user: null })));
+
+    await expect(verifyUserOwnsInstallationAccount("user-token", ORG)).rejects.toMatchObject({
+      code: "installation_owner_unverified",
+    });
+  });
+
+  test("accepts the user account's own GitHub user, compared by id", async () => {
+    const fetchMock = respondWith(Response.json({ id: 9, login: "octocat" }));
+
+    await expect(verifyUserOwnsInstallationAccount("user-token", USER)).resolves.toEqual({
+      githubUserId: 9,
+      githubLogin: "octocat",
+    });
+    expect(String(fetchMock.mock.calls[0][0])).toBe("https://api.github.com/user");
+  });
+
+  test("refuses another GitHub user even when the login matches", async () => {
+    respondWith(Response.json({ id: 10, login: "octocat" }));
+
+    await expect(verifyUserOwnsInstallationAccount("user-token", USER)).rejects.toMatchObject({
+      code: "installation_owner_required",
+    });
+  });
+
+  test("fails closed when GitHub does not return the user", async () => {
+    respondWith(new Response("", { status: 404 }));
+
+    await expect(verifyUserOwnsInstallationAccount("user-token", USER)).rejects.toMatchObject({
+      code: "installation_owner_unverified",
+    });
   });
 });
 

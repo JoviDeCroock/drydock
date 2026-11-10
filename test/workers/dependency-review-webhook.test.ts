@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import {
   createDependencyReview,
+  getDependencyReviewForHead,
   setDependencyReviewCheckRun,
 } from "../../server/db/dependency-reviews";
 import * as schema from "../../server/db/schema";
@@ -22,6 +23,7 @@ import {
   webhookHarness,
 } from "./helpers/dependency-review";
 import { exhaustedRateLimitBindings } from "./rate-limit-doubles";
+import { seedUser } from "./helpers/seed";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -42,7 +44,7 @@ async function seedReviewWithCheckRun(
   headSha = sha("b"),
 ) {
   const db = createDb(env.DB);
-  const { review } = await createDependencyReview(db, {
+  const { review } = (await createDependencyReview(db, {
     organizationId: seeded.organizationId,
     installationRowId: seeded.installation.id,
     repositoryId: 5151,
@@ -50,7 +52,7 @@ async function seedReviewWithCheckRun(
     pullNumber: 42,
     headSha,
     authorLogin: "dependabot[bot]",
-  });
+  }))!;
   await setDependencyReviewCheckRun(db, review.id, checkRunId);
   return review;
 }
@@ -787,5 +789,76 @@ describe("check_suite deliveries", () => {
 
     expect(limiter.keys).toEqual([`github-webhook:check_suite:${seeded.installationExternalId}`]);
     expect(res.status).toBe(429);
+  });
+});
+
+describe("dependency reviews across an installation move", () => {
+  async function setup() {
+    const previous = await seedDependencyReviewOrg();
+    const next = await seedUser();
+    const review = (organizationId: string) => ({
+      organizationId,
+      installationRowId: previous.installation.id,
+      repositoryId: 5151,
+      repositoryFullName: "octo/example",
+      pullNumber: 42,
+      headSha: sha("m"),
+      authorLogin: "dependabot[bot]",
+    });
+    const move = () =>
+      createDb(env.DB)
+        .update(schema.githubAppInstallations)
+        .set({ organizationId: next.organizationId })
+        .where(eq(schema.githubAppInstallations.id, previous.installation.id));
+    const head = (organizationId: string) =>
+      getDependencyReviewForHead(
+        createDb(env.DB),
+        organizationId,
+        previous.installation.id,
+        5151,
+        sha("m"),
+      );
+    return { previous, next, review, move, head };
+  }
+
+  test("a webhook that read the previous owner records nothing after the move", async () => {
+    const { previous, review, move } = await setup();
+    await move();
+
+    expect(await createDependencyReview(createDb(env.DB), review(previous.organizationId))).toBe(
+      null,
+    );
+    expect(await reviewRows(previous.organizationId)).toEqual([]);
+  });
+
+  test("the new owner replaces a review the previous owner left on the head", async () => {
+    const { previous, next, review, move, head } = await setup();
+    const left = (await createDependencyReview(createDb(env.DB), review(previous.organizationId)))!;
+    await move();
+
+    const recorded = await createDependencyReview(createDb(env.DB), review(next.organizationId));
+
+    expect(recorded).toMatchObject({
+      created: true,
+      review: { organizationId: next.organizationId },
+    });
+    expect(recorded?.review.id).not.toBe(left.review.id);
+    expect(await reviewRows(previous.organizationId)).toEqual([]);
+    expect(await head(previous.organizationId)).toBeNull();
+    expect((await head(next.organizationId))?.id).toBe(recorded?.review.id);
+  });
+
+  test("a late write from the previous owner never displaces the new owner's review", async () => {
+    const { previous, next, review, move, head } = await setup();
+    await move();
+    const owned = (await createDependencyReview(createDb(env.DB), review(next.organizationId)))!;
+
+    expect(await createDependencyReview(createDb(env.DB), review(previous.organizationId))).toBe(
+      null,
+    );
+    expect((await head(next.organizationId))?.id).toBe(owned.review.id);
+    expect(
+      await createDependencyReview(createDb(env.DB), review(next.organizationId)),
+    ).toMatchObject({ created: false, review: { id: owned.review.id } });
   });
 });
