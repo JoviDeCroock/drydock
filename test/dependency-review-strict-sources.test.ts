@@ -1384,6 +1384,8 @@ describe("O2-1: committed package caches and loaders are install inputs", () => 
     for (let i = 0; i < 1_000; i++) {
       committedInstallInput(`${"a-".repeat(127)}!.zip`);
       committedInstallInput(`@${"a-".repeat(10_000)}0123456789-0123456789.zip`);
+      // Under the length bound, so the pattern itself runs.
+      committedInstallInput(`${"a-".repeat(110)}0123456789-012345678!.zip`);
     }
     expect(performance.now() - started).toBeLessThan(1_000);
   });

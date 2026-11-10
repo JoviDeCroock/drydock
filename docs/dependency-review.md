@@ -396,8 +396,8 @@ npm registry or PyPI, to prove their hashes. For pnpm, whose lockfile records
 no URL, that is every name the repository routes to the mirror, so list scopes
 the organization hosts itself behind the mirror, or whose registry is set
 outside the repository, under `privateScopes`. A mirror entry whose hashes
-don't match, and every Yarn Berry entry from a mirror, is treated like a git
-or URL source. A declared private registry is never contacted and its names
+don't match, and every Yarn Berry or bundled npm entry from a mirror (neither
+has a hash to compare), is treated like a git or URL source. A declared private registry is never contacted and its names
 never leave the organization.
 
 A registry that also proxies the public registry must be declared a mirror,
