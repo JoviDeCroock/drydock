@@ -81,9 +81,16 @@ make it required.
    incomplete snapshot diffs to nothing, which must not read as "nothing
    changed".
 
+   Lockfile-based review assumes the lockfile is installed frozen (`npm ci`,
+   pnpm `--frozen-lockfile`, Yarn Berry `--immutable`, `uv sync --locked`):
+   a dependency the lockfile lacks then fails the install, or only what is
+   locked is installed. Drydock does not check that each declared dependency
+   has an entry or that the locked version satisfies its range; a non-frozen
+   install can float any range past the lockfile, with or without Drydock.
+
    | Changed file | Unread when |
    | --- | --- |
-   | Supported lockfile (`package-lock.json` / `npm-shrinkwrap.json` v2–v3, `pnpm-lock.yaml` v5–v9, `yarn.lock` classic and Berry, `uv.lock`) | Past the 20-per-review cap, over 8 MiB, deleted by the PR, or not finished by the parser: malformed, outside the canonical shape, over its entry caps, or holding an entry it can't classify (an unplaceable entry makes the snapshot incomplete; it is never dropped). Also inconsistent, on either side: an install edge an entry declares resolves to no entry of the same lockfile, so the installer would resolve it at install time. npm peers left out pass only under `legacy-peer-deps=true` in an `.npmrc` in or above the lockfile's directory; Yarn root `resolutions` redirect edges; peers in Berry and `pnpm-lock.yaml` resolve through the parent's own edges. Peer variants of one release in `pnpm-lock.yaml` are one entry; variants with different resolutions make the file unread. |
+   | Supported lockfile (`package-lock.json` / `npm-shrinkwrap.json` v2–v3, `pnpm-lock.yaml` v5–v9, `yarn.lock` classic and Berry, `uv.lock`) | Past the 20-per-review cap, over 8 MiB, deleted by the PR, or not finished by the parser: malformed, outside the canonical shape, over its entry caps, or holding an entry it can't classify (an unplaceable entry makes the snapshot incomplete; it is never dropped). Peer variants of one release in `pnpm-lock.yaml` are one entry; variants with different resolutions make the file unread. |
    | Requirements (`requirements*.txt`, `constraints*.txt`, `requirements/*.txt`, and any other changed `.txt`, since pip follows `-r`/`-c` into files of any name) | As above, plus: an index or find-links option other than an explicit pypi.org `--index-url`, any option pip doesn't accept exactly as written, a name pinned to two versions, a change to its unpinned lines (ranges such as `foo>=1.3`, URLs, VCS and `-e` lines, includes), or a change to the extras, marker, or per-requirement install options of a name pinned on both sides, with or without a version change (only a line added or removed outright is an ordinary bump). A `.txt` that isn't requirements holds on its text change. |
    | Unparsed npm or PyPI lockfile (`bun.lock`, `poetry.lock`, `Pipfile.lock`, `pdm.lock`, `pylock*.toml`) | Always. |
    | Dependency manifest (`package.json`, `pyproject.toml`, `setup.cfg`, `setup.py`, `Pipfile`, pip-tools `*.in`) | Unless the PR changes a parsed lockfile of its ecosystem that covers it: one in the same directory, or one above it whose parsed snapshot records the directory as a project: npm importer keys, pnpm `importers` from every YAML document, Berry `workspace:` resolutions, uv editable, virtual, and directory sources, or the Yarn root manifest's `workspaces` globs. A requirements file covers only its own pip-tools input (`X.in` for `X.txt`) or a manifest its `pip-compile` or `uv pip compile` header line names. |
@@ -109,9 +116,9 @@ make it required.
    mirror bumps are diffed, a declared private registry's are exempt
    (`private-source`), and remote ones (`remote-source`) have neither a diff
    nor a publish time. A public or mirror head over a non-public base is a
-   package new to the lockfile, and a `privateScopes` name the head fetches
-   publicly holds as `private-scope-public`. `dependency-review-sources.md`
-   has the rules, routing, bundles, and per-format pins.
+   package new to the lockfile; for a `privateScopes` name that move holds as
+   `private-scope-public`. `dependency-review-sources.md` has the rules,
+   routing, bundles, and per-format pins.
 6. **Prove pins.** A public bump whose lockfile records a strong pin is
    diffed only after `verifyPublicPin`
    (`server/lib/dependency-review/mirror-identity.ts`) proves every pinned
@@ -198,8 +205,8 @@ make it required.
 
    | Half | Holds when | Reason |
    | --- | --- | --- |
-   | A package new to its lockfile (no previous version there, not a re-pin), however it arrived: declared by a reviewed release, pulled in by another new package, aliased, or added by the PR | It is young: first published on the public registry under 90 days before the decision (`YOUNG_PACKAGE_DAYS`) or its installed version under 7 (`YOUNG_VERSION_DAYS`); its age can't be established (failed lookup, no times, no public egress, past the review limit); nothing vouches for it (a git, URL, or tarball source, an unproven pin); or (uv) the lock records no wheel, so it builds from source with unlocked build requirements | `young-package` |
-   | A reviewed release that newly installs a dependency: declared in no section before, or moved out of `peerDependencies` into an installing section | Its lockfile doesn't pin the whole tree (any requirements file, hash-checking mode included: pip resolves what the file leaves out and builds a source distribution's build requirements outside it), or part of the PR went unread (unread coverage, below). npm, pnpm, Yarn, and uv lockfiles pin the tree | `dependency-added` |
+   | A package new to its lockfile (no previous version there, not a re-pin), however it arrived: declared by a reviewed release, pulled in by another new package, aliased, or added by the PR | It is young: first published on the public registry under 90 days before the decision (`YOUNG_PACKAGE_DAYS`) or its installed version under 7 (`YOUNG_VERSION_DAYS`); its age can't be established (failed lookup, no times, no public egress, past the review limit); nothing vouches for it (a git, URL, or tarball source, an unproven pin); or (uv) the lock records an sdist and no wheel at all, so it builds from source with unlocked build requirements | `young-package` |
+   | A reviewed release that newly installs a dependency: declared in no section before, or moved out of `peerDependencies` into an installing section | Its lockfile doesn't pin the whole tree, or part of the PR went unread (unread coverage, below). npm, pnpm, Yarn Berry, and uv lockfiles pin it. Requirements files don't, hash-checking mode included: pip resolves what the file leaves out and builds a source distribution's build requirements outside it. Nor does Yarn classic: its `--frozen-lockfile` compares only top-level patterns and fetches a transitive package the lockfile lacks | `dependency-added` |
 
    - First publish is npm's earliest time among listed versions, or PyPI's
      earliest non-yanked upload of any file; the version's time is the age
@@ -228,7 +235,7 @@ make it required.
    | Past the review limit (`over-cap`, or a new package past it) | `holdOnUnreviewed`; a new package `holdOnNewPackages`, then `young-package` | Held until approved: Drydock did not look up its publish time |
    | New package, or a proven re-pin | `holdOnNewPackages`; a young new package `young-package` | `too-new` until old enough; then it passes as a new package |
    | Remote source, unverified pin (including an unproven mirror bump and an entry with no usable pin) | `holdOnUnreviewed`; one new to the lockfile `young-package` | Held until approved, however old the version: there is no publish time to wait out |
-   | `privateScopes` name from a public source (`private-scope-public`) | Always | Held until approved |
+   | `privateScopes` name moved off a non-public source onto a public one (`private-scope-public`) | Always | Held until approved |
    | Declared private registry (`private-source`) | `holdOnUnreviewed` | Exempt; passes as unreviewed |
    | Unread coverage: an unread lockfile, manifest, registry config, or committed Yarn install file, or a file listing GitHub cut short (over 3,000 files, or fewer listed than the PR's `changed_files`) | `holdOnUnreviewed` | Holds the review until approved; Approve accepts those changes unread |
 
@@ -368,20 +375,12 @@ a malformed scope, and a URL that is both a mirror and a private registry or
 sits under one listed as the other. Each prefix is stored ending in `/`, so
 `…/npm` cannot also match `…/npm-private`.
 
-Naming a mirror sends the names and versions resolved from it to the public
-npm registry or PyPI, to prove their hashes. For pnpm, whose lockfile records
-no URL, that is every name the repository routes to the mirror, so list scopes
-the organization hosts itself behind the mirror, or whose registry is set
-outside the repository, under `privateScopes`. A mirror entry whose hashes
-don't match, and every Yarn Berry or bundled npm entry from a mirror (neither
-has a hash to compare), is treated like a git or URL source. A declared private registry is never contacted and its names
-never leave the organization.
-
-A registry that also proxies the public registry must be declared a mirror,
-not a private registry: bumps from a private registry are not reviewed. A
-release the PR moves onto a private registry from the public registry or a
-mirror is a remote source. An undeclared registry or proxy is a remote source
-too, so under the default policy its bumps hold until approved.
+What declaring a mirror, private registry, or scope sends, exempts, and
+requires is in `dependency-review-sources.md`. In short: a registry that also
+proxies the public one is a mirror, an undeclared registry is a remote source
+whose bumps hold until approved under the default policy, and a scope belongs
+in `privateScopes` only if the organization owns it on the public registry too
+(otherwise declare its private registry).
 
 Extra bot logins identify trusted automation, such as self-hosted Renovate,
 whose account may lack collaborator permission; human writers need no entry.
@@ -522,8 +521,12 @@ PRs carry far more bumps than single-package ones.
 - A package whose install profile alone changes (dev-only to production,
   platform-optional, used by another workspace) with the same version, source,
   and integrity is no bump and holds nothing.
-- Build dependencies of source distributions are not reviewed, and which
-  wheel a platform installs is not modelled.
+- Which wheel a platform installs is not modelled, so a package with wheels
+  only for other platforms may still build from source on yours. Build
+  dependencies of source distributions are not reviewed, including on a
+  version change to a release that ships only a source distribution.
+- Review assumes a frozen install (step 4); a non-frozen one can float any
+  range past the lockfile.
 - A package published 90 days ahead, with its version left a week, passes the
   young-package rule; any cooldown shares this limit.
 - A bundled npm dependency new to the lockfile is judged by the registry age

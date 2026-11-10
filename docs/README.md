@@ -52,7 +52,7 @@ Canonical npm gate workflow: [`examples/npm-workflow-gate.yml`](./examples/npm-w
 | [`api-keys.md`](./api-keys.md) | organization API keys: route allowlists by access level, auth rules, storage, lifecycle; [`openapi.json`](./openapi.json) contract |
 | [`dependency-pr-diff-links.md`](./dependency-pr-diff-links.md) | Renovate preset + Dependabot/Renovate PR comment workflow (public contract) |
 | [`dependency-review.md`](./dependency-review.md) | GitHub App check on dependency-update PRs: hold policy, young-package rule and age fallback, approval authority, `dependency-review` rollout flag, limits |
-| [`dependency-review-sources.md`](./dependency-review-sources.md) | dependency review source places (public, mirror, private, remote), moves off non-public sources, and lockfile pin proofs |
+| [`dependency-review-sources.md`](./dependency-review-sources.md) | dependency review source places (public, mirror, private, remote), moves off non-public sources, mirror, private registry, and scope declarations, and lockfile pin proofs |
 | [`two-factor-auth.md`](./two-factor-auth.md) | 2FA enrollment, sign-in challenge, step-up |
 | [`organization-members.md`](./organization-members.md) | roles, invitations |
 | [`audit-log.md`](./audit-log.md) | organization audit log |

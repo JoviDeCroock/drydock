@@ -33,7 +33,7 @@ A change of place across the PR is judged by what the head fetches:
 | A mirror base copy of the release the head installs, not pinned to the head's strong hashes | No predecessor: a new package, listed the same way. Nothing proves the base copy was the public release. |
 | A base copy that was only bundled inside another npm package, with a fetched head | No predecessor: the fetched copy is a new package, not a re-pin. |
 | A release the PR moves from the public registry or a mirror onto a declared private registry | Remote: the exemption needs the base on that registry already. |
-| A `privateScopes` name whose head comes from the public registry: a recorded public-registry URL, a route the repository's config sets to the public registry, or a move off a non-public base | Unreviewed `private-scope-public`, never looked up publicly, held until approved whatever the switches. An entry with no URL that the repository routes nowhere, or one hosted behind a mirror, stays private. |
+| A `privateScopes` name moved off a non-public source (a declared private registry, an undeclared host, git, or a URL) onto the public registry or a declared mirror | Unreviewed `private-scope-public`, never looked up publicly, held until approved whatever the switches. Public on both sides (a scope hosted on the public registry itself), new to the lockfile from the public registry or a mirror, with no URL or route, or hosted behind a mirror, it stays private and exempt; from a remote source it is remote. |
 | One change found in several lockfiles | New when any copy is new; it counts as pinning the whole tree only when every lockfile does. |
 
 - Routing comes from the committed `.npmrc` and `.yarnrc.yml` in the npm
@@ -49,6 +49,30 @@ A change of place across the PR is judged by what the head fetches:
   set outside the repository (environment variables, CI configuration,
   user-level files, Dependabot `registries:`) is invisible here, including
   registries and proxies set that way.
+
+## Declaring registries
+
+Naming a mirror sends the names and versions resolved from it to the public
+npm registry or PyPI, to prove their hashes. For pnpm, whose lockfile records
+no URL, that is every name the repository routes to the mirror, so list scopes
+the organization hosts itself behind the mirror, or whose registry is set
+outside the repository, under `privateScopes`. A mirror entry whose hashes
+don't match, and every Yarn Berry or bundled npm entry from a mirror (neither
+has a hash to compare), is treated like a git or URL source. A declared
+private registry is never contacted and its names never leave the
+organization.
+
+A registry that also proxies the public registry must be declared a mirror,
+not a private registry: bumps from a private registry are not reviewed. A
+release the PR moves onto a private registry from the public registry or a
+mirror is a remote source. An undeclared registry or proxy is a remote source
+too, so under the default policy its bumps hold until approved.
+
+A listed scope is the organization's own wherever the public registry or a
+mirror serves it, so a package new to the lockfile in it is exempt rather than
+judged by its age. List a scope only if the organization owns it on the public
+registry too, or hosts it behind a declared mirror (above); otherwise declare its private registry, which exempts only what
+that registry serves.
 
 ## Pins
 

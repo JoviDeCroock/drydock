@@ -37,8 +37,8 @@ export interface LockfileSource {
   // Several entries recorded this identity and disagreed about where it came
   // from; the worst kind wins and it is never compared as a mirror copy.
   mixed: boolean;
-  // uv: some copy records an sdist and no wheel every platform installs, so
-  // a platform may build the release from source.
+  // uv: some copy records an sdist and no wheel at all, so every install
+  // builds the release from source.
   sourceBuild?: true;
   // Every copy is one the format writes no pin for because it ships inside
   // another package's tarball (`RegistryEntry.unpinned`). Never fetched from

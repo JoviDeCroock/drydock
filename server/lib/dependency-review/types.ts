@@ -62,9 +62,9 @@ export interface DependencyBump {
   // non-public source: the base version is no predecessor of the public
   // release, so `fromVersion` is null. Dependency confusion's shape.
   replacesPrivate?: true;
-  // PyPI: the lockfile records an sdist for the target version and no wheel
-  // every platform installs, so some platform may build it from source, with
-  // build requirements installed without being locked.
+  // uv: the lockfile records an sdist for the target version and no wheel at
+  // all, so every install builds it from source, with build requirements
+  // installed without being locked.
   buildsFromSource?: true;
   // With `privateSource` and `remoteSource`: a name in a declared private
   // scope that this change moves off a non-public source onto the public
