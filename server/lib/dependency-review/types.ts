@@ -48,8 +48,9 @@ export interface DependencyBump {
   // no previous version to diff (`fromVersion` is null), and the pin is proven
   // like any other.
   repinned?: true;
-  // The lockfile this bump comes from pins every package an install puts in
-  // the tree (npm, pnpm, Yarn, uv; never a requirements file), so a
+  // The lockfile this bump comes from pins every package a frozen install
+  // puts in the tree (npm, pnpm, Yarn Berry, uv; never a requirements file or
+  // Yarn classic, see `LockfileSnapshot.partialTree`), so a
   // dependency a release adds either resolves to an entry already there or
   // arrives as a bump of its own. Set by collection,
   // kept through the proofs, and cleared when a merged copy of the change
@@ -61,14 +62,13 @@ export interface DependencyBump {
   // non-public source: the base version is no predecessor of the public
   // release, so `fromVersion` is null. Dependency confusion's shape.
   replacesPrivate?: true;
-  // PyPI: the lockfile records no wheel for the target version, so it is
-  // built from source, and its build requirements are installed without
-  // being locked.
+  // PyPI: the lockfile records an sdist for the target version and no wheel
+  // every platform installs, so some platform may build it from source, with
+  // build requirements installed without being locked.
   buildsFromSource?: true;
   // With `privateSource` and `remoteSource`: a name in a declared private
-  // scope that the lockfile resolves from the public registry, by a recorded
-  // public URL, a route the repository sets to the public registry, or a move
-  // off a non-public source. Never sent to a public registry; it holds until
+  // scope that this change moves off a non-public source onto the public
+  // registry or a mirror. Never sent to a public registry; it holds until
   // approved (`private-scope-public`).
   privateScopePublic?: true;
 }

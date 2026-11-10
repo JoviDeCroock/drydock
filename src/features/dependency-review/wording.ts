@@ -24,7 +24,7 @@ export const POLICY_SWITCHES: ReadonlyArray<{ key: PolicySwitch; label: string; 
   {
     key: "holdOnNewDependencies",
     label: "is a young package new to the lockfile, or adds a dependency Drydock can't follow",
-    hint: "Young: first published under 90 days ago, an installed version under 7 days old, or an age Drydock can't establish. An added dependency holds only where the lockfile doesn't show what it installs: a requirements file without hashes, or a pull request with unread files.",
+    hint: "Young: first published under 90 days ago, an installed version under 7 days old, or an age Drydock can't establish; a Python package with no wheel holds at any age. An added dependency holds only where the lockfile doesn't show what it installs: requirements files, Yarn classic lockfiles, or a pull request with unread files.",
   },
   { key: "holdOnNewBinCommands", label: "adds a bin command" },
   {

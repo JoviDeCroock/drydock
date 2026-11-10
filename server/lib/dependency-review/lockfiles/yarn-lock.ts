@@ -14,9 +14,7 @@ import { readStrictYaml, textLines } from "./lines";
 interface YarnEntry {
   descriptors: string[];
   fields: Map<string, string>;
-  // The `[name, range]` edges the entry installs: v1 `dependencies` and
-  // `optionalDependencies`, Berry `dependencies` (which lists optional ones
-  // too). A Berry workspace entry's are the workspace's own.
+  // Berry workspace entries list each workspace's own dependencies.
   dependencies: Array<[string, string]>;
 }
 
@@ -46,6 +44,10 @@ export function parseYarnLock(text: string, manifestText: string | null): Lockfi
   const v1 = hasV1Header(text);
   // Berry's checksum is of Yarn's repacked archive, not the registry's bytes.
   if (v1) builder.expectStrongPins();
+  // Classic's frozen install checks only the top-level patterns against the
+  // lockfile and fetches a transitive package the lockfile lacks, so it never
+  // pins the tree (see `partialTree`).
+  if (v1) builder.markPartialTree();
   const entries = v1
     ? readV1Entries(text, builder.reserve)
     : readBerryEntries(text, builder.reserve);
@@ -73,7 +75,6 @@ export function parseYarnLock(text: string, manifestText: string | null): Lockfi
     );
   };
   for (const [dep, spec] of manifestDependencies(manifestText, builder.reserve)) declare(dep, spec);
-  checkInstallEdges(builder, entries, v1, manifestResolutions(manifestText));
   if (!v1) {
     for (const entry of entries) {
       if (!protocolOf(entry.fields.get("resolution") ?? "")?.startsWith("workspace:")) continue;
@@ -81,46 +82,6 @@ export function parseYarnLock(text: string, manifestText: string | null): Lockfi
     }
   }
   return builder.finish();
-}
-
-/**
- * Every edge an entry installs must resolve to an entry of the same lockfile
- * by Yarn's own lookup: a stanza whose descriptor list holds exactly
- * `name@range` (Berry also writes the default `npm:` protocol into the
- * descriptor). Yarn resolves one that matches none from the registry at
- * install time, and v1's frozen-lockfile check compares only the top-level
- * patterns, so the lockfile is not the whole install. The one redirect the
- * format allows is the root manifest's `resolutions`: an edge it names is
- * locked under the descriptor it redirects to, which must then resolve. Berry's
- * peer dependencies are resolved by the parent's own edges, so they are not
- * checked here.
- */
-function checkInstallEdges(
-  builder: SnapshotBuilder,
-  entries: YarnEntry[],
-  v1: boolean,
-  resolutions: ReadonlyMap<string, string>,
-): void {
-  const descriptors = new Set(entries.flatMap((entry) => entry.descriptors));
-  const resolves = (dep: string, range: string) =>
-    descriptors.has(`${dep}@${range}`) ||
-    (!v1 && !range.includes(":") && descriptors.has(`${dep}@npm:${range}`));
-  for (const entry of entries) {
-    for (const [dep, range] of entry.dependencies) {
-      if (resolves(dep, range)) continue;
-      const redirect = [...resolutions].some(
-        ([key, target]) => resolutionNames(key, dep) && resolves(dep, target),
-      );
-      if (!redirect) builder.unresolvedEdge(entry.descriptors[0], dep, range);
-    }
-  }
-}
-
-// A `resolutions` key that applies to `dep`: `dep`, `dep@range`, or a path
-// ending in one (`parent/dep`, `**/dep`).
-function resolutionNames(key: string, dep: string): boolean {
-  const last = key.endsWith(dep) ? key : key.slice(0, key.lastIndexOf("@"));
-  return last === dep || last.endsWith(`/${dep}`);
 }
 
 // Yarn v1 writes its header as the second comment line, after a first one.
@@ -180,7 +141,6 @@ function readV1Entries(text: string, reserve: (count?: number) => boolean): Yarn
       if (!pair || pair.length !== 2 || list.has(pair[0])) return null;
       if (!reserve()) return entries;
       list.set(pair[0], pair[1]);
-      current.dependencies.push([pair[0], pair[1]]);
       continue;
     }
     if (!raw.startsWith("  ") || raw[2] === " " || raw[2] === '"') return null;
@@ -327,8 +287,7 @@ interface YarnPackage {
   name: string;
   version: string | null;
   source:
-    // `url`: the entry records a URL on the public registry's host.
-    | { kind: "public"; url?: true }
+    | { kind: "public" }
     | { kind: "registry"; location: string; ref: string }
     // `ref` identifies the fetched code: a resolved URL or commit, a Berry
     // locator, or the descriptor's own range when nothing was resolved;
@@ -347,9 +306,8 @@ function recordPackage(builder: SnapshotBuilder, pkg: YarnPackage): void {
   const { name, version, source, pin, hashes } = pkg;
   if (source.kind !== "remote" && version !== null && !validLockfileVersion("npm", version)) {
     builder.addRemote(name, version, null, pin);
-  } else if (source.kind === "public") {
-    builder.add(name, version, { hashes, pin, publicUrl: source.url === true });
-  } else if (source.kind === "registry") {
+  } else if (source.kind === "public") builder.add(name, version, { hashes, pin });
+  else if (source.kind === "registry") {
     builder.add(name, version, {
       registry: { location: source.location, ref: source.ref },
       hashes,
@@ -393,7 +351,7 @@ function v1Package(entry: YarnEntry): YarnPackage | "invalid" | null {
     ...pkg,
     source:
       source.kind === "public"
-        ? { kind: "public", url: true }
+        ? source
         : { kind: "registry", location: source.location, ref: resolved },
   };
 }
@@ -465,9 +423,7 @@ function berryPackage(
       archiveUrl === null
         ? ({ kind: "remote", location: null } as const)
         : classifyNpmTarball(archiveUrl, name, npmVersion);
-    if (source.kind === "public") {
-      return { name, version: npmVersion, source: { kind: "public", url: true } };
-    }
+    if (source.kind === "public") return { name, version: npmVersion, source };
     if (source.kind === "registry") {
       return {
         name,
@@ -522,25 +478,6 @@ function protocolOf(resolution: string): string | null {
   const at = resolution.indexOf("@", 1);
   return at > 0 ? resolution.slice(at + 1) : null;
 }
-
-// The root manifest's `resolutions`, key to range.
-function manifestResolutions(manifestText: string | null): Map<string, string> {
-  const out = new Map<string, string>();
-  if (!manifestText) return out;
-  let declared: unknown;
-  try {
-    declared = ownField(JSON.parse(manifestText), "resolutions");
-  } catch {
-    return out;
-  }
-  if (typeof declared !== "object" || declared === null) return out;
-  for (const [key, range] of Object.entries(declared).slice(0, MAX_RESOLUTIONS)) {
-    if (typeof range === "string") out.set(key, range);
-  }
-  return out;
-}
-
-const MAX_RESOLUTIONS = 1000;
 
 function manifestDependencies(
   manifestText: string | null,

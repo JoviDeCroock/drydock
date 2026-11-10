@@ -179,20 +179,12 @@ export async function collectBumps(
       for (const path of config.unreadable) {
         if (!unreadLockfiles.includes(path)) unreadLockfiles.push(path);
       }
-      // Peers the lockfile leaves out are installed at install time unless
-      // the repository's config tells npm not to install peers.
-      if (headSnapshot.unresolvedPeerEdges && !custom.legacyPeerDeps) {
-        unreadLockfiles.push(file.filename);
-        continue;
-      }
     }
-    // A requirements file never shows everything an install brings in: pip
-    // resolves what it leaves out at install time, and builds a source
-    // distribution's build requirements in an environment of their own,
-    // outside the file and its hashes (hash-checking mode included). So
-    // "nothing new entered the file" proves nothing about what a release's
-    // new dependency installs.
-    const pinsTree = kind !== "requirements";
+    // A lockfile whose frozen install can fetch what it leaves out (a
+    // requirements file, Yarn classic) shows nothing about what a release's
+    // new dependency installs, so "nothing new entered the file" proves
+    // nothing (see `partialTree`).
+    const pinsTree = !headSnapshot.partialTree;
     for (const change of diffLockfileChanges(baseSnapshot, headSnapshot, file.filename)) {
       // A name the repository routes to another registry is kept, never
       // diffed (unless proven a mirror copy): dropping it would let its

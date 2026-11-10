@@ -512,12 +512,23 @@ async function explainUnread(pr, mergeBase, files, path) {
     const sides = [!head.complete && "head", base && !base.complete && "merge base"].filter(
       Boolean,
     );
+    const edges = [...(head.unresolvedEdges ?? []), ...(base?.unresolvedEdges ?? [])];
     if (sides.length > 0) {
       return {
-        reason: "parse-incomplete",
+        reason: edges.length > 0 ? "unresolved-edges" : "parse-incomplete",
         kind,
         sides,
         bytes: { head: after.text.length, base: before.text?.length ?? null },
+        ...(edges.length > 0 ? { edges: [...new Set(edges)].slice(0, 10) } : {}),
+      };
+    }
+    // Complete, but npm peers the lockfile leaves out are installed at install
+    // time unless the repository sets `legacy-peer-deps`.
+    if (head.unresolvedPeerEdges) {
+      return {
+        reason: "unresolved-peer-edges",
+        kind,
+        edges: head.unresolvedPeerEdges.slice(0, 10),
       };
     }
     if (unpinnedRequirementsChanged(base, head)) return { reason: "unpinned-requirements", kind };
@@ -698,7 +709,11 @@ function settledOutcome(entry, bump, diff) {
   if (!entry.reviewable) {
     return {
       kind: "unreviewed",
-      reason: original.remoteSource ? "remote-source" : "private-source",
+      reason: original.privateScopePublic
+        ? "private-scope-public"
+        : original.remoteSource
+          ? "remote-source"
+          : "private-source",
     };
   }
   if (!entry.inReview) {
@@ -707,6 +722,7 @@ function settledOutcome(entry, bump, diff) {
           kind: "new-package",
           pastReviewLimit: true,
           ...(original.repinned ? { repinned: true } : {}),
+          ...(original.buildsFromSource ? { buildsFromSource: true } : {}),
         }
       : { kind: "unreviewed", reason: "over-cap", pastReviewLimit: true };
   }
@@ -714,7 +730,11 @@ function settledOutcome(entry, bump, diff) {
     return { kind: "unreviewed", reason: "unverified-pin" };
   }
   if (bump.fromVersion === null) {
-    return bump.repinned ? { kind: "new-package", repinned: true } : { kind: "new-package" };
+    return {
+      kind: "new-package",
+      ...(bump.repinned ? { repinned: true } : {}),
+      ...(bump.buildsFromSource ? { buildsFromSource: true } : {}),
+    };
   }
   if (diff.status === "served") {
     return {
@@ -1202,6 +1222,7 @@ const YOUNG_CLASS = {
   "version-published": "young version",
   "age-unknown": "age unknown",
   "no-verdict": "no verdict",
+  "built-from-source": "built from source",
 };
 
 // PyPI names compare by PEP 503; npm names as written.
@@ -1417,7 +1438,9 @@ function summarizeReplay(dataset) {
     youngShift: youngPackageShift(variants["proposed-old-deps"], variants.proposed),
     parseIncomplete: complete.flatMap((pr) =>
       pr.unreadReasons
-        .filter((entry) => entry.reason === "parse-incomplete")
+        .filter((entry) =>
+          ["parse-incomplete", "unresolved-edges", "unresolved-peer-edges"].includes(entry.reason),
+        )
         .map((entry) => ({ pr: `${pr.repo}#${pr.number}`, ...entry })),
     ),
   };
@@ -1609,11 +1632,17 @@ function renderReport(dataset, summary) {
     if (!entry.listingComplete) files.push("cut-short file listing");
     lines.push(`- ${entry.pr}: ${files.join(", ")}`);
   }
-  lines.push(``, `## Lockfiles the strict parsers call incomplete`, ``);
+  lines.push(
+    ``,
+    `## Lockfiles the strict parsers call incomplete (parse, dangling edges, unresolved peers)`,
+    ``,
+  );
   if (summary.parseIncomplete.length === 0) lines.push(`None.`);
   for (const entry of summary.parseIncomplete) {
     lines.push(
-      `- ${entry.pr} \`${entry.path}\` (${entry.kind}): incomplete at ${entry.sides.join(" and ")}; ${entry.bytes.head} bytes at head, ${entry.bytes.base ?? "–"} at the merge base`,
+      entry.sides
+        ? `- ${entry.pr} \`${entry.path}\` (${entry.kind}, ${entry.reason}): incomplete at ${entry.sides.join(" and ")}; ${entry.bytes.head} bytes at head, ${entry.bytes.base ?? "–"} at the merge base${entry.edges ? `; edges: ${entry.edges.join("; ")}` : ""}`
+        : `- ${entry.pr} \`${entry.path}\` (${entry.kind}, ${entry.reason}): ${entry.edges.join("; ")}`,
     );
   }
   lines.push(``, `## Per repository (held PRs)`, ``);

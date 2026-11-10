@@ -37,11 +37,9 @@ export interface LockfileSource {
   // Several entries recorded this identity and disagreed about where it came
   // from; the worst kind wins and it is never compared as a mirror copy.
   mixed: boolean;
-  // uv: some copy records no wheel, so the release is built from source.
+  // uv: some copy records an sdist and no wheel every platform installs, so
+  // a platform may build the release from source.
   sourceBuild?: true;
-  // A public copy whose lockfile entry records a URL on the public registry's
-  // own host, rather than leaving the registry to the installer's routing.
-  publicUrl?: true;
   // Every copy is one the format writes no pin for because it ships inside
   // another package's tarball (`RegistryEntry.unpinned`). Never fetched from
   // the registry, so it is no predecessor of a copy that is.
@@ -85,16 +83,10 @@ export interface LockfileSnapshot {
   // (npm package-lock v2/v3, pnpm, Yarn classic, uv), so an entry without a
   // usable one is the PR's choice rather than the format's.
   strongPins: boolean;
-  // Dependency edges an entry declares that resolve to no entry in the same
-  // lockfile (the first few, as `from → dep@spec`). The installer would
-  // resolve them itself, so the lockfile is not the whole install and the
-  // snapshot is incomplete.
-  unresolvedEdges?: readonly string[];
-  // npm: peer edges that resolve to no entry. npm installs peers unless
-  // `legacy-peer-deps` is set, and a lockfile written in that mode omits
-  // them, so these leave the snapshot complete and collection decides with
-  // the repository's config.
-  unresolvedPeerEdges?: readonly string[];
+  // The format's frozen install can still fetch what the file leaves out
+  // (requirements files, Yarn classic), so a dependency a reviewed release
+  // adds may install unseen. Set from the format, never from the content.
+  partialTree?: true;
 }
 
 // Lockfile text is repository data. Above this it is not parsed at all.
@@ -106,7 +98,6 @@ const MAX_VERSIONS_PER_PACKAGE = 256;
 // Parsers hold intermediate records (entries, descriptors, dependency lists)
 // before they become snapshot entries; this bounds them on hostile input.
 const MAX_PARSED_RECORDS = 200_000;
-const MAX_UNRESOLVED_EDGES = 20;
 
 const NPM_NAME = /^(?:@[A-Za-z0-9~-][A-Za-z0-9._~-]*\/)?[A-Za-z0-9~-][A-Za-z0-9._~-]*$/;
 // npm itself refuses these as package names.
@@ -170,9 +161,8 @@ interface RegistryEntry {
   // A public copy the format writes no pin for (see `LockfileSource.pins`);
   // `hashes` and `pin` are then ignored.
   unpinned?: boolean;
-  // See `LockfileSource.sourceBuild` and `publicUrl`.
+  // See `LockfileSource.sourceBuild`.
   sourceBuild?: boolean;
-  publicUrl?: boolean;
 }
 
 export interface SnapshotBuilder {
@@ -195,9 +185,8 @@ export interface SnapshotBuilder {
   // Marks the format as one that always pins (see `strongPins`).
   expectStrongPins(): void;
   markIncomplete(): void;
-  // Records an edge that resolves to no entry (see `unresolvedEdges`, and
-  // `unresolvedPeerEdges` for an npm peer).
-  unresolvedEdge(from: string, dep: string, spec: string, peer?: boolean): void;
+  // Marks the format as one that does not pin the whole tree (see `partialTree`).
+  markPartialTree(): void;
   // Claims room for `count` intermediate records; false (and incomplete) once
   // the parse budget is spent, after which the parser stops.
   reserve(count?: number): boolean;
@@ -225,11 +214,10 @@ function mergeSources(a: LockfileSource, b: LockfileSource): LockfileSource {
 }
 
 function withFlags(source: LockfileSource, a: LockfileSource, b: LockfileSource) {
-  const { sourceBuild: _build, publicUrl: _url, bundledOnly: _bundled, ...rest } = source;
+  const { sourceBuild: _build, bundledOnly: _bundled, ...rest } = source;
   return {
     ...rest,
     ...(a.sourceBuild || b.sourceBuild ? { sourceBuild: true as const } : {}),
-    ...(a.publicUrl || b.publicUrl ? { publicUrl: true as const } : {}),
     ...(a.bundledOnly && b.bundledOnly ? { bundledOnly: true as const } : {}),
   };
 }
@@ -265,8 +253,7 @@ export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotB
   let records = 0;
   let complete = true;
   let strongPins = false;
-  const unresolved: string[] = [];
-  const unresolvedPeers: string[] = [];
+  let partialTree = false;
   const canonical = (name: unknown) =>
     typeof name === "string" ? CANONICAL_NAME[ecosystem](name) : null;
   const validVersion = (version: unknown): version is string =>
@@ -296,10 +283,7 @@ export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotB
         complete = false;
         return;
       }
-      const flags = {
-        ...(entry.sourceBuild ? { sourceBuild: true as const } : {}),
-        ...(entry.publicUrl && !entry.registry ? { publicUrl: true as const } : {}),
-      };
+      const flags = entry.sourceBuild ? { sourceBuild: true as const } : {};
       if (entry.unpinned && !entry.registry) {
         const source = { version, hashes: null, pins: [], usablePins: [], mixed: false };
         record(key, version, {
@@ -371,12 +355,8 @@ export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotB
     markIncomplete() {
       complete = false;
     },
-    unresolvedEdge(from, dep, spec, peer = false) {
-      if (!peer) complete = false;
-      const list = peer ? unresolvedPeers : unresolved;
-      if (list.length < MAX_UNRESOLVED_EDGES) {
-        list.push(`${from || "(root)"} → ${dep}@${spec}`.slice(0, 300));
-      }
+    markPartialTree() {
+      partialTree = true;
     },
     reserve(count = 1) {
       records += count;
@@ -401,8 +381,7 @@ export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotB
         unpinned,
         workspaces,
         strongPins,
-        ...(unresolved.length > 0 ? { unresolvedEdges: unresolved } : {}),
-        ...(unresolvedPeers.length > 0 ? { unresolvedPeerEdges: unresolvedPeers } : {}),
+        ...(partialTree ? { partialTree: true as const } : {}),
       };
     },
   };

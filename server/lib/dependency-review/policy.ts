@@ -179,7 +179,7 @@ function dependencyUnseen(
  * Why a package new to the lockfile counts as young at `nowMs`, or null when
  * its age vouches for it: first published at least `YOUNG_PACKAGE_DAYS` and
  * its installed version at least `YOUNG_VERSION_DAYS` before. Past the review
- * limit, with either time unknown, or built from source (its build
+ * limit, with either time unknown, or possibly built from source (its build
  * requirements are not locked), it is young.
  */
 function youngPackage(

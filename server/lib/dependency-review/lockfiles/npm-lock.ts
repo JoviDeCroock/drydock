@@ -41,7 +41,6 @@ export function parseNpmLock(text: string): LockfileSnapshot {
     const pkg = installedPackage(path, entry, bundle);
     if (pkg) recordInstalled(builder, pkg, entry);
   }
-  checkInstallEdges(builder, all);
   for (const [importer, entry] of entries) {
     if (importer.includes(NODE_MODULES)) continue;
     for (const field of MANIFEST_DEPENDENCY_FIELDS) {
@@ -144,59 +143,6 @@ function bundledPaths(packages: Record<string, unknown>): Set<string> {
   return bundle;
 }
 
-// The edges npm installs: every section of an importer (the root and each
-// workspace), and an installed package's dependencies, optional dependencies,
-// and peers that are not optional (npm 7 and later install peers).
-const IMPORTER_EDGES = ["dependencies", "devDependencies", "optionalDependencies"] as const;
-const INSTALLED_EDGES = ["dependencies", "optionalDependencies", "peerDependencies"] as const;
-
-/**
- * Every install edge must resolve, by Node's lookup from the entry's own
- * path, to an entry the lockfile has. One that resolves to nothing is a
- * package npm would resolve from the registry at install time, so the
- * lockfile is not the whole install. A `link` entry's edges are its target's.
- * A peer is the exception the format allows: with `legacy-peer-deps` npm
- * neither installs nor locks peers (see `unresolvedPeerEdges`).
- */
-function checkInstallEdges(builder: SnapshotBuilder, packages: Record<string, unknown>): void {
-  for (const [path, entry] of Object.entries(packages)) {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
-    if (ownField(entry, "link") === true) continue;
-    const importer = !path.includes(NODE_MODULES);
-    const optionalPeers = ownField(entry, "peerDependenciesMeta");
-    for (const field of importer ? IMPORTER_EDGES : INSTALLED_EDGES) {
-      const deps = ownField(entry, field);
-      if (typeof deps !== "object" || deps === null || Array.isArray(deps)) continue;
-      for (const [dep, spec] of Object.entries(deps)) {
-        if (
-          field === "peerDependencies" &&
-          ownField(ownField(optionalPeers, dep), "optional") === true
-        ) {
-          continue;
-        }
-        if (!builder.reserve()) return;
-        if (!resolvesFrom(packages, path, dep)) {
-          const range = typeof spec === "string" ? spec : "?";
-          builder.unresolvedEdge(path, dep, range, field === "peerDependencies");
-        }
-      }
-    }
-  }
-}
-
-// Node resolution of `dep` from the entry at `path`, up to the root.
-function resolvesFrom(packages: Record<string, unknown>, path: string, dep: string): boolean {
-  let dir = path;
-  for (;;) {
-    if (Object.hasOwn(packages, dir ? `${dir}/${NODE_MODULES}${dep}` : `${NODE_MODULES}${dep}`)) {
-      return true;
-    }
-    if (dir === "") return false;
-    const at = dir.lastIndexOf(`/${NODE_MODULES}`);
-    dir = at === -1 ? "" : dir.slice(0, at);
-  }
-}
-
 // `a/node_modules/b` for `a/node_modules/b/node_modules/c`; `` (the root)
 // for a top-level `node_modules/c`.
 function physicalParent(path: string): string {
@@ -252,7 +198,7 @@ function recordInstalled(
     return;
   }
   const source = classifyNpmTarball(resolved, name, version);
-  if (source.kind === "public") builder.add(name, version, { hashes, pin, publicUrl: true });
+  if (source.kind === "public") builder.add(name, version, { hashes, pin });
   else if (source.kind === "registry") {
     builder.add(name, version, {
       registry: { location: source.location, ref: resolved },

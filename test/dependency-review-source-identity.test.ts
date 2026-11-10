@@ -469,7 +469,7 @@ describe("a move off a non-public source onto the public registry is a new packa
   });
 });
 
-describe("a name in a private scope is exempt only from a declared private registry", () => {
+describe("a name in a private scope holds only on its move off a non-public source", () => {
   const PRIVATE = "https://private.example/npm/";
   const NPMJS = "https://registry.npmjs.org/";
   const scope = { privateRegistries: [PRIVATE], privateScopes: ["@corp"] };
@@ -482,6 +482,13 @@ describe("a name in a private scope is exempt only from a declared private regis
       },
     });
   const confused = { privateSource: true, remoteSource: true, privateScopePublic: true };
+  const ownPackage = (bump: DependencyBump) => {
+    expect(bump.privateSource).toBe(true);
+    expect(bump).not.toHaveProperty("remoteSource");
+    expect(bump).not.toHaveProperty("privateScopePublic");
+    expect(bump).not.toHaveProperty("mirror");
+    expect(bump).not.toHaveProperty("pinnedHashes");
+  };
 
   test("the reviewer's input: private @corp/fresh@1.0.0 to public @corp/fresh@1.0.1", () => {
     const [bump] = routed("npm", scoped(PRIVATE, "1.0.0"), scoped(NPMJS, "1.0.1"), scope);
@@ -491,12 +498,17 @@ describe("a name in a private scope is exempt only from a declared private regis
     expect(bump).not.toHaveProperty("pinnedHashes");
   });
 
-  test("new to the lockfile from the public registry", () => {
-    const [bump] = routed("npm", npmLock({}), scoped(NPMJS, "1.0.1"), scope);
-    expect(bump).toMatchObject({ fromVersion: null, ...confused });
+  test("off an undeclared host or git onto the public registry", () => {
+    for (const before of [
+      scoped("https://npm.corp.example/", "1.0.0"),
+      npmLock({ "@corp/fresh": { version: "1.0.0", resolved: "github:corp/fresh#abc" } }),
+    ]) {
+      const [bump] = routed("npm", before, scoped(NPMJS, "1.0.1"), scope);
+      expect(bump).toMatchObject(confused);
+    }
   });
 
-  test("onto a mirror from a declared private registry", () => {
+  test("off a declared private registry onto a mirror", () => {
     const [bump] = routed("npm", scoped(PRIVATE, "1.0.0"), scoped(MIRROR, "1.0.1"), scope);
     expect(bump).toMatchObject(confused);
     expect(bump).not.toHaveProperty("mirror");
@@ -507,32 +519,66 @@ describe("a name in a private scope is exempt only from a declared private regis
       [scoped(PRIVATE, "1.0.0"), scoped(PRIVATE, "1.0.1")],
       [npmLock({}), scoped(PRIVATE, "1.0.1")],
       [scoped(MIRROR, "1.0.0"), scoped(MIRROR, "1.0.1")],
+      [npmLock({}), scoped(MIRROR, "1.0.1")],
     ]) {
       const [bump] = routed("npm", before, after, scope);
-      expect(bump.privateSource).toBe(true);
-      expect(bump).not.toHaveProperty("remoteSource");
-      expect(bump).not.toHaveProperty("privateScopePublic");
-      expect(bump).not.toHaveProperty("mirror");
+      ownPackage(bump);
     }
   });
 
-  test("pnpm records no URL: a scope the repository routes to the public registry", () => {
-    const pnpm = (v: string) =>
-      pnpmLock([{ key: `'@corp/fresh@${v}'`, resolution: `{integrity: ${sha512(v)}}` }]);
-    const found = collectCustomRegistries(emptyCustomRegistries(), {
-      npmrc: `@corp:registry=${NPMJS}`,
-      yarnrc: null,
+  describe("an organization that hosts its scope on the public registry keeps it private", () => {
+    // `@corp` packages published to npmjs.org, fetched with the organization's
+    // token, and listed as private so their names are never sent anywhere.
+    test("npm: a public URL on both sides, and new to the lockfile", () => {
+      for (const before of [scoped(NPMJS, "1.0.0"), npmLock({})]) {
+        const [bump] = routed("npm", before, scoped(NPMJS, "1.0.1"), scope);
+        ownPackage(bump);
+      }
     });
-    const route = npmNameRoute(found, "@corp/fresh");
-    expect(route).toEqual({ kind: "public", explicit: true });
-    const [bump] = routed("pnpm", pnpm("1.0.0"), pnpm("1.0.1"), { ...scope, route });
-    expect(bump).toMatchObject(confused);
 
-    // Routed nowhere in the repository: the registry is set outside it, which
-    // is what declaring the scope private is for.
-    const [unrouted] = routed("pnpm", pnpm("1.0.0"), pnpm("1.0.1"), scope);
-    expect(unrouted.privateSource).toBe(true);
-    expect(unrouted).not.toHaveProperty("privateScopePublic");
+    test("Yarn classic and Berry", () => {
+      const classic = (version: string) =>
+        yarnV1([
+          {
+            descriptor: "@corp/fresh@^1.0.0",
+            version,
+            resolved: `https://registry.yarnpkg.com/@corp/fresh/-/fresh-${version}.tgz`,
+            integrity: sha512(version),
+          },
+        ]);
+      const berry = (version: string) =>
+        [
+          "__metadata:",
+          "  version: 8",
+          '"@corp/fresh@npm:^1.0.0":',
+          `  version: ${version}`,
+          `  resolution: "@corp/fresh@npm:${version}"`,
+          `  checksum: 10c0/${"a".repeat(128)}`,
+        ].join("\n");
+      for (const lock of [classic, berry]) {
+        for (const before of [lock("1.0.0"), null]) {
+          const [bump] = routed("yarn", before, lock("1.0.1"), scope);
+          ownPackage(bump);
+        }
+      }
+    });
+
+    test("pnpm, with or without the repository routing the scope to npmjs.org", () => {
+      const pnpm = (v: string) =>
+        pnpmLock([{ key: `'@corp/fresh@${v}'`, resolution: `{integrity: ${sha512(v)}}` }]);
+      const found = collectCustomRegistries(emptyCustomRegistries(), {
+        npmrc: `@corp:registry=${NPMJS}`,
+        yarnrc: null,
+      });
+      const route = npmNameRoute(found, "@corp/fresh");
+      expect(route).toEqual(PUBLIC_ROUTE);
+      for (const before of [pnpm("1.0.0"), null]) {
+        for (const options of [scope, { ...scope, route }]) {
+          const [bump] = routed("pnpm", before, pnpm("1.0.1"), options);
+          ownPackage(bump);
+        }
+      }
+    });
   });
 });
 
@@ -1283,5 +1329,69 @@ describe("entries that name no exact version are remote, never dropped", () => {
       pnpmLock([{ key: "a@01.0.0", resolution: "{integrity: sha512-x}" }]),
     );
     expect(Object.values(kindsOf(snapshot, "npm:a"))).toEqual(["remote"]);
+  });
+});
+
+describe("a bundled base copy is no predecessor of a copy the head fetches", () => {
+  const lock = (packages: Record<string, unknown>) =>
+    JSON.stringify({ lockfileVersion: 3, packages: { "": {}, ...packages } });
+  const fetched = (name: string, version: string) => ({
+    version,
+    resolved: `https://registry.npmjs.org/${name}/-/${name}-${version}.tgz`,
+    integrity: sha512(`${name}@${version}`),
+  });
+  const bundler = (payload: string) => ({
+    "node_modules/bundler": { ...fetched("bundler", "1.0.0"), bundleDependencies: ["payload"] },
+    "node_modules/bundler/node_modules/payload": { version: payload, inBundle: true },
+  });
+  const changes = (before: Record<string, unknown>, after: Record<string, unknown>) =>
+    diffLockfileChanges(parseLockfile("npm", lock(before)), parseLockfile("npm", lock(after)), "l");
+  const routed = (before: Record<string, unknown>, after: Record<string, unknown>) =>
+    changes(before, after).map((change): DependencyBump =>
+      routedBump(change, PUBLIC_ROUTE, {
+        publicMirrors: [],
+        privateRegistries: [],
+        privateScopes: [],
+      }),
+    );
+  const payloadOf = (bumps: DependencyBump[]) => bumps.find((bump) => bump.name === "payload");
+
+  test("the same version fetched at the head is new to the lockfile, not a re-pin", () => {
+    const bumps = routed(
+      { ...bundler("1.0.0"), "node_modules/host": fetched("host", "1.0.0") },
+      {
+        ...bundler("1.0.0"),
+        "node_modules/host": fetched("host", "1.0.1"),
+        "node_modules/payload": fetched("payload", "1.0.0"),
+      },
+    );
+    expect(payloadOf(bumps)).toEqual({
+      ecosystem: "npm",
+      name: "payload",
+      fromVersion: null,
+      toVersion: "1.0.0",
+      direct: false,
+      lockfilePath: "l",
+      pinnedHashes: [sha512("payload@1.0.0")],
+    });
+  });
+
+  test("an unpublished bundled version is no predecessor of the public release", () => {
+    const bumps = routed(bundler("0.0.0-internal"), {
+      ...bundler("0.0.0-internal"),
+      "node_modules/payload": fetched("payload", "1.0.0"),
+    });
+    expect(payloadOf(bumps)).toMatchObject({ fromVersion: null, toVersion: "1.0.0" });
+    expect(payloadOf(bumps)).not.toHaveProperty("repinned");
+  });
+
+  test("a bundled copy whose version changes, still only bundled, stays an ordinary bump", () => {
+    const bumps = routed(bundler("1.0.0"), bundler("1.0.1"));
+    expect(payloadOf(bumps)).toMatchObject({ fromVersion: "1.0.0", toVersion: "1.0.1" });
+  });
+
+  test("a bundled copy added beside a registry copy of the same release changes nothing", () => {
+    const registry = { "node_modules/payload": fetched("payload", "1.0.0") };
+    expect(payloadOf(routed(registry, { ...registry, ...bundler("1.0.0") }))).toBeUndefined();
   });
 });

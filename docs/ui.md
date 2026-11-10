@@ -169,6 +169,8 @@ The public report's closing block states only where the reviewed bytes came from
 
 `/dashboard/dependency-reviews` lists the organization's dependency reviews; `/dashboard/dependency-reviews/:id` shows one, grouped as the check run is (Held, Approved, Not reviewed, New packages, Same version, new pin, Passed with unread changes, Clear). An age hold names what went unread and when it passes, in the reader's local time, or why it holds until approved. The detail page reads `?org=` like scan detail because the check run's details link carries it.
 
+A `young-package` hold says why the package counts as young (with the time in local time), a `dependency-added` hold why Drydock can't see what the dependency installs, and a new package whose base came from a non-public source reads "previously from a non-public source".
+
 | State | Detail page |
 | --- | --- |
 | Held, approvable | Filled `Approve on GitHub ↗` opens the check run (`checkRunUrl`; the PR's Checks tab without a run id); `Open pull request` turns ghost. The alert says to read the diffs, who can approve, and that merging waits only where the check is required. |
@@ -181,7 +183,9 @@ The public report's closing block states only where the reviewed bytes came from
 
 The list stacks rows below `sm` (repo and state, then author, short head SHA, count, time); counts show only for finished reviews. A list for an organization with review on and no GitHub App shows a warn alert with the install link instead of the empty state. In settings, App permissions appear only in that missing-App alert, extra bot logins fold under a disclosure (open when set) and state the write-access check they skip, and an unsaved enable toggle is marked beside it.
 
-In the settings policy card, **Minimum age for unread updates** is a days field below the switches (empty is off) with an inline error for a value outside 1–90. Mirrors, private registries, and private npm scopes fold under **Registries other than public npm and PyPI** (open when one is set); the mirror hint states that Drydock sends the names and versions resolved from a mirror to the public registry (for pnpm, every name routed there) and that a mismatched or Yarn Berry mirror entry is treated like a git or URL source, and the private-registry hint that those updates are exempt from the minimum age.
+In the settings policy card, the `holdOnNewDependencies` switch reads **is a young package new to the lockfile, or adds a dependency Drydock can't follow**, with a hint giving the 90-day and 7-day thresholds and when an added dependency holds.
+
+**Minimum age for unread updates** is a days field below the switches (empty is off) with an inline error for a value outside 1–90. Mirrors, private registries, and private npm scopes fold under **Registries other than public npm and PyPI** (open when one is set); the mirror hint states that Drydock sends the names and versions resolved from a mirror to the public registry (for pnpm, every name routed there) and that a mismatched or Yarn Berry mirror entry is treated like a git or URL source, and the private-registry hint that those updates are exempt from the minimum age.
 
 While a review is queued or running, both pages poll on the running-scan cadence (`src/models/background-poll.ts`) and offer Resume refresh once it stalls; the settings page does not poll. Reason wording comes from `server/lib/dependency-review/wording.ts`, shared with the check run. The settings section is `src/pages/Dashboard/Settings/DependencyReviewSection.tsx`, shown with the header link only when the organization list says `dependencyReview` ([dependency-review.md](./dependency-review.md)).
 

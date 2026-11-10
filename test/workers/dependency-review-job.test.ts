@@ -1156,10 +1156,7 @@ describe("dependency review job", () => {
       "package-lock.json",
       JSON.stringify({
         lockfileVersion: 3,
-        packages: {
-          "": { dependencies: { "packages/app": "1" } },
-          "node_modules/packages/app": { resolved: "vendor/app", link: true },
-        },
+        packages: { "": { dependencies: { "packages/app": "1" } } },
       }),
       false,
     ],
@@ -1209,6 +1206,36 @@ describe("dependency review job", () => {
     expect(api.lastCheckRunState()).toMatchObject({ status: "completed", conclusion });
   });
 
+  test("a Yarn classic workspace lockfile is read, and never pins the tree", async () => {
+    const { pr, review, input } = await scenario({
+      pr: { files: [{ filename: "yarn.lock", status: "modified" }] },
+    });
+    // `host` depends on the local workspace `lib`, which Yarn classic never
+    // writes a stanza for.
+    const lock = (version: string) =>
+      [
+        "# yarn lockfile v1",
+        "",
+        "host@^1.0.0:",
+        `  version "${version}"`,
+        `  resolved "https://registry.yarnpkg.com/host/-/host-${version}.tgz"`,
+        `  integrity sha512-${version.replaceAll(".", "").padEnd(86, "A")}==`,
+        "  dependencies:",
+        '    lib "^1.0.0"',
+        "",
+      ].join("\n");
+    pr.contents.set(`${pr.mergeBaseSha}:yarn.lock`, lock("1.0.0"));
+    pr.contents.set(`${pr.headSha}:yarn.lock`, lock("1.0.1"));
+
+    await runDependencyReviewJob(input);
+
+    const row = await readReview(review.id);
+    expect(JSON.parse(row.unreadLockfilesJson)).toEqual([]);
+    expect(row.bumps).toHaveLength(1);
+    expect(row.bumps[0].bump).toMatchObject({ name: "host", toVersion: "1.0.1" });
+    expect(row.bumps[0].bump).not.toHaveProperty("lockfilePinsTree");
+  });
+
   test("a requirements file never pins the tree, in hash-checking mode too", async () => {
     const { pr, review, input } = await scenario({
       pr: { files: [{ filename: "requirements.txt", status: "modified" }] },
@@ -1223,38 +1250,6 @@ describe("dependency review job", () => {
     expect(row.bumps).toHaveLength(1);
     expect(row.bumps[0].bump).toMatchObject({ name: "requests", toVersion: "2.32.0" });
     expect(row.bumps[0].bump).not.toHaveProperty("lockfilePinsTree");
-  });
-
-  test("an npm lockfile missing a peer it needs is unread unless the repository sets legacy-peer-deps", async () => {
-    const lock = (version: string) =>
-      JSON.stringify({
-        lockfileVersion: 3,
-        packages: {
-          "": { dependencies: { "acorn-jsx": "^5.3.0" } },
-          "node_modules/acorn-jsx": {
-            version,
-            resolved: `https://registry.npmjs.org/acorn-jsx/-/acorn-jsx-${version}.tgz`,
-            integrity: `sha512-${version.replaceAll(".", "").padEnd(86, "A")}==`,
-            peerDependencies: { acorn: "^8.0.0" },
-          },
-        },
-      });
-    const run = async (npmrc: string | null) => {
-      const { pr, review, input } = await scenario({
-        pr: { files: [{ filename: "package-lock.json", status: "modified" }] },
-      });
-      pr.contents.set(`${pr.mergeBaseSha}:package-lock.json`, lock("5.3.1"));
-      pr.contents.set(`${pr.headSha}:package-lock.json`, lock("5.3.2"));
-      if (npmrc !== null) pr.contents.set(`${pr.headSha}:.npmrc`, npmrc);
-      await runDependencyReviewJob(input);
-      return JSON.parse((await readReview(review.id)).unreadLockfilesJson) as string[];
-    };
-
-    // npm 7 and later install peers, so one the lockfile lacks is resolved at
-    // install time; with legacy-peer-deps npm neither installs nor locks them.
-    expect(await run(null)).toEqual(["package-lock.json"]);
-    expect(await run("legacy-peer-deps=false\n")).toEqual(["package-lock.json"]);
-    expect(await run("legacy-peer-deps=true\n")).toEqual([]);
   });
 
   test("a requirements file covers a pyproject only when compiled from it", async () => {

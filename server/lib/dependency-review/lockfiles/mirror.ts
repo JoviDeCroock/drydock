@@ -13,8 +13,7 @@ import {
  * config outside the canonical shape, an environment-dependent value).
  */
 export type NameRoute =
-  // `explicit`: the repository's config names the public registry for it.
-  | { kind: "public"; explicit?: true }
+  | { kind: "public" }
   | { kind: "registries"; urls: readonly string[] }
   | { kind: "unknown" };
 
@@ -86,20 +85,14 @@ export function routedBump(
   const secret = privateScope(bump, policy);
   const head = places[places.length - 1];
   const nonPublicBase = places.length === 2 && PLACE_RANK[places[0]] >= PLACE_RANK.private;
-  // A private-scope name the lockfile resolves from the public registry, by a
-  // URL it records there, a route the repository sets there, or a move off a
-  // non-public source: what the install fetches is a public package under the
-  // organization's name, which is dependency confusion's signal, not its own
-  // package. A plain public entry the repository routes nowhere stays private:
-  // its registry is set outside the repository, which is what the scope
-  // declares. So does one from a mirror the organization hosts it behind.
-  if (
-    secret &&
-    (head === "public" || head === "mirror") &&
-    ((head === "public" && change.to.publicUrl === true) ||
-      (route.kind === "public" && route.explicit === true) ||
-      nonPublicBase)
-  ) {
+  // A private-scope name this change moves off a non-public source (a private
+  // registry, another host, git, a URL) onto the public registry or a mirror:
+  // what the install now fetches is a public package under the
+  // organization's name, which is dependency confusion's signal. The move is
+  // the signal, not the location: an organization may host its scope on the
+  // public registry itself, so a scope name public on both sides, or new to
+  // the lockfile, stays the organization's own.
+  if (secret && (head === "public" || head === "mirror") && nonPublicBase) {
     return { ...bump, privateSource: true, remoteSource: true, privateScopePublic: true };
   }
   // A head that resolves publicly (or through a mirror) where the base was a

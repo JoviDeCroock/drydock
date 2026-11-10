@@ -97,7 +97,10 @@ type Hold = Extract<BumpVerdict, { status: "hold" }>;
 type NpmEntry = { name?: string; version: string; integrity?: string };
 
 /** package-lock.json v3; `root` is what the repository's own manifest declares. */
-function npmLock(entries: Record<string, NpmEntry>, root: Record<string, unknown> = {}): string {
+function npmLock(
+  entries: Record<string, NpmEntry>,
+  root: Record<string, unknown> = { dependencies: { host: "^1.0.0" } },
+): string {
   const packages: Record<string, unknown> = { "": { name: "app", version: "1.0.0", ...root } };
   for (const [path, entry] of Object.entries(entries)) {
     const name = entry.name ?? path.split("node_modules/").at(-1)!;
@@ -137,7 +140,7 @@ function review(pairs: LockfilePair[], options: ReviewOptions = {}): Map<string,
     const kind = pair.kind ?? "npm";
     const head = parseLockfile(kind, pair.after);
     const base = pair.before === null ? null : parseLockfile(kind, pair.before);
-    const pinsTree = kind !== "requirements";
+    const pinsTree = !head.partialTree;
     for (const change of diffLockfileChanges(base, head, pair.path ?? "package-lock.json")) {
       const bump = routedBump(change, PUBLIC_ROUTE, {
         publicMirrors: [],
@@ -393,21 +396,30 @@ describe("a package new to the lockfile holds while young", () => {
     });
   });
 
-  describe("a uv package new to the lockfile with no wheel is built from source", () => {
-    const uvLock = (packages: Array<{ name: string; version: string; wheel?: boolean }>) =>
+  describe("a uv package new to the lockfile that is built from source", () => {
+    // `wheels` are filename tag suffixes (`py3-none-any`); `sdist` defaults on.
+    type UvEntry = { name: string; version: string; sdist?: boolean; wheels?: string[] };
+    const uvLock = (packages: UvEntry[]) =>
       [
         "version = 1",
-        ...packages.flatMap(({ name, version, wheel }) => [
+        ...packages.flatMap(({ name, version, sdist = true, wheels = [] }) => [
           "",
           "[[package]]",
           `name = "${name}"`,
           `version = "${version}"`,
           'source = { registry = "https://pypi.org/simple" }',
-          `sdist = { url = "https://files.pythonhosted.org/packages/ab/${name}-${version}.tar.gz", hash = "sha256:${sha256(`${name}${version}`)}", size = 1 }`,
-          ...(wheel
+          ...(sdist
+            ? [
+                `sdist = { url = "https://files.pythonhosted.org/packages/ab/${name}-${version}.tar.gz", hash = "sha256:${sha256(`${name}${version}`)}", size = 1 }`,
+              ]
+            : []),
+          ...(wheels.length > 0
             ? [
                 "wheels = [",
-                `    { url = "https://files.pythonhosted.org/packages/ab/${name}-${version}-py3-none-any.whl", hash = "sha256:${sha256(`${name}${version}w`)}", size = 1 },`,
+                ...wheels.map(
+                  (tags) =>
+                    `    { url = "https://files.pythonhosted.org/packages/ab/${name}-${version}-${tags}.whl", hash = "sha256:${sha256(`${name}${version}${tags}`)}", size = 1 },`,
+                ),
                 "]",
               ]
             : []),
@@ -416,49 +428,49 @@ describe("a package new to the lockfile holds while young", () => {
     const ADDS_CARRIER = extractBumpEvidence(
       release({ carrier: "==1.0.0" }, { ecosystem: "pypi" }),
     );
-
-    test("however old, it holds: its build requirements are not locked", () => {
-      // carrier: project 400 days old, release 30; its sdist's
-      // `build-system.requires = ["builder>=1"]` resolves a day-old builder.
-      const verdicts = review(
+    // carrier: project 400 days old, release 30; its sdist's
+    // `build-system.requires = ["builder>=1"]` resolves a day-old builder.
+    const carrierVerdict = (carrier: Omit<UvEntry, "name" | "version">) =>
+      review(
         [
           {
             kind: "uv",
             path: "uv.lock",
-            before: uvLock([{ name: "host", version: "1.0.0", wheel: true }]),
+            before: uvLock([{ name: "host", version: "1.0.0", wheels: ["py3-none-any"] }]),
             after: uvLock([
-              { name: "host", version: "1.0.1", wheel: true },
-              { name: "carrier", version: "1.0.0" },
+              { name: "host", version: "1.0.1", wheels: ["py3-none-any"] },
+              { name: "carrier", version: "1.0.0", ...carrier },
             ]),
           },
         ],
         { times: { carrier: OLD }, evidence: { host: ADDS_CARRIER } },
-      );
-      expect(verdicts.get("host")?.status).toBe("clear");
-      expect(verdicts.get("carrier")).toEqual({
-        status: "hold",
-        reasons: ["young-package"],
-        evidence: null,
-        young: { why: "built-from-source" },
-      });
+      ).get("carrier");
+    const BUILT = {
+      status: "hold",
+      reasons: ["young-package"],
+      evidence: null,
+      young: { why: "built-from-source" },
+    };
+
+    test("however old, it holds: the lock records an sdist and no wheel", () => {
+      expect(carrierVerdict({})).toEqual(BUILT);
     });
 
-    test("with a wheel it is judged by its age as before", () => {
-      const verdicts = review(
-        [
-          {
-            kind: "uv",
-            path: "uv.lock",
-            before: uvLock([{ name: "host", version: "1.0.0", wheel: true }]),
-            after: uvLock([
-              { name: "host", version: "1.0.1", wheel: true },
-              { name: "carrier", version: "1.0.0", wheel: true },
-            ]),
-          },
-        ],
-        { times: { carrier: OLD }, evidence: { host: ADDS_CARRIER } },
-      );
-      expect(verdicts.get("carrier")).toEqual({ status: "new-package" });
+    test.each<[string, Omit<UvEntry, "name" | "version">]>([
+      ["an sdist and a pure-Python wheel", { wheels: ["py3-none-any"] }],
+      [
+        "an sdist and platform wheels (which one installs is not modelled)",
+        {
+          wheels: [
+            "cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64",
+            "cp312-cp312-macosx_11_0_arm64",
+          ],
+        },
+      ],
+      ["an sdist and one wheel for another platform", { wheels: ["cp311-cp311-win_amd64"] }],
+      ["wheels only, no sdist", { sdist: false, wheels: ["cp311-cp311-win_amd64"] }],
+    ])("judged by its age as before: %s", (_, carrier) => {
+      expect(carrierVerdict(carrier)).toEqual({ status: "new-package" });
     });
   });
 
@@ -524,6 +536,38 @@ describe("an added dependency holds where the lockfile can't show what it instal
       reasons: ["dependency-added"],
       dependencyUnseen: "lockfile-unpinned",
     });
+  });
+
+  test("a Yarn classic lockfile: its frozen install fetches a transitive package it lacks", () => {
+    const stanza = (name: string, version: string) =>
+      [
+        `${name}@^1.0.0:`,
+        `  version "${version}"`,
+        `  resolved "https://registry.yarnpkg.com/${name}/-/${name}-${version}.tgz"`,
+        `  integrity ${sha512(`${name}@${version}`)}`,
+        "",
+      ].join("\n");
+    const lock = (...stanzas: string[]) => ["# yarn lockfile v1", "", ...stanzas].join("\n");
+    // host@1.0.1 declares `carrier`, which the lockfile does not lock; the
+    // young `fresh` entering beside it still holds as young.
+    const verdicts = review(
+      [
+        {
+          kind: "yarn",
+          path: "yarn.lock",
+          before: lock(stanza("host", "1.0.0")),
+          after: lock(stanza("host", "1.0.1"), stanza("fresh", "1.0.0")),
+        },
+      ],
+      { evidence: { host: ADDS_ONE }, times: { fresh: [3, 3] } },
+    );
+    expect(verdicts.get("host")).toEqual({
+      status: "hold",
+      reasons: ["dependency-added"],
+      evidence: ADDS_ONE,
+      dependencyUnseen: "lockfile-unpinned",
+    });
+    expect(verdicts.get("fresh")).toMatchObject({ reasons: ["young-package"] });
   });
 
   test("any lockfile, when part of the review went unread", () => {
@@ -745,4 +789,40 @@ test("the settings hint states the same thresholds the policy applies", () => {
   const hint = POLICY_SWITCHES.find((entry) => entry.key === "holdOnNewDependencies")?.hint;
   expect(hint).toContain(`${YOUNG_PACKAGE_DAYS} days`);
   expect(hint).toContain(`${YOUNG_VERSION_DAYS} days`);
+  // Every requirements file and Yarn classic lockfile holds an added
+  // dependency, hashed or not.
+  expect(hint).toContain("requirements files, Yarn classic lockfiles");
+  expect(hint).not.toContain("without hashes");
+});
+
+describe("lockfiles whose frozen install can fetch what they leave out", () => {
+  const classic = (...stanzas: string[]) => ["# yarn lockfile v1", "", ...stanzas].join("\n");
+  const stanza = (descriptor: string, version: string, deps: string[] = []) =>
+    [
+      `${descriptor}:`,
+      `  version "${version}"`,
+      `  resolved "https://registry.yarnpkg.com/x/-/x-${version}.tgz"`,
+      `  integrity ${sha512(descriptor + version)}`,
+      ...(deps.length > 0 ? ["  dependencies:", ...deps.map((dep) => `    ${dep}`)] : []),
+      "",
+    ].join("\n");
+
+  test.each([
+    ["a transitive package the lockfile lacks", 'payload "^1.0.0"'],
+    ["a workspace package, which Yarn classic never locks", 'lib "^1.0.0"'],
+  ])("Yarn classic reads complete and never pins the tree: %s", (_, dep) => {
+    const snapshot = parseLockfile("yarn", classic(stanza("host@^1.0.0", "1.0.1", [dep])));
+    expect(snapshot.complete).toBe(true);
+    expect(snapshot.partialTree).toBe(true);
+  });
+
+  test("a requirements file never pins the tree; Berry, npm, pnpm, and uv do", () => {
+    expect(parseLockfile("requirements", "host==1.0.0\n").partialTree).toBe(true);
+    const berry = "__metadata:\n  version: 8\n  cacheKey: 10\n";
+    expect(parseLockfile("yarn", berry).partialTree).toBeUndefined();
+    const npm = JSON.stringify({ lockfileVersion: 3, packages: { "": {} } });
+    expect(parseLockfile("npm", npm).partialTree).toBeUndefined();
+    expect(parseLockfile("pnpm", "lockfileVersion: '9.0'\n").partialTree).toBeUndefined();
+    expect(parseLockfile("uv", "version = 1\n").partialTree).toBeUndefined();
+  });
 });

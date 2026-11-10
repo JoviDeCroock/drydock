@@ -5,7 +5,6 @@ import {
   incompleteSnapshot,
   isPublicPyPiFileUrl,
   type LockfileSnapshot,
-  type SnapshotBuilder,
 } from "./snapshot";
 
 const PYPI_SIMPLE = /^https:\/\/pypi\.org\/simple\/?$/;
@@ -32,18 +31,16 @@ interface UvPackage {
   // Every `{ name = "..." }` in the block: its dependency lists, optional and
   // dev groups, and `requires-dist` metadata.
   dependsOn: string[];
-  // The names it installs: its `dependencies` and its optional and dev
-  // groups, not `metadata` (what it declared, which uv resolved into those).
-  edges: string[];
   // The `sha256:` hash of each `sdist` / `wheels` file, while every file
   // entry read cleanly as one with a sha256 hash.
   hashes: string[];
   // The `url` of each file entry.
   urls: string[];
   files: number;
-  // Entries read in the `wheels` array. None: the release is built from its
-  // sdist, with build requirements resolved outside the lock.
-  wheels: number;
+  // The lock records an sdist (in any form) and no wheel at all, so every
+  // install builds it, with build requirements resolved outside the lock.
+  sdist: boolean;
+  wheel: boolean;
   filesClean: boolean;
   // Field lines seen twice, or a name/version/source line in a form this
   // reader does not take: uv would read something this reader cannot.
@@ -76,10 +73,6 @@ export function parseUvLock(text: string): LockfileSnapshot {
   let inPackageTable = false;
   // Inside a multi-line array value: `wheels` (file entries) or any other.
   let array: "wheels" | "other" | null = null;
-  // Inside the package's `dependencies` array, or one of its optional or dev
-  // group subtables: names there are install edges.
-  let edgeArray = false;
-  let edgeTable = false;
   for (const raw of textLines(text)) {
     const line = raw.trim();
     if (line.includes('"""') || line.includes("'''")) {
@@ -90,7 +83,6 @@ export function parseUvLock(text: string): LockfileSnapshot {
     if (array !== null) {
       if (line === "]" || line === "],") {
         array = null;
-        edgeArray = false;
         continue;
       }
       if (line.startsWith("[") && TABLE_HEADER.test(tableHeader(line))) {
@@ -98,11 +90,9 @@ export function parseUvLock(text: string): LockfileSnapshot {
         break;
       }
       if (current && array === "wheels" && line && !line.startsWith("#")) {
-        current.wheels += 1;
-        readFileEntry(current, line.endsWith(",") ? line.slice(0, -1) : line);
+        readFileEntry(current, line.endsWith(",") ? line.slice(0, -1) : line, "wheel");
       }
       if (current) collectDependencyNames(current, line, builder.reserve);
-      if (current && (edgeArray || edgeTable)) collectEdges(current, line, builder.reserve);
       continue;
     }
     if (line.startsWith("[")) {
@@ -113,34 +103,26 @@ export function parseUvLock(text: string): LockfileSnapshot {
         current.block.update(`${raw}\n`);
         packages.push(current);
         inPackageTable = true;
-        edgeTable = false;
       } else if (header.startsWith("[package.") || header.startsWith("[[package.")) {
         // `[package.optional-dependencies]` and similar stay with the current
         // package; a file table in table form is not read.
         const sub = header.replace(/^\[\[?package\.|\]\]?$/g, "");
         if (current && !METADATA_SUBTABLES.has(sub)) current.filesClean = false;
+        if (current && (sub === "sdist" || sub.startsWith("sdist."))) current.sdist = true;
         inPackageTable = false;
-        edgeTable = sub === "optional-dependencies" || sub === "dev-dependencies";
       } else {
         if (!TABLE_HEADER.test(header)) builder.markIncomplete();
         // Any other table (`[manifest]`, `[options]`) ends the package.
         current = null;
         inPackageTable = false;
-        edgeTable = false;
       }
       continue;
     }
     if (!current) continue;
     collectDependencyNames(current, line, builder.reserve);
-    const dependencies = inPackageTable && /^dependencies\s*=/.test(line);
-    if (edgeTable || dependencies) collectEdges(current, line, builder.reserve);
-    if (inPackageTable) {
-      array = readPackageLine(current, raw, line);
-      edgeArray = dependencies && array !== null;
-    }
+    if (inPackageTable) array = readPackageLine(current, raw, line);
   }
   if (array !== null) builder.markIncomplete();
-  checkInstallEdges(builder, packages);
   for (const pkg of packages) {
     // Recorded anyway: an incomplete snapshot is never diffed, but it still
     // shows what was read.
@@ -162,7 +144,12 @@ export function parseUvLock(text: string): LockfileSnapshot {
       // (each one pins a sha256); one whose files cannot be read cannot be
       // bound to PyPI's release, so the snapshot is unread.
       if (pypi && pkg.files > 0 && !pkg.filesClean) builder.markIncomplete();
-      const sourceBuild = pkg.wheels === 0;
+      // Only a package with no wheel at all is certain to be built. Which
+      // wheel a platform installs is not modelled: roughly one locked package
+      // in seven ships platform wheels beside its sdist, and holding each of
+      // those would hold every compiled package for a build most installs
+      // never run.
+      const sourceBuild = pkg.sdist && !pkg.wheel;
       if (pypi && pkg.urls.every((url) => isPublicPyPiFileUrl(url))) {
         builder.add(pkg.name, pkg.version, { hashes, pin, sourceBuild });
       } else {
@@ -186,37 +173,16 @@ function newPackage(): UvPackage {
     version: null,
     source: null,
     dependsOn: [],
-    edges: [],
     hashes: [],
     urls: [],
     files: 0,
-    wheels: 0,
+    sdist: false,
+    wheel: false,
     filesClean: true,
     malformed: false,
     seen: new Set(),
     block: createHash("sha256"),
   };
-}
-
-/**
- * Every name a package installs must be a package of the same lock. uv's
- * lock is universal (every platform, extra, and group), so one that names
- * nothing is resolved at install time and the lock is not the whole install.
- */
-function checkInstallEdges(builder: SnapshotBuilder, packages: readonly UvPackage[]): void {
-  const names = new Set(packages.map((pkg) => normalizedName(pkg.name ?? "")));
-  for (const pkg of packages) {
-    for (const dep of pkg.edges) {
-      if (!names.has(normalizedName(dep))) builder.unresolvedEdge(pkg.name ?? "", dep, "");
-    }
-  }
-}
-
-function collectEdges(pkg: UvPackage, line: string, reserve: (count?: number) => boolean): void {
-  for (const m of line.matchAll(DEPENDENCY_NAME)) {
-    if (!reserve()) break;
-    pkg.edges.push(m[1]);
-  }
 }
 
 function collectDependencyNames(
@@ -265,8 +231,9 @@ function readPackageLine(pkg: UvPackage, raw: string, line: string): "wheels" | 
   }
   if (key === "sdist") {
     once();
+    pkg.sdist = true;
     if (indented) pkg.filesClean = false;
-    else readFileEntry(pkg, value);
+    else readFileEntry(pkg, value, "sdist");
     return null;
   }
   if (key === "wheels") {
@@ -278,6 +245,7 @@ function readPackageLine(pkg: UvPackage, raw: string, line: string): "wheels" | 
     return "wheels";
   }
   if (key.startsWith("sdist.") || key.startsWith("wheels.")) pkg.filesClean = false;
+  if (key.startsWith("sdist.")) pkg.sdist = true;
   return value.startsWith("[") && !value.endsWith("]") ? "other" : null;
 }
 
@@ -294,11 +262,12 @@ function uvSource(value: string): { kind: string; value: string } | null {
 }
 
 // A file entry pins one sha256 and names the URL it is fetched from.
-function readFileEntry(pkg: UvPackage, text: string): void {
+function readFileEntry(pkg: UvPackage, text: string, kind: "sdist" | "wheel"): void {
   pkg.files += 1;
   const fields = inlineTable(text);
   const hash = fields?.get("hash");
   const url = fields?.get("url");
+  if (kind === "wheel") pkg.wheel = true;
   if (
     !fields ||
     [...fields.keys()].some((key) => !FILE_KEYS.has(key)) ||
@@ -514,6 +483,9 @@ interface Pin {
 // values pin the release's files.
 export function parseRequirements(text: string): LockfileSnapshot {
   const builder = createSnapshotBuilder("pypi");
+  // pip resolves what the file leaves out, and builds a source distribution's
+  // build requirements outside it and its hashes (hash-checking mode too).
+  builder.markPartialTree();
   const pins = new Map<string, Pin>();
   const unpinned: string[] = [];
   const lines = pipLines(text);

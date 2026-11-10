@@ -26,7 +26,7 @@ Read one row, not the folder. User-facing guide: `src/pages/Docs/index.tsx` (kee
 | Stage Watchtower — advisory | npm approves; Drydock records advice | npm | [`npm-staged-publishing.md`](./npm-staged-publishing.md) |
 | Gate setup (guided) | draft PR only; maintainer merges | npm, PyPI, VS Code | [`publisher-setup.md`](./publisher-setup.md) |
 | npm trusted publishing pin | narrows npm OIDC to the gate environment | npm | [`npm-trusted-publishing.md`](./npm-trusted-publishing.md) |
-| Dependency review — enforced when required | GitHub App check on same-repository PRs; holds capability changes until a repository writer approves, and what it could not read until it is old enough or approved | npm, PyPI | [`dependency-review.md`](./dependency-review.md) |
+| Dependency review — enforced when required | GitHub App check on same-repository PRs; holds capability changes and young packages new to the lockfile until a repository writer approves, and what it could not read until it is old enough or approved | npm, PyPI | [`dependency-review.md`](./dependency-review.md) |
 | Public diff | anonymous, advisory | npm, PyPI, atpm | [`public-diff.md`](./public-diff.md), [`atpm.md`](./atpm.md) |
 
 Canonical npm gate workflow: [`examples/npm-workflow-gate.yml`](./examples/npm-workflow-gate.yml).
@@ -51,7 +51,8 @@ Canonical npm gate workflow: [`examples/npm-workflow-gate.yml`](./examples/npm-w
 | [`agent-package-review.md`](./agent-package-review.md) | coding-agent quickstart: publisher setup prompts, dependency-review instruction, anonymous HTTPS recipe, read-only public MCP endpoint |
 | [`api-keys.md`](./api-keys.md) | organization API keys: route allowlists by access level, auth rules, storage, lifecycle; [`openapi.json`](./openapi.json) contract |
 | [`dependency-pr-diff-links.md`](./dependency-pr-diff-links.md) | Renovate preset + Dependabot/Renovate PR comment workflow (public contract) |
-| [`dependency-review.md`](./dependency-review.md) | GitHub App check on dependency-update PRs: source and pin checks, hold policy and age fallback, approval authority, `dependency-review` rollout flag, limits |
+| [`dependency-review.md`](./dependency-review.md) | GitHub App check on dependency-update PRs: hold policy, young-package rule and age fallback, approval authority, `dependency-review` rollout flag, limits |
+| [`dependency-review-sources.md`](./dependency-review-sources.md) | dependency review source places (public, mirror, private, remote), moves off non-public sources, and lockfile pin proofs |
 | [`two-factor-auth.md`](./two-factor-auth.md) | 2FA enrollment, sign-in challenge, step-up |
 | [`organization-members.md`](./organization-members.md) | roles, invitations |
 | [`audit-log.md`](./audit-log.md) | organization audit log |
