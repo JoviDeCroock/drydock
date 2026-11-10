@@ -42,14 +42,25 @@ function bumpsOf(kind: LockfileKind, before: string | null, after: string): Depe
   return changesOf(kind, before, after).map((change) => change.bump);
 }
 
+interface RouteOptions {
+  route?: NameRoute;
+  mirrors?: string[];
+  privateRegistries?: string[];
+  privateScopes?: string[];
+}
+
 function routed(
   kind: LockfileKind,
   before: string | null,
   after: string,
-  options: { route?: NameRoute; mirrors?: string[] } = {},
+  options: RouteOptions = {},
 ): DependencyBump[] {
   return changesOf(kind, before, after).map((change) =>
-    routedBump(change, options.route ?? PUBLIC_ROUTE, options.mirrors ?? [MIRROR, PYPI_MIRROR]),
+    routedBump(change, options.route ?? PUBLIC_ROUTE, {
+      publicMirrors: options.mirrors ?? [MIRROR, PYPI_MIRROR],
+      privateRegistries: options.privateRegistries ?? [],
+      privateScopes: options.privateScopes ?? [],
+    }),
   );
 }
 
@@ -64,15 +75,17 @@ function npmLock(entries: Record<string, NpmEntry>): string {
 function yarnV1(
   entries: Array<{ descriptor: string; version: string; resolved?: string; integrity?: string }>,
 ) {
-  return entries
-    .flatMap(({ descriptor, version, resolved, integrity }) => [
+  return [
+    "# yarn lockfile v1",
+    "",
+    ...entries.flatMap(({ descriptor, version, resolved, integrity }) => [
       `"${descriptor}":`,
       `  version "${version}"`,
       ...(resolved ? [`  resolved "${resolved}"`] : []),
       ...(integrity ? [`  integrity ${integrity}`] : []),
       "",
-    ])
-    .join("\n");
+    ]),
+  ].join("\n");
 }
 
 function pnpmLock(entries: Array<{ key: string; resolution: string; extra?: string[] }>) {
@@ -308,20 +321,24 @@ describe("D2: source is per version", () => {
   });
 
   test("a version that moves from the public registry to a private one is a bump", () => {
-    const uv = (source: string, hash: string) =>
+    const uv = (source: string, file: string, hash: string) =>
       [
         "version = 1",
         "[[package]]",
         'name = "a"',
         'version = "1.0.0"',
         `source = { registry = "${source}" }`,
-        `sdist = { url = "https://files.example/a-1.0.0.tar.gz", hash = "${hash}", size = 1 }`,
+        `sdist = { url = "${file}", hash = "${hash}", size = 1 }`,
       ].join("\n");
     expect(
       bumpsOf(
         "uv",
-        uv("https://pypi.org/simple", sha256("a")),
-        uv("https://pypi.corp.example/simple", sha256("a")),
+        uv(
+          "https://pypi.org/simple",
+          "https://files.pythonhosted.org/packages/ab/a-1.0.0.tar.gz",
+          sha256("a"),
+        ),
+        uv("https://pypi.corp.example/simple", "https://files.example/a-1.0.0.tar.gz", sha256("a")),
       ),
     ).toEqual([
       expect.objectContaining({
@@ -517,13 +534,14 @@ describe("D4: private registry versus git, URL, and tarball sources", () => {
     expect(Object.values(kindsOf(snapshot, "pypi:odd"))).toEqual(["remote"]);
   });
 
-  test("a name the repository routes to another registry is private, not remote", () => {
+  test("a name routed to a declared private registry is private, not remote", () => {
     const [bump] = routed(
       "npm",
       npmLock({ a: { version: "1.0.0" } }),
       npmLock({ a: { version: "1.0.1" } }),
       {
         route: { kind: "registries", urls: ["https://npm.corp.example/"] },
+        privateRegistries: ["https://npm.corp.example/"],
       },
     );
     expect(bump).toEqual(
@@ -703,7 +721,7 @@ describe("mirror candidates", () => {
     expect(bump.mirror).toEqual({ fromHashes: [sha512("a")], toHashes: [sha512("b")] });
   });
 
-  test("the same version moved onto a mirror is a plain private change", () => {
+  test("the same version moved onto a mirror is a re-pin candidate: only its pins are proven", () => {
     const before = npmLock({
       lodash: {
         version: "4.17.22",
@@ -712,8 +730,15 @@ describe("mirror candidates", () => {
       },
     });
     const [bump] = routed("npm", before, mirrored("4.17.22", sha512("b")));
-    expect(bump).toEqual(expect.objectContaining({ privateSource: true }));
-    expect(bump).not.toHaveProperty("mirror");
+    expect(bump).toEqual(
+      expect.objectContaining({
+        fromVersion: null,
+        toVersion: "4.17.22",
+        privateSource: true,
+        repinned: true,
+        mirror: { fromHashes: null, toHashes: [sha512("b")] },
+      }),
+    );
   });
 
   test("two copies of one version with different pins fold into one change needing both", () => {
@@ -747,12 +772,12 @@ describe("mirror candidates", () => {
         ...files,
       ].join("\n");
     const sdist = (seed: string) =>
-      `sdist = { url = "https://m.example/f/requests.tar.gz", hash = "${sha256(seed)}", size = 1, upload-time = "2024-01-01T00:00:00Z" }`;
+      `sdist = { url = "https://m.example/pypi/f/requests.tar.gz", hash = "${sha256(seed)}", size = 1, upload-time = "2024-01-01T00:00:00Z" }`;
     const wheels = (...seeds: string[]) => [
       "wheels = [",
       ...seeds.map(
         (seed) =>
-          `    { url = "https://m.example/f/${seed}.whl", hash = "${sha256(seed)}", size = 1 },`,
+          `    { url = "https://m.example/pypi/f/${seed}.whl", hash = "${sha256(seed)}", size = 1 },`,
       ),
       "]",
     ];
@@ -790,12 +815,17 @@ describe("mirror candidates", () => {
       ["an index outside the mirror", [sdist("c")], "https://m.example/pypi-private/simple"],
       [
         "a file with no hash",
-        [sdist("c"), "wheels = [", '    { url = "https://m.example/f/x.whl", size = 1 },', "]"],
+        [
+          sdist("c"),
+          "wheels = [",
+          '    { url = "https://m.example/pypi/f/x.whl", size = 1 },',
+          "]",
+        ],
         index,
       ],
       [
         "a non-sha256 hash",
-        [`sdist = { url = "https://m.example/f/r.tar.gz", hash = "md5:${"a".repeat(32)}" }`],
+        [`sdist = { url = "https://m.example/pypi/f/r.tar.gz", hash = "md5:${"a".repeat(32)}" }`],
         index,
       ],
       ["no files", [], index],
@@ -804,7 +834,7 @@ describe("mirror candidates", () => {
         [
           sdist("c"),
           "[[package.wheels]]",
-          'url = "https://m.example/f/x.whl"',
+          'url = "https://m.example/pypi/f/x.whl"',
           `hash = "${sha256("x")}"`,
         ],
         index,
@@ -832,7 +862,7 @@ describe("mirror candidates", () => {
     });
 
     test("the hash read is the `hash` key uv reads, not text inside another value", () => {
-      const lifted = `sdist = { url = "a hash = ${sha256("c")}", hash="${sha256("evil")}" }`;
+      const lifted = `sdist = { url = "https://m.example/pypi/f/a.tar.gz", upload-time = "a hash = ${sha256("c")}", hash="${sha256("evil")}" }`;
       const [bump] = routed("uv", uv(index, "2.31.0", [sdist("a")]), uv(index, "2.32.0", [lifted]));
       expect(bump.mirror?.toHashes).toEqual([sha256("evil")]);
     });

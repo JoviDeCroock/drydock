@@ -10,9 +10,14 @@ import {
 } from "../public-diff";
 import type { PublicDiffVersionListing } from "../public-diff/types";
 import type { ReviewContext } from "./context";
-import { verifyMirrorBump } from "./mirror-identity";
+import { verifyMirrorBump, verifyPublicPin } from "./mirror-identity";
 import { extractBumpEvidence, needsReleaseAge } from "./policy";
-import { bumpProgressKey, type ProgressWriter, type StoredBumpProgress } from "./progress";
+import {
+  bumpProgressKey,
+  DependencyReviewStalePassError,
+  type ProgressWriter,
+  type StoredBumpProgress,
+} from "./progress";
 import { MAX_STORED_BUMPS } from "./render";
 import type { BumpOutcome, DependencyBump, DependencyReviewPolicy } from "./types";
 
@@ -24,20 +29,25 @@ import type { BumpOutcome, DependencyBump, DependencyReviewPolicy } from "./type
 // keeps the mean near 11 s with room for one 15 s outlier. A cached pair is
 // one KV read and costs none of this budget; cached reads still parse a
 // payload each, so they get their own bound (not measured). Registry lookups
-// (mirror proofs, publish times) share a third.
+// (mirror and pin proofs, publish times) share a third.
 export const MAX_COLD_DIFFS_PER_PASS = 12;
 const MAX_CACHED_READS_PER_PASS = 100;
 const MAX_REGISTRY_LOOKUPS_PER_PASS = 150;
 const DIFF_CONCURRENCY = 4;
+// A cold diff started this often without recording an outcome took its pass
+// down each time; it is recorded as failed so it can't take down every pass.
+const MAX_COLD_DIFF_STARTS = 2;
 // Under the queue consumer's wall-clock limit with room to post the result.
 export const PASS_BUDGET_MS = 8 * 60 * 1000;
 
 export interface ReviewStage {
-  // The collected bumps, with mirror-proven ones turned into public bumps.
+  // The collected bumps, with proven mirror and pin bumps turned into plain
+  // public bumps and failed pins into remote sources.
   bumps: DependencyBump[];
-  // One per bump. Work this pass didn't reach reads as if no pass will:
-  // `over-cap` for an undiffed pair, an unknown publish time, an unproven
-  // mirror. The caller uses them only when no pass follows.
+  // One per bump. Work this pass didn't reach reads as if no pass will: an
+  // unproven or undiffed bump is `over-cap`, an unknown publish time is
+  // unknown, both marked `pastReviewLimit`. The caller uses them only when no
+  // pass follows.
   outcomes: BumpOutcome[];
   settled: number;
   // Nothing is left for another pass.
@@ -48,11 +58,16 @@ interface Entry {
   index: number;
   original: DependencyBump;
   key: string;
+  // Not a plain private-registry or remote bump: the stage has work to do.
+  reviewable: boolean;
+  // Among the first `MAX_STORED_BUMPS` reviewable bumps. Proofs, diffs, and
+  // publish-time lookups are spent only on these.
+  inReview: boolean;
 }
 
 /**
  * One pass of the review stage over a PR's bumps, in collected order (direct
- * first). Up to `MAX_STORED_BUMPS` pairs are diffed across passes; each
+ * first). Up to `MAX_STORED_BUMPS` bumps are reviewed across passes; each
  * outcome is recorded as it lands, so a pass the platform kills loses little.
  */
 export async function runReviewStage(
@@ -64,92 +79,124 @@ export async function runReviewStage(
 ): Promise<ReviewStage> {
   const egress = publicDiffEgressAllowed(context.env);
   const stored = (key: string): StoredBumpProgress => writer.progress.bumps[key] ?? {};
-  const entries: Entry[] = bumps.map((original, index) => ({
-    index,
-    original,
-    key: bumpProgressKey(original),
-  }));
+  let reviewable = 0;
+  const entries: Entry[] = bumps.map((original, index) => {
+    const isReviewable = !original.privateSource || Boolean(original.mirror);
+    const inReview = isReviewable && reviewable < MAX_STORED_BUMPS;
+    if (isReviewable) reviewable += 1;
+    return { index, original, key: bumpProgressKey(original), reviewable: isReviewable, inReview };
+  });
   let lookups = 0;
   const lookupAllowed = () => lookups < MAX_REGISTRY_LOOKUPS_PER_PASS && Date.now() < deadlineMs;
 
-  // A mirror entry becomes a public bump only once both sides are proven to
-  // be the public registry's bytes; until then it is private.
+  // A mirror entry is public only once both sides are proven to be the public
+  // registry's bytes, and a pinned public entry only once its pin is; each
+  // proof is stored under the hashes it proved (`bumpProgressKey`).
   const unproven = entries.filter(
-    (entry) => entry.original.mirror && stored(entry.key).mirrorVerified === undefined,
+    (entry) => entry.inReview && proofPending(entry.original, stored(entry.key)),
   );
   await mapWithConcurrency(unproven, DIFF_CONCURRENCY, async (entry) => {
-    if (!egress) return writer.record(entry.key, { mirrorVerified: false });
+    const mirror = Boolean(entry.original.mirror);
+    const record = (verified: boolean) =>
+      writer.record(entry.key, mirror ? { mirrorVerified: verified } : { pinVerified: verified });
+    if (!egress) return record(false);
     if (!lookupAllowed()) return;
     lookups += 1;
     let verified = false;
     try {
-      verified = await verifyMirrorBump(context.env, context.ctx, entry.original);
+      verified = mirror
+        ? await verifyMirrorBump(context.env, context.ctx, entry.original)
+        : await verifyPublicPin(context.env, context.ctx, entry.original);
     } catch (err) {
-      emitOperationalEvent("warn", "dependency_review.mirror_check_failed", {
-        organizationId: context.review.organizationId,
-        reviewId: context.review.id,
-        ecosystem: entry.original.ecosystem,
-        error: describeOperationalError(err),
-      });
+      emitOperationalEvent(
+        "warn",
+        mirror ? "dependency_review.mirror_check_failed" : "dependency_review.pin_check_failed",
+        {
+          organizationId: context.review.organizationId,
+          reviewId: context.review.id,
+          ecosystem: entry.original.ecosystem,
+          error: describeOperationalError(err),
+        },
+      );
     }
-    await writer.record(entry.key, { mirrorVerified: verified });
+    await record(verified);
   });
 
   const resolved = entries.map((entry) => resolveBump(entry.original, stored(entry.key)));
-  // The cap counts diffable pairs in order, unproven mirrors included, so
-  // proving a mirror later can't reorder what an earlier pass diffed.
-  const inCap = new Set<number>();
-  for (const entry of entries) {
-    if (inCap.size >= MAX_STORED_BUMPS) break;
-    const bump = resolved[entry.index];
-    if (bump && !bump.privateSource && bump.fromVersion !== null) inCap.add(entry.index);
-    else if (bump === null && entry.original.fromVersion !== null) inCap.add(entry.index);
-  }
-
-  let coldStarted = 0;
-  let cachedReads = 0;
   const toDiff = entries.filter((entry) => {
     const bump = resolved[entry.index];
     const progress = stored(entry.key);
     return (
+      entry.inReview &&
       bump !== null &&
-      inCap.has(entry.index) &&
+      !bump.privateSource &&
+      bump.fromVersion !== null &&
       !progress.evidence &&
       progress.unreviewed === undefined
     );
   });
-  await mapWithConcurrency(toDiff, DIFF_CONCURRENCY, async (entry) => {
+
+  let coldStarted = 0;
+  let cachedReads = 0;
+  const diffOne = async (entry: Entry): Promise<void> => {
     if (Date.now() >= deadlineMs || cachedReads >= MAX_CACHED_READS_PER_PASS) return;
     const bump = resolved[entry.index] as DependencyBump;
     const input = egress ? diffInput(bump) : null;
     if (!input) return writer.record(entry.key, { unreviewed: "unsupported" });
-    let cold = false;
+    cachedReads += 1;
     let outcome: StoredBumpProgress;
+    let cold = false;
     try {
-      cachedReads += 1;
       let diff = await readCachedPublicPackageDiff(context.env, context.ctx, input);
       if (!diff) {
         if (coldStarted >= MAX_COLD_DIFFS_PER_PASS) return;
         coldStarted += 1;
         cold = true;
+        // Written before the diff runs: a pass killed mid-diff leaves it.
+        await writer.record(
+          entry.key,
+          { coldStarts: (stored(entry.key).coldStarts ?? 0) + 1 },
+          { urgent: true },
+        );
         diff = await loadPublicPackageDiff(context.env, context.ctx, input);
       }
       outcome = { evidence: extractBumpEvidence(diff) };
     } catch (err) {
+      if (err instanceof DependencyReviewStalePassError) throw err;
       outcome = { unreviewed: diffFailure(context, bump, err) };
     }
     await writer.record(entry.key, outcome, { urgent: cold });
-  });
+  };
+
+  // A bump with a cold diff started but never finished may be what took an
+  // earlier pass down. One such suspect runs alone at the start of the pass,
+  // the rest wait; one that took its pass down every time is given up on.
+  const suspects = toDiff.filter((entry) => (stored(entry.key).coldStarts ?? 0) > 0);
+  for (const entry of suspects) {
+    if ((stored(entry.key).coldStarts ?? 0) < MAX_COLD_DIFF_STARTS) continue;
+    emitOperationalEvent("warn", "dependency_review.diff_abandoned", {
+      organizationId: context.review.organizationId,
+      reviewId: context.review.id,
+      ecosystem: entry.original.ecosystem,
+    });
+    await writer.record(entry.key, { unreviewed: "failed" }, { urgent: true });
+  }
+  const suspect = suspects.find((entry) => stored(entry.key).unreviewed === undefined);
+  if (suspect) await diffOne(suspect);
+  const suspectKeys = new Set(suspects.map((entry) => entry.key));
+  await mapWithConcurrency(
+    toDiff.filter((entry) => !suspectKeys.has(entry.key)),
+    DIFF_CONCURRENCY,
+    diffOne,
+  );
 
   // Publish times, only for outcomes the policy would wait out, one registry
   // read per package within a pass.
   const listings = new Map<string, Promise<PublicDiffVersionListing | null>>();
   const outcomeOf = (entry: Entry) =>
-    settledOutcome(entry, resolved[entry.index], stored(entry.key), inCap);
+    settledOutcome(entry, resolved[entry.index], stored(entry.key));
   const toDate = entries.filter((entry) => {
-    if (entry.index >= MAX_STORED_BUMPS || stored(entry.key).publishedAt !== undefined) {
-      return false;
-    }
+    if (!entry.inReview || stored(entry.key).publishedAt !== undefined) return false;
     const outcome = outcomeOf(entry);
     return outcome !== null && needsReleaseAge(outcome, policy);
   });
@@ -174,11 +221,14 @@ export async function runReviewStage(
     const outcome = outcomeOf(entry);
     const needsDate =
       outcome !== null &&
-      entry.index < MAX_STORED_BUMPS &&
+      entry.inReview &&
       progress.publishedAt === undefined &&
       needsReleaseAge(outcome, policy);
-    if (outcome === null || needsDate) pending += 1;
-    return withPublishedAt(outcome ?? leftover(resolved[entry.index]), progress);
+    if (outcome === null || needsDate) {
+      pending += 1;
+      return pastReviewLimit(outcome ?? { kind: "unreviewed", reason: "over-cap" });
+    }
+    return withPublishedAt(outcome, progress);
   });
   return {
     bumps: entries.map((entry) => resolved[entry.index] ?? entry.original),
@@ -188,13 +238,30 @@ export async function runReviewStage(
   };
 }
 
-// null: a mirror entry not yet proven either way.
+function proofPending(bump: DependencyBump, progress: StoredBumpProgress): boolean {
+  if (bump.mirror) return progress.mirrorVerified === undefined;
+  return Boolean(bump.pinnedHashes) && !bump.privateSource && progress.pinVerified === undefined;
+}
+
+// null: a proof not yet made either way.
 function resolveBump(bump: DependencyBump, progress: StoredBumpProgress): DependencyBump | null {
-  if (!bump.mirror) return bump;
-  if (progress.mirrorVerified === undefined) return null;
-  if (!progress.mirrorVerified) return bump;
-  const { privateSource: _private, mirror: _mirror, remoteSource: _remote, ...rest } = bump;
-  return { ...rest, viaMirror: true };
+  if (bump.mirror) {
+    if (progress.mirrorVerified === undefined) return null;
+    if (!progress.mirrorVerified) return bump;
+    const { privateSource: _private, mirror: _mirror, remoteSource: _remote, ...rest } = bump;
+    return { ...rest, viaMirror: true };
+  }
+  if (bump.pinnedHashes && !bump.privateSource) {
+    if (progress.pinVerified === undefined) return null;
+    if (progress.pinVerified) {
+      const { pinnedHashes: _pinned, ...rest } = bump;
+      return rest;
+    }
+    // The installer accepts only these hashes, and they are not the public
+    // release's: whatever it installs came from somewhere else.
+    return { ...bump, privateSource: true, remoteSource: true };
+  }
+  return bump;
 }
 
 // The outcome once this bump's review work is done, or null while it isn't.
@@ -202,23 +269,32 @@ function settledOutcome(
   entry: Entry,
   bump: DependencyBump | null,
   progress: StoredBumpProgress,
-  inCap: ReadonlySet<number>,
 ): BumpOutcome | null {
+  const { original } = entry;
+  if (!entry.reviewable) {
+    return {
+      kind: "unreviewed",
+      reason: original.remoteSource ? "remote-source" : "private-source",
+    };
+  }
+  if (!entry.inReview) {
+    // A public package the PR adds needs no proof or diff to be what it is.
+    return original.fromVersion === null && !original.mirror && !original.pinnedHashes
+      ? { kind: "new-package", pastReviewLimit: true }
+      : { kind: "unreviewed", reason: "over-cap", pastReviewLimit: true };
+  }
   if (bump === null) return null;
   if (bump.privateSource) {
-    return { kind: "unreviewed", reason: bump.remoteSource ? "remote-source" : "private-source" };
+    return { kind: "unreviewed", reason: bump.mirror ? "private-source" : "unverified-pin" };
   }
   if (bump.fromVersion === null) return { kind: "new-package" };
-  if (!inCap.has(entry.index)) return { kind: "unreviewed", reason: "over-cap" };
   if (progress.evidence) return { kind: "diffed", evidence: progress.evidence };
   if (progress.unreviewed) return { kind: "unreviewed", reason: progress.unreviewed };
   return null;
 }
 
-// What unfinished work reads as when no pass follows: an unproven mirror
-// stays private, an undiffed pair is over the cap.
-function leftover(bump: DependencyBump | null): BumpOutcome {
-  return { kind: "unreviewed", reason: bump === null ? "private-source" : "over-cap" };
+function pastReviewLimit(outcome: BumpOutcome): BumpOutcome {
+  return outcome.kind === "diffed" ? outcome : { ...outcome, pastReviewLimit: true };
 }
 
 function withPublishedAt(outcome: BumpOutcome, progress: StoredBumpProgress): BumpOutcome {

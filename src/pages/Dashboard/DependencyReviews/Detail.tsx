@@ -25,6 +25,7 @@ import {
   checkRunUrl,
   hasUnreadContent,
   holdReasonPhrases,
+  REPINNED_TEXT,
   unreadContentText,
   dependencyReviewPath,
   pullRequestUrl,
@@ -42,6 +43,7 @@ import { MAX_STORED_BUMPS } from "../../../../server/lib/dependency-review/rende
 import type {
   BumpEvidence,
   BumpVerdict,
+  DependencyBump,
   HoldReason,
 } from "../../../../server/lib/dependency-review/types";
 import { Alert } from "../../../components/Alert";
@@ -288,7 +290,10 @@ function ReviewReport({
         // A review cut at the storage limit can't count what it didn't keep.
         passedUnread={
           bumps.length === review.bumpCount
-            ? groups.unreviewed.length + groups.added.length + groups.unread.length
+            ? groups.unreviewed.length +
+              groups.added.length +
+              groups.repinned.length +
+              groups.unread.length
             : null
         }
         pollingStalled={model.pollingStalled.value}
@@ -329,6 +334,11 @@ function ReviewReport({
         title="New packages"
         note="Passed: there is no previous version to compare against."
         bumps={groups.added}
+      />
+      <BumpGroup
+        title="Same version, new pin"
+        note="Passed: the lockfile pins the same version to new hashes, which match the public release. There is no earlier version to diff."
+        bumps={groups.repinned}
       />
       <BumpGroup
         title="Passed with unread changes"
@@ -465,7 +475,7 @@ function ReviewCoverage({
         {coverage.unreadLockfiles.length > 0 ? (
           <>
             <p class="m-0 text-[13px] text-ink">
-              Drydock could not review dependency updates in these files:
+              Drydock could not review the changes to these files:
             </p>
             <ul class="m-0 p-0 list-none font-mono text-[12px] text-ink-muted">
               {coverage.unreadLockfiles.map((path) => (
@@ -492,6 +502,7 @@ function groupBumps(bumps: ReviewedBump[]) {
     approved: [] as ReviewedBump[],
     unreviewed: [] as ReviewedBump[],
     added: [] as ReviewedBump[],
+    repinned: [] as ReviewedBump[],
     unread: [] as ReviewedBump[],
     clear: [] as ReviewedBump[],
   };
@@ -499,7 +510,8 @@ function groupBumps(bumps: ReviewedBump[]) {
     const { status } = bump.verdict;
     if (status === "hold") (bump.approved ? groups.approved : groups.held).push(bump);
     else if (status === "unreviewed") groups.unreviewed.push(bump);
-    else if (status === "new-package") groups.added.push(bump);
+    else if (status === "new-package")
+      (bump.bump.repinned ? groups.repinned : groups.added).push(bump);
     else if (hasUnreadContent(bump.verdict.evidence)) groups.unread.push(bump);
     else groups.clear.push(bump);
   }
@@ -540,7 +552,7 @@ function BumpRow({ reviewed }: { reviewed: ReviewedBump }) {
     bump.fromVersion && !bump.privateSource
       ? packageDiffPath(bump.ecosystem, bump.name, bump.fromVersion, bump.toVersion)
       : null;
-  const reason = verdictReason(verdict, evidence, bump.fromVersion === null);
+  const reason = verdictReason(verdict, evidence, bump);
   // A release-risk hold names the grade in its reason; don't say it twice.
   const riskInReason = verdict.status === "hold" && verdict.reasons.includes("release-risk");
   return (
@@ -549,7 +561,11 @@ function BumpRow({ reviewed }: { reviewed: ReviewedBump }) {
         <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 min-w-0">
           <span class="font-mono text-[14px] font-medium text-ink break-all">{bump.name}</span>
           <span class="font-mono text-[12px] text-ink-muted break-all">
-            {bump.fromVersion ? `${bump.fromVersion} → ${bump.toVersion}` : `new ${bump.toVersion}`}
+            {bump.fromVersion
+              ? `${bump.fromVersion} → ${bump.toVersion}`
+              : bump.repinned
+                ? `${bump.toVersion}, ${REPINNED_TEXT}`
+                : `new ${bump.toVersion}`}
           </span>
         </div>
         {diffHref ? (
@@ -636,7 +652,7 @@ const REASON_COUNT: Partial<Record<HoldReason, (evidence: BumpEvidence) => numbe
 function verdictReason(
   verdict: BumpVerdict,
   evidence: BumpEvidence | null,
-  newPackage: boolean,
+  bump: DependencyBump,
 ): string | null {
   if (verdict.status === "unreviewed") return sentence(UNREVIEWED_TEXT[verdict.unreviewed]);
   if (verdict.status === "clear") {
@@ -647,10 +663,15 @@ function verdictReason(
   // The age hold's phrase names what went unread and when it passes.
   const ageHold = holdReasonPhrases(
     { ...verdict, reasons: ["too-new"] },
-    { newPackage, formatTime: formatDateTime },
+    {
+      newPackage: bump.fromVersion === null,
+      repinned: bump.repinned === true,
+      formatTime: formatDateTime,
+    },
   )[0];
   const reasons = verdict.reasons.map((reason) => {
     if (reason === "too-new") return ageHold;
+    if (reason === "new-package" && bump.repinned) return REPINNED_TEXT;
     if (reason === "unreviewed" && verdict.unreviewed) {
       return `${HOLD_REASON_TEXT.unreviewed} (${UNREVIEWED_TEXT[verdict.unreviewed]})`;
     }

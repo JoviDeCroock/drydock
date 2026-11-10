@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { and, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { bumpIdentityKey, changeKey, changeSource } from "../lib/dependency-review/identity";
 import { parseDependencyReviewPolicy } from "../lib/dependency-review/policy";
 import type {
   DependencyBump,
@@ -560,45 +560,9 @@ export async function findNewerDependencyReviewId(
   return row?.id ?? null;
 }
 
-export function dependencyChangeKey(
-  bump: Pick<
-    DependencyBump,
-    "ecosystem" | "name" | "fromVersion" | "toVersion" | "privateSource" | "mirror"
-  >,
-) {
-  return changeKey(
-    bump.ecosystem,
-    bump.name,
-    bump.fromVersion ?? "",
-    bump.toVersion,
-    changeSource(bump),
-  );
-}
-
-function changeKey(
-  ecosystem: string,
-  name: string,
-  fromVersion: string,
-  toVersion: string,
-  source: string,
-): string {
-  return [ecosystem, name, fromVersion, toVersion, source].join("\u0000");
-}
-
-/**
- * The `source` an approval is stored under. A mirror pin nobody proved equal
- * to the public release names its pinned hashes: the same versions re-pinned
- * to other bytes on the mirror are a different change, and an approval must
- * not carry over to them. A proven mirror bump arrives here as public.
- */
-function changeSource(bump: Pick<DependencyBump, "privateSource" | "mirror">): string {
-  if (!bump.privateSource) return "public";
-  if (!bump.mirror) return "private";
-  const pins = JSON.stringify([
-    [...(bump.mirror.fromHashes ?? [])].sort(),
-    [...bump.mirror.toHashes].sort(),
-  ]);
-  return `mirror:${createHash("sha256").update(pins).digest("hex")}`;
+/** A change's identity for collection and approvals (`bumpIdentityKey`). */
+export function dependencyChangeKey(bump: Parameters<typeof bumpIdentityKey>[0]) {
+  return bumpIdentityKey(bump);
 }
 
 /** Which of `bumps` someone already approved in this repository. */

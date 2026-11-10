@@ -7,6 +7,7 @@ import {
   extractBumpEvidence,
   hasUnreadContent,
   needsReleaseAge,
+  parseDependencyReviewPolicy,
 } from "../server/lib/dependency-review/policy";
 import { ageRecheckAt } from "../server/lib/dependency-review/recheck";
 import { renderDependencyReviewCheck } from "../server/lib/dependency-review/render";
@@ -19,7 +20,7 @@ import {
   type ReviewedBump,
   type UnreviewedReason,
 } from "../server/lib/dependency-review/types";
-import { parseMinimumAgeInput, parseMirrorsInput } from "../src/models/dependency-review";
+import { parseMinimumAgeInput, parseListInput } from "../src/models/dependency-review";
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse("2026-11-10T12:00:00.000Z");
@@ -434,9 +435,214 @@ describe("settings validation", () => {
     expect(parseMinimumAgeInput("0")).toBe("invalid");
     expect(parseMinimumAgeInput("91")).toBe("invalid");
     expect(parseMinimumAgeInput("3.5")).toBe("invalid");
-    expect(parseMirrorsInput("https://a.example/npm/, https://b.example/pypi/\n")).toEqual([
+    expect(parseListInput("https://a.example/npm/, https://b.example/pypi/\n")).toEqual([
       "https://a.example/npm/",
       "https://b.example/pypi/",
     ]);
+  });
+});
+
+describe("added native binaries", () => {
+  const ADDED_BINARY = extractBumpEvidence(
+    diffWith([
+      { path: "bin/new.node", status: "added", flags: ["binary", "native-macho"] },
+      { path: "lib/main.js", status: "modified", flags: [] },
+    ]),
+  );
+  const NATIVE_OFF: DependencyReviewPolicy = { ...POLICY, holdOnNativeBinaries: false };
+
+  test("are unread content when the policy doesn't hold them as a capability", () => {
+    expect(ADDED_BINARY).toMatchObject({ nativeBinariesAdded: 1, uninspectedFiles: 0 });
+    expect(hasUnreadContent(ADDED_BINARY)).toBe(true);
+    expect(hasUnreadContent(ADDED_BINARY, { nativeAddedHeld: true })).toBe(false);
+  });
+
+  test("feed the age fallback when native binaries are not held", () => {
+    expect(
+      decideBump(
+        { kind: "diffed", evidence: ADDED_BINARY, publishedAt: ONE_DAY_OLD },
+        NATIVE_OFF,
+        NOW,
+      ),
+    ).toMatchObject({ status: "hold", reasons: ["too-new"], passesAt: iso(NOW + 2 * DAY) });
+    expect(needsReleaseAge({ kind: "diffed", evidence: ADDED_BINARY }, NATIVE_OFF)).toBe(true);
+  });
+
+  test("hold under holdOnUninspectedFiles only when not already held as a capability", () => {
+    const uninspectedOn = { ...NO_AGE, holdOnUninspectedFiles: true };
+    expect(
+      decideBump(
+        { kind: "diffed", evidence: ADDED_BINARY },
+        { ...uninspectedOn, holdOnNativeBinaries: false },
+        NOW,
+      ),
+    ).toMatchObject({ status: "hold", reasons: ["uninspected-files"] });
+    expect(
+      decideBump({ kind: "diffed", evidence: ADDED_BINARY }, uninspectedOn, NOW),
+    ).toMatchObject({ status: "hold", reasons: ["native-binary-added"] });
+  });
+
+  test("a passing release that adds one is never listed clear", () => {
+    const verdict = decideBump(
+      { kind: "diffed", evidence: ADDED_BINARY },
+      { ...NATIVE_OFF, unreadMinimumAgeDays: null },
+      NOW,
+    );
+    expect(verdict.status).toBe("clear");
+    const { title, summary } = renderDependencyReviewCheck({
+      bumps: [{ bump: bump(), verdict, approved: false }],
+      conclusion: "clear",
+      diffUrl: () => null,
+      approvedBy: null,
+      unreadLockfiles: [],
+    });
+    expect(title).toBe("No updates held");
+    expect(summary).toContain("### Passed with unread changes (1)");
+    expect(summary).toContain("adds 1 native binary no rule reads");
+    expect(summary).not.toContain("### Clear");
+  });
+});
+
+describe("pins, re-pins, and the review limit in the summary", () => {
+  const render = (bumps: ReviewedBump[], conclusion: "clear" | "held") =>
+    renderDependencyReviewCheck({
+      bumps,
+      conclusion,
+      diffUrl: () => null,
+      approvedBy: null,
+      unreadLockfiles: [],
+    });
+
+  test("an unverified pin holds until approved and says why", () => {
+    const verdict = decideBump({ kind: "unreviewed", reason: "unverified-pin" }, POLICY, NOW);
+    expect(verdict).toEqual({
+      status: "hold",
+      reasons: ["too-new"],
+      evidence: null,
+      unreviewed: "unverified-pin",
+    });
+    expect(needsReleaseAge({ kind: "unreviewed", reason: "unverified-pin" }, POLICY)).toBe(false);
+    const { summary } = render([{ bump: bump(), verdict, approved: false }], "held");
+    expect(summary).toContain(
+      "no Drydock verdict (Drydock could not match its pinned hashes to the public registry's release); without a matching public release there is no publish time to wait out, so it holds until approved",
+    );
+  });
+
+  test("a re-pin reads as the same version with a new pin, not a new package", () => {
+    const repin = bump({ fromVersion: null, repinned: true });
+    const passed = render(
+      [{ bump: repin, verdict: { status: "new-package" }, approved: false }],
+      "clear",
+    ).summary;
+    expect(passed).toContain("### Same version, new pin (1)");
+    expect(passed).not.toContain("### New packages");
+
+    const held = render(
+      [
+        {
+          bump: repin,
+          verdict: { status: "hold", reasons: ["new-package"], evidence: null },
+          approved: false,
+        },
+        {
+          bump: bump({ name: "aged", fromVersion: null, repinned: true }),
+          verdict: decideBump({ kind: "new-package", publishedAt: ONE_DAY_OLD }, POLICY, NOW),
+          approved: false,
+        },
+      ],
+      "held",
+    ).summary;
+    expect(held).toContain("`left-pad` `1.0.1`: same version, new pin");
+    expect(held).toContain("`aged` `1.0.1`: same version, new pin; younger than");
+    expect(held).not.toContain("new package with no previous version");
+  });
+
+  test("a bump past the review limit says so instead of an unknown publish time", () => {
+    const capped = decideBump(
+      { kind: "unreviewed", reason: "over-cap", pastReviewLimit: true },
+      POLICY,
+      NOW,
+    );
+    const added = decideBump({ kind: "new-package", pastReviewLimit: true }, POLICY, NOW);
+    expect(capped).toMatchObject({ status: "hold", pastReviewLimit: true });
+    expect(added).toMatchObject({ status: "hold", pastReviewLimit: true });
+    // A known publish time wins over the marker.
+    expect(
+      decideBump(
+        { kind: "new-package", publishedAt: ONE_DAY_OLD, pastReviewLimit: true },
+        POLICY,
+        NOW,
+      ),
+    ).not.toHaveProperty("pastReviewLimit");
+    const { summary } = render(
+      [
+        { bump: bump({ name: "capped" }), verdict: capped, approved: false },
+        { bump: bump({ name: "added", fromVersion: null }), verdict: added, approved: false },
+      ],
+      "held",
+    );
+    expect(summary).toContain(
+      "no Drydock verdict (over the per-PR review limit); Drydock did not look up its age, so it holds until approved",
+    );
+    expect(summary).toContain(
+      "new package with no previous version to compare; past the per-PR review limit, so Drydock did not look up its age",
+    );
+    expect(summary).not.toContain("publish time is unknown");
+  });
+});
+
+describe("registry settings validation", () => {
+  test("private registries follow the mirror rules and normalize the same way", () => {
+    expect(
+      dependencyReviewPolicyInputError({ privateRegistries: ["https://npm.corp.example/npm"] }),
+    ).toBeNull();
+    expect(
+      dependencyReviewPolicyInputError({ privateRegistries: ["http://npm.corp.example/"] }),
+    ).toMatch(/private registry URLs/);
+    const eleven = Array.from({ length: 11 }, (_, i) => `https://r${i}.example/`);
+    expect(dependencyReviewPolicyInputError({ privateRegistries: eleven })).toMatch(/up to 10/);
+    expect(
+      parseDependencyReviewPolicy({
+        privateRegistries: ["https://npm.corp.example/npm", "https://npm.corp.example/npm/", 7],
+      }).privateRegistries,
+    ).toEqual(["https://npm.corp.example/npm/"]);
+  });
+
+  test("a URL can't be both a mirror and a private registry", () => {
+    expect(
+      dependencyReviewPolicyInputError({
+        publicMirrors: ["https://artifacts.example/npm/"],
+        privateRegistries: ["https://artifacts.example/"],
+      }),
+    ).toMatch(/both a mirror and a private registry/);
+    expect(
+      dependencyReviewPolicyInputError({
+        publicMirrors: ["https://artifacts.example/npm-remote/"],
+        privateRegistries: ["https://artifacts.example/npm-private/"],
+      }),
+    ).toBeNull();
+  });
+
+  test.each(["corp", "@", "@.corp", "@_corp", "@corp/pkg", "@co rp", 7])(
+    "refuses private scope %j",
+    (scope) => {
+      expect(dependencyReviewPolicyInputError({ privateScopes: [scope] })).toMatch(/npm scopes/);
+    },
+  );
+
+  test("private scopes are lowercased, deduped, and bounded", () => {
+    expect(
+      dependencyReviewPolicyInputError({ privateScopes: ["@Corp", "@corp-tools"] }),
+    ).toBeNull();
+    expect(
+      dependencyReviewPolicyInputError({
+        privateScopes: Array.from({ length: 51 }, (_, i) => `@s${i}`),
+      }),
+    ).toMatch(/up to 50/);
+    expect(
+      parseDependencyReviewPolicy({ privateScopes: ["@Corp", "@corp", "bad", "@corp-tools"] })
+        .privateScopes,
+    ).toEqual(["@corp", "@corp-tools"]);
+    expect(parseDependencyReviewPolicy({}).privateScopes).toEqual([]);
   });
 });

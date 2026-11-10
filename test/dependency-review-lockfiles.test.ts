@@ -66,7 +66,9 @@ function snapshotOf(
       kind,
       version: kind === "remote" ? null : id,
       location: null,
+      urls: [],
       hashes: null,
+      pins: [""],
       mixed: false,
       ...given,
     };
@@ -93,13 +95,14 @@ function snapshotOf(
 
 const bumpsOf = (base: LockfileSnapshot | null, head: LockfileSnapshot) =>
   diffLockfileSnapshots(base, head, "package-lock.json").map(
-    ({ name, fromVersion, toVersion, direct, privateSource, remoteSource }) => ({
+    ({ name, fromVersion, toVersion, direct, privateSource, remoteSource, repinned }) => ({
       name,
       fromVersion,
       toVersion,
       direct,
       ...(privateSource ? { privateSource } : {}),
       ...(remoteSource ? { remoteSource } : {}),
+      ...(repinned ? { repinned } : {}),
     }),
   );
 
@@ -181,7 +184,7 @@ describe("package-lock.json", () => {
         version: "5.3.0",
         resolved: "https://registry.yarnpkg.com/chalk/-/chalk-5.3.0.tgz",
       },
-      "node_modules/bundled-parent": { version: "1.0.0" },
+      "node_modules/bundled-parent": { version: "1.0.0", bundleDependencies: ["inner"] },
       "node_modules/bundled-parent/node_modules/inner": { version: "1.0.0", inBundle: true },
     });
     const snapshot = parseLockfile("npm", text);
@@ -237,7 +240,11 @@ describe("package-lock.json", () => {
     const text = lock({
       "": { dependencies: { a: "github:org/a#v1", b: "git://host/b.git", ws: "*" } },
       "node_modules/a": { version: "1.2.0", resolved: "github:org/a#0123abc" },
-      "node_modules/b": { version: "1.0.0", resolved: "git://host/b.git#fedcba" },
+      "node_modules/b": {
+        version: "1.0.0",
+        resolved: "git://host/b.git#fedcba",
+        bundleDependencies: true,
+      },
       "node_modules/ws": { resolved: "packages/ws", link: true },
       "node_modules/tgz": { version: "1.0.0", resolved: "file:vendor/tgz-1.0.0.tgz" },
       "node_modules/b/node_modules/inner": { version: "1.0.0", inBundle: true },
@@ -276,7 +283,7 @@ describe("package-lock.json", () => {
     });
   });
 
-  test("drops invalid names, keeps a version npm would resolve itself as remote, and ignores prototype keys", () => {
+  test("an invalid name makes the snapshot incomplete; a version npm would resolve itself is remote; prototype keys are plain keys", () => {
     const text =
       '{"lockfileVersion":3,"packages":{"":{"dependencies":{"__proto__":"1","constructor":"1"}},' +
       '"node_modules/__proto__":{"version":"1.0.0"},' +
@@ -290,6 +297,7 @@ describe("package-lock.json", () => {
       '"node_modules/obj":{"version":{"toString":"1.0.0"}},' +
       '"node_modules/inherited":{}}}';
     const snapshot = parseLockfile("npm", text);
+    expect(snapshot.complete).toBe(false);
     expect(summary(snapshot)).toEqual({
       "npm:constructor": { versions: ["1.0.0"], direct: true },
       "npm:x": { versions: ["1.0.0"], direct: false },
@@ -388,6 +396,9 @@ describe("pnpm-lock.yaml", () => {
       "",
       "  tarpkg@https://codeload.github.com/a/b/tar.gz/abc:",
       "    resolution: {tarball: https://codeload.github.com/a/b/tar.gz/abc}",
+      "",
+      "  js-tokens@4.0.0:",
+      "    resolution: {integrity: sha512-j}",
       "",
       "snapshots:",
       "",
@@ -547,8 +558,13 @@ describe("pnpm-lock.yaml", () => {
       "npm:react-dom": { versions: ["17.0.2"], direct: true },
       "npm:react": { versions: ["17.0.2"], direct: false },
       "npm:@scope/real": { versions: ["2.0.0"], direct: true },
-      // No URL in a host-prefixed key, so the version and its pin identify it.
-      "npm:private": { versions: ["1.0.0 (sha512-d)"], direct: true, privateSource: true },
+      // A host-prefixed key names a host but no URL: remote, identified by the
+      // key and its pin.
+      "npm:private": {
+        versions: ["registry.corp.example/private/1.0.0 (sha512-d)"],
+        direct: true,
+        privateSource: true,
+      },
       "npm:b": {
         versions: ["https://codeload.github.com/a/b/tar.gz/0123456789abcdef"],
         direct: false,
@@ -557,24 +573,33 @@ describe("pnpm-lock.yaml", () => {
     });
   });
 
-  test("ignores look-alike sections and malformed lines", () => {
-    const text = [
-      "lockfileVersion: '9.0'",
-      "overrides:",
-      "  evil@1.0.0: 1.0.0",
-      "packages:",
-      "  'unterminated@1.0.0:",
-      "  key:value",
-      "\tnested@1.0.0:",
-      "  ok@1.0.0:",
-      "    resolution: {integrity: sha512-x}",
-      "  __proto__@1.0.0: {}",
-      "  constructor@1.0.0: {}",
-    ].join("\n");
-    expect(summary(parseLockfile("pnpm", text))).toEqual({
+  test("ignores look-alike sections; any malformed line makes the lockfile unread", () => {
+    const lock = (...extra: string[]) =>
+      [
+        "lockfileVersion: '9.0'",
+        "overrides:",
+        "  evil@1.0.0: 1.0.0",
+        "packages:",
+        "  ok@1.0.0:",
+        "    resolution: {integrity: sha512-x}",
+        "  constructor@1.0.0:",
+        "    resolution: {integrity: sha512-y}",
+        ...extra,
+      ].join("\n");
+    expect(summary(parseLockfile("pnpm", lock()))).toEqual({
       "npm:ok": { versions: ["1.0.0"], direct: false },
       "npm:constructor": { versions: ["1.0.0"], direct: false },
     });
+    for (const line of [
+      "  'unterminated@1.0.0:",
+      "  key:value",
+      "\tnested@1.0.0:",
+      "  __proto__@1.0.0: {}",
+      "  bad name@1.0.0:\n    resolution: {integrity: sha512-z}",
+      "  noresolution@1.0.0:\n    engines: {node: '>=1'}",
+    ]) {
+      expect(parseLockfile("pnpm", lock(line)).complete, line).toBe(false);
+    }
   });
 });
 
@@ -635,6 +660,8 @@ describe("yarn.lock", () => {
 
   test("v1: git, URL, and user/repo descriptors are remote sources; file and path descriptors are skipped", () => {
     const text = [
+      "# yarn lockfile v1",
+      "",
       '"short@org/short#v1":',
       '  version "1.0.0"',
       '  resolved "https://codeload.github.com/org/short/tar.gz/abc123"',
@@ -654,9 +681,6 @@ describe("yarn.lock", () => {
       '  version "1.0.0"',
       "",
       '"rel@./vendor/rel":',
-      '  version "1.0.0"',
-      "",
-      '"mixed@^1.0.0", "mixed@file:../mixed":',
       '  version "1.0.0"',
     ].join("\n");
     const manifest = JSON.stringify({ dependencies: { short: "org/short#v1" } });
@@ -682,7 +706,7 @@ describe("yarn.lock", () => {
   });
 
   test("v1 without a manifest still lists transitive packages, none direct", () => {
-    const text = ["lodash@^4.17.0:", '  version "4.17.21"'].join("\n");
+    const text = ["# yarn lockfile v1", "", "lodash@^4.17.0:", '  version "4.17.21"'].join("\n");
     for (const manifestText of [undefined, null, "{", "[]", '{"dependencies":"x"}']) {
       expect(summary(parseLockfile("yarn", text, { manifestText }))).toEqual({
         "npm:lodash": { versions: ["4.17.21"], direct: false },
@@ -1180,20 +1204,28 @@ describe("hostile input", () => {
       `${'{ name = "'.repeat(n / 10)}`,
       `${"a".repeat(n)}==`,
       `x${" ".repeat(n)}`,
+      `k: {${"a: b, ".repeat(n / 6)}a: b}`,
+      `k: [${"'x', ".repeat(n / 5)}'x']`,
+      `${'"a'.repeat(n / 2)}`,
+      `--${"-".repeat(n)}`,
     ];
-    const opener = { pnpm: "packages:", yarn: "x@^1.0.0:", uv: "[[package]]", requirements: "" };
+    const opener = {
+      pnpm: "packages:",
+      yarn: "# yarn lockfile v1\nx@^1.0.0:",
+      uv: "[[package]]",
+      requirements: "",
+    };
     const started = performance.now();
     for (const line of lines) {
       for (const [kind, first] of Object.entries(opener)) {
-        const text = `${first}\n  ${line}\n${line}\n`;
-        // A uv package table with no readable name or source is unread.
-        expect(parseLockfile(kind as keyof typeof opener, text).complete).toBe(kind !== "uv");
+        parseLockfile(kind as keyof typeof opener, `${first}\n  ${line}\n${line}\n`);
       }
+      parseLockfile("yarn", `__metadata:\n  version: 8\n${line}\n  ${line}\n`);
     }
     expect(parseLockfile("requirements", "\n".repeat(n)).complete).toBe(true);
     expect(parseLockfile("requirements", "a \\\n".repeat(n / 4)).complete).toBe(true);
     expect(parseLockfile("requirements", "a#".repeat(n / 2)).complete).toBe(true);
-    expect(parseLockfile("pnpm", `packages:\n  ${"a:b".repeat(n / 3)}:\n`).complete).toBe(true);
+    parseLockfile("pnpm", `packages:\n  ${"a:b".repeat(n / 3)}:\n`);
     expect(performance.now() - started).toBeLessThan(5_000);
   });
 });

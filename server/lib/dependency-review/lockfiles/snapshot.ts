@@ -14,12 +14,20 @@ export interface LockfileSource {
   // The release the entry names, for public and registry sources.
   version: string | null;
   // For registry sources: the tarball URL (npm formats) or index URL (uv) the
-  // lockfile records, or null when it records none.
+  // lockfile records, or null when it records none. For a remote tarball: its
+  // URL, when it is a plain http(s) URL.
   location: string | null;
-  // Pins a mirror comparison can check against the public registry: npm's
-  // `sha512-…` integrity components (only when nothing stronger or unknown is
-  // beside them), uv's `sha256:…` file hashes. Null when absent or unusable.
+  // uv: the file URLs the lock records, which are where the bytes come from.
+  urls: readonly string[];
+  // Pins a public-registry comparison can check: npm's `sha512-…` integrity
+  // components (only when nothing stronger or unknown is beside them), uv's
+  // and hashed requirements' `sha256:…` file hashes. The union over every
+  // copy recorded under this identity; null when any copy has none usable.
   hashes: readonly string[] | null;
+  // What each copy pins, as compared across the PR: the usable hashes when
+  // there are any, else the pin as written, else "". Sorted and distinct. A
+  // public identity whose pins change is a re-pin of the same version.
+  pins: readonly string[];
   // Several entries recorded this identity and disagreed about where it came
   // from; the worst kind wins and it is never compared as a mirror copy.
   mixed: boolean;
@@ -114,19 +122,29 @@ interface RegistryEntry {
     // What identifies the entry, when the lockfile records a per-version
     // reference (a tarball URL, a Berry locator); otherwise the version does.
     ref: string | null;
+    urls?: readonly string[];
   };
   hashes?: readonly string[] | null;
   // What the lockfile pins the bytes with (integrity, checksum, hash summary).
-  // Part of a non-public identity, so a re-pin of the same reference differs.
+  // Part of a non-public identity, so a re-pin of the same reference differs;
+  // compared beside a public one (see `LockfileSource.pins`).
   pin?: string | null;
 }
 
 export interface SnapshotBuilder {
-  // Records one registry version; invalid names or versions are dropped.
+  // Records one registry version. An invalid name or version is an entry
+  // this layer cannot place, so it makes the snapshot incomplete.
   add(name: unknown, version: unknown, entry?: RegistryEntry): void;
   // Records a version from a non-registry remote source, identified by its
   // resolved reference (and pin), or by `version` when there is none.
-  addRemote(name: unknown, ref: unknown, version: unknown, pin?: string | null): void;
+  // `location` is the tarball URL, for a plain http(s) one.
+  addRemote(
+    name: unknown,
+    ref: unknown,
+    version: unknown,
+    pin?: string | null,
+    location?: string | null,
+  ): void;
   markDirect(name: unknown): void;
   markIncomplete(): void;
   // Claims room for `count` intermediate records; false (and incomplete) once
@@ -143,17 +161,26 @@ interface MutablePackage {
 
 const KIND_RANK: Record<LockfileSourceKind, number> = { public: 0, registry: 1, remote: 2 };
 
-function sameSource(a: LockfileSource, b: LockfileSource): boolean {
-  return (
-    a.kind === b.kind &&
-    a.version === b.version &&
-    a.location === b.location &&
-    (a.hashes === b.hashes ||
-      (a.hashes !== null &&
-        b.hashes !== null &&
-        a.hashes.length === b.hashes.length &&
-        a.hashes.every((hash, i) => hash === b.hashes![i])))
-  );
+function union(a: readonly string[], b: readonly string[]): string[] {
+  return [...new Set([...a, ...b])].sort();
+}
+
+// Two copies recorded under one identity. Copies from the same place merge
+// their pins and hashes (every hash must then match); copies that disagree
+// about the place are `mixed`, keep the worst kind, and offer no hashes.
+function mergeSources(a: LockfileSource, b: LockfileSource): LockfileSource {
+  const pins = union(a.pins, b.pins);
+  const urls = union(a.urls, b.urls);
+  if (a.kind === b.kind && a.version === b.version && a.location === b.location) {
+    const hashes = a.hashes && b.hashes ? union(a.hashes, b.hashes) : null;
+    return { ...a, urls, pins, hashes, mixed: a.mixed || b.mixed };
+  }
+  const worst = KIND_RANK[b.kind] > KIND_RANK[a.kind] ? b : a;
+  return { ...worst, urls, pins, hashes: null, mixed: true };
+}
+
+function pinKey(hashes: readonly string[] | null, pin: string | null): string {
+  return hashes ? hashes.join(" ") : (pin ?? "");
 }
 
 export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotBuilder {
@@ -170,10 +197,7 @@ export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotB
     const existing = packages.get(key);
     const recorded = existing?.sources.get(identity);
     if (recorded) {
-      if (!sameSource(recorded, source)) {
-        const worst = KIND_RANK[source.kind] > KIND_RANK[recorded.kind] ? source : recorded;
-        existing!.sources.set(identity, { ...worst, mixed: true });
-      }
+      existing!.sources.set(identity, mergeSources(recorded, source));
       return;
     }
     if (
@@ -190,38 +214,46 @@ export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotB
   return {
     add(name, version, entry = {}) {
       const key = canonical(name);
-      if (key === null || !validVersion(version)) return;
-      const hashes = entry.hashes?.length ? [...entry.hashes] : null;
+      if (key === null || !validVersion(version)) {
+        complete = false;
+        return;
+      }
+      const hashes = entry.hashes?.length ? [...new Set(entry.hashes)].sort() : null;
       const pin = typeof entry.pin === "string" && entry.pin ? entry.pin : null;
+      const base = { version, hashes, pins: [pinKey(hashes, pin)], mixed: false };
       if (!entry.registry) {
-        record(key, version, { kind: "public", version, location: null, hashes, mixed: false });
+        record(key, version, { ...base, kind: "public", location: null, urls: [] });
         return;
       }
       const { location, ref } = entry.registry;
+      const urls = [...new Set(entry.registry.urls ?? [])].sort();
       // Always parenthesized or a URL, so never equal to a public identity.
       const identity = ref
         ? boundedRef(pin ? `${ref} (${pin})` : ref)
         : boundedRef(`${version} (${pin ?? location ?? "private registry"})`);
-      record(key, identity, { kind: "registry", version, location, hashes, mixed: false });
+      record(key, identity, { ...base, kind: "registry", location, urls });
     },
-    addRemote(name, ref, version, pin) {
+    addRemote(name, ref, version, pin, location = null) {
       const key = canonical(name);
-      if (key === null) return;
       const reference = typeof ref === "string" ? ref.trim() : "";
-      const source: LockfileSource = {
-        kind: "remote",
-        version: null,
-        location: null,
-        hashes: null,
-        mixed: false,
-      };
       // With no reference the version stands in. Either way, an identity that
       // reads as a version is marked, so it never equals the public identity
       // of that version (on this side or the other) and vanishes from the diff.
       const base = reference || (validVersion(version) ? version : "");
-      if (!base) return;
+      if (key === null || !base) {
+        complete = false;
+        return;
+      }
       const marked = pin || (validVersion(base) ? "unknown source" : "");
-      record(key, boundedRef(marked ? `${base} (${marked})` : base), source);
+      record(key, boundedRef(marked ? `${base} (${marked})` : base), {
+        kind: "remote",
+        version: null,
+        location,
+        urls: [],
+        hashes: null,
+        pins: [pin ?? ""],
+        mixed: false,
+      });
     },
     markDirect(name) {
       const key = canonical(name);
@@ -298,7 +330,9 @@ const YARN_FRAGMENT = /^[0-9a-f]{40}$/;
 export type TarballSource =
   | { kind: "public" }
   | { kind: "registry"; location: string }
-  | { kind: "remote" };
+  // `location`: the URL, when it is a plain http(s) URL a registry prefix can
+  // be matched against.
+  | { kind: "remote"; location: string | null };
 
 // `<name>/-/<unscoped>-<version>.tgz`, the path a registry serves a version's
 // tarball at, with the scope's slash literal or percent-encoded.
@@ -318,46 +352,77 @@ export function npmRegistryTarballPaths(name: string, version: string): string[]
  * canonical tarball for exactly them; the comparison is on the exact text, so
  * case, dot segments, encodings, queries, and trailing junk all fail it. A URL
  * on another host shaped as a registry's copy of the same name and version is
- * a private registry. Everything else, including any other public-host URL,
- * is a remote tarball.
+ * a registry copy, which only the organization's declared registries and
+ * mirrors make anything but remote (see `routedBump`). Everything else,
+ * including any other public-host URL, is a remote tarball.
  */
 export function classifyNpmTarball(url: string, name: string, version: unknown): TarballSource {
-  const remote = { kind: "remote" } as const;
+  const hash = url.indexOf("#");
+  const base = hash === -1 ? url : url.slice(0, hash);
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(base);
+  } catch {
+    parsed = null;
+  }
+  const plain =
+    parsed !== null &&
+    parsed.href === base &&
+    (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+    !parsed.username &&
+    !parsed.password &&
+    !base.includes("?") &&
+    (hash === -1 || YARN_FRAGMENT.test(url.slice(hash + 1)));
+  const remote = { kind: "remote", location: plain ? base : null } as const;
   if (typeof version !== "string" || !VALID_VERSION.npm(version) || !validNpmName(name)) {
     return remote;
   }
-  const hash = url.indexOf("#");
-  const base = hash === -1 ? url : url.slice(0, hash);
-  if (hash !== -1 && !YARN_FRAGMENT.test(url.slice(hash + 1))) return remote;
+  if (!plain || !parsed) return remote;
   const [canonicalPath] = npmRegistryTarballPaths(name, version);
   if (PUBLIC_NPM_HOSTS.some((host) => base === `https://${host}/${canonicalPath}`)) {
     return { kind: "public" };
   }
-  let parsed: URL;
-  try {
-    parsed = new URL(base);
-  } catch {
-    return remote;
-  }
-  if (
-    parsed.href !== base ||
-    (parsed.protocol !== "https:" && parsed.protocol !== "http:") ||
-    PUBLIC_NPM_HOSTS.includes(parsed.hostname) ||
-    parsed.username ||
-    parsed.password ||
-    base.includes("?")
-  ) {
-    return remote;
-  }
-  const path = npmRegistryTarballPaths(name, version).find((tail) =>
-    parsed.pathname.endsWith(`/${tail}`),
-  );
+  if (PUBLIC_NPM_HOSTS.includes(parsed.hostname)) return remote;
+  const pathname = parsed.pathname;
+  const path = npmRegistryTarballPaths(name, version).find((tail) => pathname.endsWith(`/${tail}`));
   if (!path) return remote;
-  const prefix = parsed.pathname.slice(0, -path.length);
+  const prefix = pathname.slice(0, -path.length);
   // An encoded separator or dot in the registry's own path can route the
   // request somewhere the visible path does not name.
   if (/%(?:2f|5c|2e)/i.test(prefix)) return remote;
   return { kind: "registry", location: base };
+}
+
+const PYPI_SIMPLE_INDEX = /^https:\/\/pypi\.org\/simple\/?$/;
+
+/** PyPI's own simple index, as uv records it. */
+export function isPyPiSimpleIndex(url: string): boolean {
+  return PYPI_SIMPLE_INDEX.test(url);
+}
+
+/**
+ * A distribution file on PyPI's own file host, written the way PyPI links it:
+ * plain https, already canonical, no query, fragment, or credentials, and no
+ * encoded separator or dot that could route the request elsewhere.
+ */
+export function isPublicPyPiFileUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.href === url &&
+    parsed.protocol === "https:" &&
+    parsed.host === "files.pythonhosted.org" &&
+    parsed.pathname.startsWith("/packages/") &&
+    !parsed.username &&
+    !parsed.password &&
+    !url.includes("?") &&
+    !url.includes("#") &&
+    !/%(?:2f|5c|2e)/i.test(parsed.pathname)
+  );
 }
 
 const SHA512_TOKEN = /^sha512-[A-Za-z0-9+/]{86}==$/;
@@ -378,7 +443,7 @@ export function npmIntegrity(value: unknown): { pin: string | null; hashes: stri
   const pin = value.trim();
   if (!pin) return { pin: null, hashes: null };
   if (pin.length > MAX_INTEGRITY_LENGTH) return { pin, hashes: null };
-  const tokens = pin.split(/\s+/);
+  const tokens = [...new Set(pin.split(/\s+/))].sort();
   const sha512 = new Set<string>();
   for (const token of tokens) {
     if (SHA512_TOKEN.test(token)) sha512.add(token);

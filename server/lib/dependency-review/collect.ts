@@ -18,9 +18,13 @@ import {
 } from "./lockfiles";
 import { npmManifestHasOnlyMetadataChanges } from "./manifests";
 import {
-  collectCustomRegistries,
+  addRouting,
   emptyCustomRegistries,
   npmNameRoute,
+  configAncestors,
+  parseRoutingConfig,
+  resolutionConfigChanged,
+  resolutionConfigKind,
   unreadableCustomRegistries,
   type CustomRegistries,
 } from "./registry-config";
@@ -47,6 +51,9 @@ const PYPI_MANIFEST = /(?:^|\/)(?:pyproject\.toml|setup\.cfg|setup\.py|Pipfile|[
 // `.txt` is read as requirements: anything in it that
 // isn't a pin is compared as text, so a file that isn't one holds, not passes.
 const OTHER_REQUIREMENTS = /\.txt$/;
+// Resolution config files read per review, beyond which a changed one is
+// unread without being compared.
+const MAX_CONFIG_FILES = 20;
 
 const KIND_ECOSYSTEM: Record<LockfileKind, DependencyEcosystem> = {
   npm: "npm",
@@ -113,13 +120,14 @@ export async function collectBumps(
   let mergeBasePromise: Promise<string> | undefined;
   const mergeBaseRef = () =>
     (mergeBasePromise ??= fetchMergeBase(token, repo, baseSha, review.headSha));
+  unreadLockfiles.push(...(await changedResolutionConfig(context, files, mergeBaseRef)));
   if (lockfiles.length === 0) {
     unreadLockfiles.push(...(await unreadManifests(context, changed, heads, mergeBaseRef)));
     return { bumps: [], unreadLockfiles, listingComplete: complete };
   }
 
   const mergeBase = await mergeBaseRef();
-  const registries = new Map<string, Promise<CustomRegistries>>();
+  const registries = new Map<string, Promise<RegistryConfig>>();
   const byChange = new Map<string, DependencyBump>();
   for (const { file, kind } of lockfiles.slice(0, MAX_LOCKFILES)) {
     const fallback = !lockfileKindForPath(file.filename);
@@ -152,21 +160,31 @@ export async function collectBumps(
     if (KIND_ECOSYSTEM[kind] === "npm") {
       const dir = dirname(file.filename);
       if (!registries.has(dir)) registries.set(dir, readCustomRegistries(context, dir));
-      custom = await (registries.get(dir) as Promise<CustomRegistries>);
+      const config = await registries.get(dir)!;
+      custom = config.registries;
+      for (const path of config.unreadable) {
+        if (!unreadLockfiles.includes(path)) unreadLockfiles.push(path);
+      }
     }
     for (const change of diffLockfileChanges(baseSnapshot, headSnapshot, file.filename)) {
       // A name the repository routes to another registry is kept, never
       // diffed (unless proven a mirror copy): dropping it would let its
       // change pass unseen.
       const route = custom ? npmNameRoute(custom, change.bump.name) : PUBLIC_ROUTE;
-      const bump = routedBump(change, route, policy.publicMirrors);
+      const bump = routedBump(change, route, {
+        publicMirrors: policy.publicMirrors ?? [],
+        privateRegistries: policy.privateRegistries ?? [],
+        privateScopes: policy.privateScopes ?? [],
+      });
       const key = dependencyChangeKey(bump);
       const existing = byChange.get(key);
       if (existing) mergeBump(existing, bump);
       else byChange.set(key, { ...bump });
     }
   }
-  unreadLockfiles.push(...(await unreadManifests(context, changed, heads, mergeBaseRef)));
+  for (const path of await unreadManifests(context, changed, heads, mergeBaseRef)) {
+    if (!unreadLockfiles.includes(path)) unreadLockfiles.push(path);
+  }
   // Direct bumps first: when the per-review cap bites, it bites transitive churn.
   const bumps = [...byChange.values()].sort(
     (a, b) => Number(b.direct) - Number(a.direct) || a.name.localeCompare(b.name),
@@ -192,21 +210,74 @@ async function readLockfileText(
   return { text, manifest: typeof manifest === "string" ? manifest : null };
 }
 
-async function readCustomRegistries(
-  context: ReviewContext,
-  dir: string,
-): Promise<CustomRegistries> {
+interface RegistryConfig {
+  registries: CustomRegistries;
+  // Config files that apply and could not be read; every name is then routed
+  // somewhere unknown, and the files are reported as unread coverage.
+  unreadable: string[];
+}
+
+// The `.npmrc` and `.yarnrc.yml` of the lockfile's directory and every one
+// above it, at the head, merged.
+async function readCustomRegistries(context: ReviewContext, dir: string): Promise<RegistryConfig> {
+  const dirs = configAncestors(dir);
+  if (dirs === null) return { registries: unreadableCustomRegistries(), unreadable: [] };
   const found = emptyCustomRegistries();
-  for (const base of new Set([dir, ""])) {
-    const [npmrc, yarnrc] = await Promise.all([
-      readRepositoryFile(context.token, context.repo, `${base}.npmrc`, context.review.headSha),
-      readRepositoryFile(context.token, context.repo, `${base}.yarnrc.yml`, context.review.headSha),
+  const unreadable: string[] = [];
+  const paths = dirs.flatMap((base) => [`${base}.npmrc`, `${base}.yarnrc.yml`]);
+  const texts = await Promise.all(
+    paths.map((path) =>
+      readRepositoryFile(context.token, context.repo, path, context.review.headSha),
+    ),
+  );
+  paths.forEach((path, i) => {
+    const text = texts[i];
+    if (text === null) return;
+    const routing = text === "too-large" ? null : parseRoutingConfig(path, text);
+    if (routing === null) unreadable.push(path);
+    addRouting(found, routing);
+  });
+  return { registries: found, unreadable };
+}
+
+/**
+ * Resolution config the PR adds, removes, or changes, which moves where
+ * packages are fetched from without any lockfile showing it. A `.npmrc` or
+ * `.yarnrc.yml` whose routing reads the same at the merge base and the head
+ * changed nothing that matters; any other change (including to Yarn v1's
+ * `.yarnrc`, `uv.toml`, `pip.conf`, and the `[tool.uv]` tables of a
+ * `pyproject.toml`) is reported as unread.
+ */
+async function changedResolutionConfig(
+  context: ReviewContext,
+  files: readonly PullRequestFile[],
+  mergeBaseRef: () => Promise<string>,
+): Promise<string[]> {
+  const unread: string[] = [];
+  let inspected = 0;
+  for (const file of files) {
+    const path = file.filename;
+    const kind = resolutionConfigKind(path);
+    if (kind === null) continue;
+    // A moved file applies to another directory than it did.
+    if (kind === "opaque" || file.status === "renamed") {
+      unread.push(path);
+      continue;
+    }
+    if (inspected >= MAX_CONFIG_FILES) {
+      unread.push(path);
+      continue;
+    }
+    inspected += 1;
+    const read = async (at: string | null, ref: () => Promise<string>) =>
+      at === null ? null : readRepositoryFile(context.token, context.repo, at, await ref());
+    const [before, after] = await Promise.all([
+      read(file.status === "added" ? null : path, mergeBaseRef),
+      read(file.status === "removed" ? null : path, async () => context.review.headSha),
     ]);
-    // Config too large to read could name any registry, so it drops every name.
-    if (npmrc === "too-large" || yarnrc === "too-large") return unreadableCustomRegistries();
-    collectCustomRegistries(found, { npmrc, yarnrc });
+    if (resolutionConfigChanged(path, before, after)) unread.push(path);
   }
-  return found;
+  return unread;
 }
 
 interface HeadLockfile {
@@ -316,7 +387,7 @@ function compiledFrom(text: string | null, manifestName: string): boolean {
 
 const PNPM_IMPORTER = /^ {2}(['"]?)(.+?)\1:\s*$/;
 const UV_LOCAL_SOURCE = /source = \{ (?:editable|virtual|directory) = "([^"]+)" \}/g;
-const BERRY_WORKSPACE = /@workspace:([^"]+)"/g;
+const BERRY_WORKSPACE_MARKER = "@workspace:";
 
 /** Which directories, relative to the lockfile's, it records as workspaces. */
 function workspaceMatcher(
@@ -344,7 +415,18 @@ function workspaceMatcher(
   } else if (kind === "uv") {
     for (const match of text.matchAll(UV_LOCAL_SOURCE)) dirs.add(normalize(match[1]));
   } else if (kind === "yarn") {
-    for (const match of text.matchAll(BERRY_WORKSPACE)) dirs.add(normalize(match[1]));
+    // A forward scan rather than a `[^"]+"` pattern, which on a long run of
+    // markers with no closing quote rescans to the end from each one. The
+    // next quote and newline are remembered, so the text is read once.
+    let quote = -1;
+    let newline = -1;
+    for (let at = text.indexOf(BERRY_WORKSPACE_MARKER); at !== -1;) {
+      const start = at + BERRY_WORKSPACE_MARKER.length;
+      if (quote !== Infinity && quote < start) quote = nextIndex(text, '"', start);
+      if (newline !== Infinity && newline < start) newline = nextIndex(text, "\n", start);
+      if (quote > start && quote < newline) dirs.add(normalize(text.slice(start, quote)));
+      at = text.indexOf(BERRY_WORKSPACE_MARKER, start);
+    }
     const globs = yarnWorkspaceGlobs(manifest);
     return (dir) => dirs.has(dir) || (dir.length <= 512 && globs.some((glob) => glob.test(dir)));
   }
@@ -375,6 +457,11 @@ function yarnWorkspaceGlobs(manifest: string | null): RegExp[] {
     globs.push(new RegExp(`^${pattern}$`));
   }
   return globs;
+}
+
+function nextIndex(text: string, search: string, from: number): number {
+  const at = text.indexOf(search, from);
+  return at === -1 ? Infinity : at;
 }
 
 function parseJson(text: string): unknown {

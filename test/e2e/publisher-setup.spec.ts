@@ -233,6 +233,8 @@ async function installSetupMocks(
             holdOnNewPackages: false,
             unreadMinimumAgeDays: 3,
             publicMirrors: [],
+            privateRegistries: [],
+            privateScopes: [],
           },
           extraBotLogins: [],
         },

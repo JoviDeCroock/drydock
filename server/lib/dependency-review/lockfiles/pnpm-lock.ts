@@ -9,89 +9,114 @@ import {
   type SnapshotBuilder,
   type TarballSource,
 } from "./snapshot";
-import { yamlLines } from "./lines";
+import { readStrictYaml, type YamlValue } from "./lines";
 
 const DEPENDENCY_SECTIONS = new Set(["dependencies", "devDependencies", "optionalDependencies"]);
-const PACKAGE_SECTIONS = new Set(["packages", "snapshots"]);
+// The `packages` entry fields that say what to fetch. They are taken from
+// `packages` only; a `snapshots` entry carrying one is not a shape pnpm's
+// lockfile writer produces.
+const SOURCE_FIELDS = new Set(["resolution", "name", "version", "id"]);
+const RESOLUTION_FIELDS = new Set([
+  "integrity",
+  "tarball",
+  "type",
+  "directory",
+  "repo",
+  "commit",
+  "path",
+]);
 
-// pnpm-lock.yaml v5 through v9. Installed packages are the keys of
-// `packages` (and v9's `snapshots`); direct dependencies are the `importers`
-// sections, or the top-level sections of a single-project v5 lockfile.
+// pnpm-lock.yaml v5 through v9, read with the strict YAML reader (see
+// `readStrictYaml`). Installed packages are the keys of `packages` (v9's
+// `snapshots` repeat them, and each must have one); direct dependencies are
+// the `importers` sections, or the top-level sections of a single-project v5
+// lockfile. Every document of a multi-document lockfile (pnpm's own
+// `packageManagerDependencies` come first) is read.
 export function parsePnpmLock(text: string): LockfileSnapshot {
   const builder = createSnapshotBuilder("npm");
-  // By key without its peer suffix. In v9 a `snapshots` key repeats its
-  // `packages` key, whose entry carries the resolution.
+  // By key without its peer suffix.
   const entries = new Map<string, PnpmEntry>();
-  let mode: "importers" | "root" | "packages" | null = null;
-  let importer: string | null = null;
-  let sectionIndent: number | null = null;
-  let dep: string | null = null;
+  const snapshotIds = new Set<string>();
+  // The keys on the path to the current entry, by depth.
+  const path: string[] = [];
   let pkg: PnpmEntry | null = null;
-  let inResolution = false;
+  let valid = true;
+  const fail = () => {
+    valid = false;
+    return false;
+  };
 
-  for (const line of yamlLines(text)) {
-    const { indent, value } = line;
-    const key = line.key ?? "";
-    if (indent === 0) {
-      dep = null;
+  const readable = readStrictYaml(text, (entry) => {
+    if (entry === null) {
+      path.length = 0;
       pkg = null;
-      importer = null;
-      sectionIndent = null;
-      mode = key === "importers" ? "importers" : PACKAGE_SECTIONS.has(key) ? "packages" : null;
-      if (DEPENDENCY_SECTIONS.has(key)) {
-        mode = "root";
-        importer = ".";
-        sectionIndent = 0;
-      }
-      continue;
+      return;
     }
-    if (mode === "packages") {
-      if (indent === 2) {
+    const { depth, key, value } = entry;
+    path.length = depth;
+    path.push(key ?? "");
+    const section = path[0];
+    if (section === "packages" || section === "snapshots") {
+      if (depth === 1) {
         pkg = null;
-        inResolution = false;
+        if (key === null) return fail();
         const id = before(key, "(");
+        if (!builder.reserve()) return false;
+        if (section === "snapshots") {
+          snapshotIds.add(id);
+          return;
+        }
         const parsed = pnpmPackageKey(id);
-        if (!parsed) continue;
-        pkg = entries.get(id) ?? null;
-        if (pkg) continue;
-        if (!builder.reserve()) break;
-        pkg = { ...parsed, fields: new Map(), resolution: new Map() };
+        if (!parsed || entries.has(id)) return fail();
+        pkg = { ...parsed, fields: new Map(), resolution: null };
         entries.set(id, pkg);
-      } else if (pkg && indent === 4) {
-        inResolution = key === "resolution";
-        if (inResolution) for (const [k, v] of flowFields(value)) pkg.resolution.set(k, v);
-        else if (key === "name" || key === "version") pkg.fields.set(key, value);
-      } else if (pkg && inResolution && indent === 6 && key) {
-        pkg.resolution.set(key, value);
+        return;
       }
-      continue;
+      if (depth === 2 && key !== null && SOURCE_FIELDS.has(key)) {
+        if (section === "snapshots" || !pkg) return fail();
+        if (key === "resolution") {
+          if (value.kind === "map") pkg.resolution = new Map(value.fields);
+          else if (value.kind === "block") pkg.resolution = new Map();
+          else return fail();
+        } else if (value.kind === "scalar") pkg.fields.set(key, value.text);
+        else return fail();
+        return;
+      }
+      if (depth === 3 && path[2] === "resolution" && section === "packages" && pkg?.resolution) {
+        if (key === null || value.kind !== "scalar") return fail();
+        pkg.resolution.set(key, value.text);
+      }
+      return;
     }
-    if (mode === "importers" && indent === 2) {
-      importer = key;
-      sectionIndent = null;
-      dep = null;
-      continue;
-    }
-    if (mode === "importers" && indent === 4) {
-      sectionIndent = DEPENDENCY_SECTIONS.has(key) ? 4 : null;
-      dep = null;
-      continue;
-    }
-    if (sectionIndent === null || importer === null) continue;
-    let declared: string | null = null;
-    if (indent === sectionIndent + 2) {
-      dep = key;
-      if (value) declared = value;
-    } else if (indent === sectionIndent + 4 && key === "version" && dep) {
-      declared = value;
-    }
-    if (declared && dep) {
-      builder.markDirect(importerPackageName(dep, declared));
-    }
+    const declared = importerDeclaration(path, depth, key, value);
+    if (declared) builder.markDirect(importerPackageName(declared[0], declared[1]));
+  });
+  if (!readable || !valid) {
+    builder.markIncomplete();
+    return builder.finish();
   }
-
+  for (const id of snapshotIds) if (!entries.has(id)) builder.markIncomplete();
   for (const entry of entries.values()) recordEntry(builder, entry);
   return builder.finish();
+}
+
+// `[dep, resolved]` for an importer's dependency line: v9/v6 importers
+// (`importers.<dir>.<section>.<dep>.version`), v5 importers
+// (`importers.<dir>.<section>.<dep>: <version>`), and a single-project
+// lockfile's top-level sections in either form.
+function importerDeclaration(
+  path: readonly string[],
+  depth: number,
+  key: string | null,
+  value: YamlValue,
+): [string, string] | null {
+  const offset = path[0] === "importers" ? 2 : 0;
+  if (depth < offset + 1 || !DEPENDENCY_SECTIONS.has(path[offset])) return null;
+  const dep = path[offset + 1];
+  if (value.kind !== "scalar" || !dep) return null;
+  if (depth === offset + 1 && key === dep) return [dep, value.text];
+  if (depth === offset + 2 && key === "version") return [dep, value.text];
+  return null;
 }
 
 interface PnpmEntry {
@@ -99,10 +124,11 @@ interface PnpmEntry {
   // What follows the name in the key: a version, or a URL / git reference.
   ref: string;
   // A v5/v6 key with another registry's hostname in place of the leading `/`.
-  host: boolean;
-  // `name:` / `version:` fields, which git and tarball entries carry.
+  host: string | null;
+  // `name:` / `version:` / `id:` fields, which git and tarball entries carry.
   fields: Map<string, string>;
-  resolution: Map<string, string>;
+  // Null when the entry has none, so nothing says what to fetch.
+  resolution: Map<string, string> | null;
 }
 
 // Directory resolutions are repository code and are skipped. Git resolutions
@@ -115,7 +141,15 @@ function recordEntry(builder: SnapshotBuilder, entry: PnpmEntry): void {
   const name = entry.fields.get("name") ?? entry.name;
   const version = entry.fields.get("version") ?? entry.ref;
   const res = entry.resolution;
+  if (!res || [...res.keys()].some((key) => !RESOLUTION_FIELDS.has(key))) {
+    builder.markIncomplete();
+    return;
+  }
   const type = res.get("type");
+  if (type !== undefined && type !== "git" && type !== "directory") {
+    builder.markIncomplete();
+    return;
+  }
   if (type === "directory" || res.has("directory") || isLocalSource(entry.ref)) return;
   const { pin, hashes } = npmIntegrity(res.get("integrity"));
   if (type === "git" || res.has("repo") || res.has("commit")) {
@@ -135,7 +169,7 @@ function recordEntry(builder: SnapshotBuilder, entry: PnpmEntry): void {
   if (tarball !== undefined) {
     const source: TarballSource = keyed
       ? classifyNpmTarball(tarball, name, version)
-      : { kind: "remote" };
+      : { kind: "remote", location: null };
     if (source.kind === "public") builder.add(name, version, { hashes, pin });
     else if (source.kind === "registry") {
       builder.add(name, version, {
@@ -143,32 +177,24 @@ function recordEntry(builder: SnapshotBuilder, entry: PnpmEntry): void {
         hashes,
         pin,
       });
-    } else builder.addRemote(name, tarball, version, pin);
-  } else if (keyed && entry.host) {
-    // A v5/v6 key with another registry's hostname records no URL.
-    builder.add(name, version, { registry: { location: null, ref: null }, hashes, pin });
+    } else builder.addRemote(name, tarball, version, pin, source.location);
+  } else if (entry.host !== null) {
+    // A v5/v6 key with another registry's hostname names only that host, not
+    // a URL a declared registry or mirror prefix could be matched against.
+    // It is remote: never placed by the repository's routing, never looked up
+    // on the public registry.
+    builder.addRemote(name, `${entry.host}/${entry.name}/${entry.ref}`, version, pin);
   } else if (keyed) builder.add(name, version, { hashes, pin });
   // Neither a version nor a local path: a URL or git reference in the key, or
   // fields that disagree with it.
   else builder.addRemote(name, entry.ref, version, pin);
 }
 
-// The fields of a flow-style `{integrity: ..., tarball: ...}` resolution.
-function flowFields(flow: string): Array<[string, string]> {
-  if (!flow.startsWith("{")) return [];
-  const out: Array<[string, string]> = [];
-  for (const field of flow.replace(/^\{|\}$/g, "").split(",")) {
-    const colon = field.indexOf(":");
-    if (colon > 0) out.push([field.slice(0, colon).trim(), field.slice(colon + 1).trim()]);
-  }
-  return out;
-}
-
 // `/name/1.2.3` and `/name/1.2.3_peer@x` (v5), `/name@1.2.3` (v6), `name@1.2.3`
 // (v9), `name@https://...` or `name@git+...` (v9 remote sources). A v5/v6
 // package from a non-default registry has that registry's hostname in place
 // of the leading slash. Peer suffixes in parentheses are already cut.
-function pnpmPackageKey(key: string): { name: string; ref: string; host: boolean } | null {
+function pnpmPackageKey(key: string): { name: string; ref: string; host: string | null } | null {
   const { body, host } = registryHost(key);
   const at = body.indexOf("@", 1);
   if (at > 0) {
@@ -177,7 +203,7 @@ function pnpmPackageKey(key: string): { name: string; ref: string; host: boolean
     // in the "name" and fails the name check.
     if (validNpmName(name)) return { name, ref: body.slice(at + 1), host };
   }
-  if (!host && !key.startsWith("/")) return null;
+  if (host === null && !key.startsWith("/")) return null;
   const slash = body.lastIndexOf("/");
   if (slash <= 0) return null;
   // A v5/v6 git key (`github.com/org/repo/<sha>`) yields an invalid name here;
@@ -187,14 +213,14 @@ function pnpmPackageKey(key: string): { name: string; ref: string; host: boolean
 
 // Default-registry keys start with `/` (v5/v6) or with the name (v9); neither
 // has a dotted first path segment before a slash, which is a hostname.
-function registryHost(key: string): { body: string; host: boolean } {
-  if (key.startsWith("/")) return { body: key.slice(1), host: false };
+function registryHost(key: string): { body: string; host: string | null } {
+  if (key.startsWith("/")) return { body: key.slice(1), host: null };
   const slash = key.indexOf("/");
   const first = key.slice(0, slash);
   if (slash > 0 && /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(first)) {
-    return { body: key.slice(slash + 1), host: true };
+    return { body: key.slice(slash + 1), host: first };
   }
-  return { body: key, host: false };
+  return { body: key, host: null };
 }
 
 // An importer's resolved value: `1.2.3`, `1.2.3(peer@x)`, `1.2.3_peer@x`

@@ -24,7 +24,12 @@ export const UNREVIEWED_TEXT: Record<UnreviewedReason, string> = {
   "timed-out": "the diff timed out",
   "private-source": "comes from a registry Drydock can't read",
   "remote-source": "comes from a git, URL, or tarball source Drydock can't diff",
+  "unverified-pin": "Drydock could not match its pinned hashes to the public registry's release",
 };
+
+// A lockfile that kept a version and changed what it pins for it. Read by the
+// check run and the dashboard in place of the new-package wording.
+export const REPINNED_TEXT = "same version, new pin";
 
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
@@ -33,6 +38,11 @@ function plural(count: number, one: string, many: string): string {
 /** What a diff left unread, or null when it read everything. */
 export function unreadContentText(evidence: BumpEvidence): string | null {
   const parts: string[] = [];
+  if (evidence.nativeBinariesAdded > 0) {
+    parts.push(
+      `adds ${plural(evidence.nativeBinariesAdded, "native binary", "native binaries")} no rule reads`,
+    );
+  }
   const native = evidence.nativeBinariesChanged ?? 0;
   if (native > 0) {
     parts.push(`changes ${plural(native, "native binary", "native binaries")} no rule reads`);
@@ -56,31 +66,51 @@ function formatUtcMinute(iso: string): string {
 
 /**
  * The phrases for one hold, in reason order. A `too-new` hold first says what
- * nothing vouched for (no verdict, a new package, or what the diff left
- * unread), then when the age fallback lets it pass.
+ * nothing vouched for (no verdict, a new package or pin, or what the diff
+ * left unread), then when the age fallback lets it pass. `repinned`: the bump
+ * kept its version and changed its pin, which reads differently from a
+ * package the PR adds.
  */
 export function holdReasonPhrases(
   verdict: Extract<BumpVerdict, { status: "hold" }>,
-  options: { newPackage: boolean; formatTime?: (iso: string) => string },
+  options: { newPackage: boolean; repinned?: boolean; formatTime?: (iso: string) => string },
 ): string[] {
   const formatTime = options.formatTime ?? formatUtcMinute;
+  const added = options.repinned ? REPINNED_TEXT : HOLD_REASON_TEXT["new-package"];
   return verdict.reasons.map((reason) => {
     if (reason === "unreviewed" && verdict.unreviewed) {
       return `${HOLD_REASON_TEXT.unreviewed} (${UNREVIEWED_TEXT[verdict.unreviewed]})`;
     }
+    if (reason === "new-package") return added;
     if (reason !== "too-new") return HOLD_REASON_TEXT[reason];
     const what = verdict.unreviewed
       ? `${HOLD_REASON_TEXT.unreviewed} (${UNREVIEWED_TEXT[verdict.unreviewed]})`
       : verdict.evidence
         ? unreadContentText(verdict.evidence)
         : options.newPackage
-          ? HOLD_REASON_TEXT["new-package"]
+          ? added
           : null;
-    const when = verdict.passesAt
-      ? `${HOLD_REASON_TEXT["too-new"]}; passes ${formatTime(verdict.passesAt)}`
-      : verdict.unreviewed === "remote-source"
-        ? "a git, URL, or tarball source has no publish time, so it holds until approved"
-        : "its publish time is unknown, so it holds until approved";
-    return what ? `${what}; ${when}` : when;
+    return what ? `${what}; ${ageHoldText(verdict, formatTime)}` : ageHoldText(verdict, formatTime);
   });
+}
+
+function ageHoldText(
+  verdict: Extract<BumpVerdict, { status: "hold" }>,
+  formatTime: (iso: string) => string,
+): string {
+  if (verdict.passesAt)
+    return `${HOLD_REASON_TEXT["too-new"]}; passes ${formatTime(verdict.passesAt)}`;
+  if (verdict.unreviewed === "remote-source") {
+    return "a git, URL, or tarball source has no publish time, so it holds until approved";
+  }
+  if (verdict.unreviewed === "unverified-pin") {
+    return "without a matching public release there is no publish time to wait out, so it holds until approved";
+  }
+  if (verdict.pastReviewLimit) {
+    // An over-cap verdict already names the limit.
+    return verdict.unreviewed === "over-cap"
+      ? "Drydock did not look up its age, so it holds until approved"
+      : "past the per-PR review limit, so Drydock did not look up its age; it holds until approved";
+  }
+  return "its publish time is unknown, so it holds until approved";
 }

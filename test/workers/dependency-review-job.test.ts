@@ -98,6 +98,8 @@ interface ScenarioOptions extends SeedDependencyReviewOrgOptions {
 }
 
 // One PR bumping `name` 1.0.0 → 1.0.1, reviewed end to end.
+const CORP_REGISTRY = "https://npm.corp.example/";
+
 async function scenario(options: ScenarioOptions = {}) {
   const seeded = await seedDependencyReviewOrg(options);
   const pr = fakePullRequest(options.pr);
@@ -333,6 +335,8 @@ describe("dependency review job", () => {
     const { pr, api, review, input } = await scenario({
       before: { [publicName]: "1.0.0", [privateName]: "2.0.0" },
       after: { [publicName]: "1.0.1", [privateName]: "2.0.1" },
+      // Only a registry the organization lists is private; any other is remote.
+      policy: { privateRegistries: [CORP_REGISTRY] },
     });
     pr.contents.set(`${pr.headSha}:.npmrc`, "@corp:registry=https://npm.corp.example/\n");
     await seedNpmDiff({ name: publicName, from: "1.0.0", to: "1.0.1" });
@@ -367,7 +371,9 @@ describe("dependency review job", () => {
   });
 
   test("with holdOnUnreviewed off, private bumps are listed and pass", async () => {
-    const { pr, review, input } = await scenario({ policy: { holdOnUnreviewed: false } });
+    const { pr, review, input } = await scenario({
+      policy: { holdOnUnreviewed: false, privateRegistries: [CORP_REGISTRY] },
+    });
     pr.contents.set(`${pr.headSha}:.npmrc`, "registry=https://npm.corp.example/\n");
 
     await runDependencyReviewJob(input);
@@ -1168,7 +1174,9 @@ describe("lockfiles the review could not read", () => {
     expect((await readReview(review.id)).conclusion).toBe("held");
     expect(api.lastCheckRunState()).toMatchObject({ conclusion: "action_required" });
     expect(checkOutput(api).title).toBe("Held: some updates could not be read");
-    expect(checkOutput(api).summary).toContain("Drydock couldn't read `package-lock.json`");
+    expect(checkOutput(api).summary).toContain(
+      "Drydock couldn't review the changes to `package-lock.json`",
+    );
   });
 
   test("a lockfile that does not parse at the head holds the review", async () => {
@@ -1357,9 +1365,24 @@ describe("lockfiles the review could not read", () => {
     expect(checkOutput(api).summary).toContain("GitHub listed only part of this PR's files");
   });
 
-  test("under the default policy, an unread lockfile is named but does not block", async () => {
+  test("under the default policy, an unread lockfile holds: nothing vouches for its updates", async () => {
     const { api, review, input } = await scenario({
       policy: DEFAULT_DEPENDENCY_REVIEW_POLICY,
+      pr: { files: [{ filename: "bun.lock", status: "modified" }] },
+    });
+
+    await runDependencyReviewJob(input);
+
+    expect((await readReview(review.id)).conclusion).toBe("held");
+    expect(api.lastCheckRunState()).toMatchObject({ conclusion: "action_required" });
+    expect(checkOutput(api).title).toBe("Held: some updates could not be read");
+    expect(checkOutput(api).summary).toContain("bun.lock");
+    expect(checkOutput(api).summary).toContain("Approve below to accept these changes unread");
+  });
+
+  test("with the age fallback and holdOnUnreviewed off, an unread lockfile is named but never called clear", async () => {
+    const { api, review, input } = await scenario({
+      policy: { ...DEFAULT_DEPENDENCY_REVIEW_POLICY, unreadMinimumAgeDays: null },
       pr: { files: [{ filename: "bun.lock", status: "modified" }] },
     });
 
@@ -1631,7 +1654,7 @@ describe("approving held updates", () => {
   });
 
   test("approving a private-registry change does not approve the same versions from npm", async () => {
-    const s = await scenario();
+    const s = await scenario({ policy: { privateRegistries: [CORP_REGISTRY] } });
     s.pr.contents.set(`${s.pr.headSha}:.npmrc`, "registry=https://npm.corp.example/\n");
     s.pr.permissions.set("maintainer", "write");
     await runDependencyReviewJob(s.input);

@@ -294,6 +294,8 @@ async function installSettingsMocks(
             holdOnNewPackages: false,
             unreadMinimumAgeDays: 3,
             publicMirrors: [],
+            privateRegistries: [],
+            privateScopes: [],
           },
           extraBotLogins: [],
         },

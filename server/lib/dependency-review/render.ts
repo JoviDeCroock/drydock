@@ -78,7 +78,8 @@ export function renderDependencyReviewCheck(input: RenderDependencyReviewInput):
   const unread = input.bumps.filter(isPassedUnread);
   const clear = input.bumps.filter((b) => b.verdict.status === "clear" && !isPassedUnread(b));
   const unreviewed = input.bumps.filter((b) => b.verdict.status === "unreviewed");
-  const added = input.bumps.filter((b) => b.verdict.status === "new-package");
+  const added = input.bumps.filter((b) => b.verdict.status === "new-package" && !b.bump.repinned);
+  const repinned = input.bumps.filter((b) => b.verdict.status === "new-package" && b.bump.repinned);
   const complete = input.unreadLockfiles.length === 0 && input.listingComplete !== false;
 
   const lines: string[] = [];
@@ -130,6 +131,11 @@ export function renderDependencyReviewCheck(input: RenderDependencyReviewInput):
     lines.push(`### New packages (${added.length})`, "");
     lines.push(listLine(added, input), "");
   }
+  if (repinned.length > 0) {
+    // Proven to be the public release's bytes; there is no earlier version to diff.
+    lines.push(`### Same version, new pin (${repinned.length})`, "");
+    lines.push(listLine(repinned, input), "");
+  }
   if (unread.length > 0) {
     lines.push(`### Passed with unread changes (${unread.length})`, "");
     for (const bump of unread.slice(0, MAX_LISTED_BUMPS)) {
@@ -153,7 +159,8 @@ export function renderDependencyReviewCheck(input: RenderDependencyReviewInput):
 function renderUnread(input: RenderDependencyReviewInput): string | null {
   if (input.unreadLockfiles.length === 0) return null;
   const paths = input.unreadLockfiles.slice(0, MAX_LISTED_BUMPS).map((path) => code(path, 120));
-  return `Drydock couldn't read ${paths.join(", ")}, so the updates in ${input.unreadLockfiles.length === 1 ? "it" : "them"} are not reviewed.`;
+  // Lockfiles, manifests, or registry config: whatever changed there is unreviewed.
+  return `Drydock couldn't review the changes to ${paths.join(", ")}, so the dependency updates ${input.unreadLockfiles.length === 1 ? "it makes" : "they make"} are not reviewed.`;
 }
 
 function renderTitle(
@@ -184,7 +191,10 @@ function isPassedUnread(bump: ReviewedBump): boolean {
 function renderHeld(reviewed: ReviewedBump, input: RenderDependencyReviewInput): string[] {
   const { verdict } = reviewed;
   if (verdict.status !== "hold") return [];
-  const reasons = holdReasonPhrases(verdict, { newPackage: reviewed.bump.fromVersion === null });
+  const reasons = holdReasonPhrases(verdict, {
+    newPackage: reviewed.bump.fromVersion === null,
+    repinned: reviewed.bump.repinned === true,
+  });
   const lines = [`- ${link(reviewed.bump, input)}: ${reasons.join("; ")}`];
   if (verdict.evidence) lines.push(...renderEvidence(verdict.evidence));
   return lines;

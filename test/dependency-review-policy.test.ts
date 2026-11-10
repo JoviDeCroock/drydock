@@ -203,6 +203,8 @@ describe("evaluateBumpEvidence", () => {
       holdOnNewPackages: false,
       unreadMinimumAgeDays: 3,
       publicMirrors: [],
+      privateRegistries: [],
+      privateScopes: [],
     });
   });
 

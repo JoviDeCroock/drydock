@@ -5,6 +5,7 @@ import type { DependencyReview } from "../../models/dependency-review";
 export {
   HOLD_REASON_TEXT,
   holdReasonPhrases,
+  REPINNED_TEXT,
   unreadContentText,
   UNREVIEWED_TEXT,
 } from "../../../server/lib/dependency-review/wording";
@@ -23,12 +24,12 @@ export const POLICY_SWITCHES: ReadonlyArray<{ key: PolicySwitch; label: string; 
   {
     key: "holdOnUninspectedFiles",
     label: "changes files or artifacts Drydock could not read",
-    hint: "Minified bundles, oversized or unknown binary files, changed native binaries, and PyPI wheels the diff did not read.",
+    hint: "Minified bundles, oversized or unknown binary files, native binaries the release changes (or adds, when that isn't held above), and PyPI wheels the diff did not read.",
   },
   {
     key: "holdOnUnreviewed",
     label: "has no Drydock verdict",
-    hint: "From a private registry or a git or URL source, over the per-PR limit, missing from the registry, a failed diff, or an unread lockfile.",
+    hint: "From a listed private registry, a git or URL source, or a pin that doesn't match the public release; over the per-PR limit, missing from the registry, a failed diff, or an unread lockfile or registry config.",
   },
   {
     key: "holdOnNewPackages",

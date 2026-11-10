@@ -1,11 +1,16 @@
-import type { DependencyBump } from "../types";
+import type { DependencyBump, DependencyEcosystem } from "../types";
 import { sameRelease, type LockfileChange } from "./diff";
-import { npmRegistryTarballPaths, type LockfileSource } from "./snapshot";
+import {
+  isPublicPyPiFileUrl,
+  isPyPiSimpleIndex,
+  npmRegistryTarballPaths,
+  type LockfileSource,
+} from "./snapshot";
 
 /**
  * Where the repository's committed registry config sends a name: the public
  * registry, these registry URLs, or somewhere this layer cannot read (a
- * flow-style or oversized config).
+ * config outside the canonical shape, an environment-dependent value).
  */
 export type NameRoute =
   | { kind: "public" }
@@ -15,80 +20,210 @@ export type NameRoute =
 export const PUBLIC_ROUTE: NameRoute = { kind: "public" };
 
 /**
+ * The organization's declarations that place non-public sources: normalized
+ * https prefixes ending in `/`, and lowercase `@scope`s.
+ */
+interface SourcePolicy {
+  publicMirrors: readonly string[];
+  privateRegistries: readonly string[];
+  privateScopes: readonly string[];
+}
+
+// Worst last. A mirror copy is only as good as its proof; a private registry
+// is the organization's own and never diffed; anything else is remote.
+type Place = "public" | "mirror" | "private" | "remote";
+const PLACE_RANK: Record<Place, number> = { public: 0, mirror: 1, private: 2, remote: 3 };
+
+function worse(a: Place, b: Place): Place {
+  return PLACE_RANK[b] > PLACE_RANK[a] ? b : a;
+}
+
+/**
  * The bump a lockfile change becomes under the repository's registry routing
- * and the organization's declared public mirrors (`policy.publicMirrors`,
- * normalized https prefixes ending in `/`).
+ * and the organization's declarations. Authoritative for `privateSource`,
+ * `remoteSource`, `mirror`, and `pinnedHashes`.
  *
- * A name routed anywhere but the public registry is private. A private bump
- * is a mirror candidate when every side it pairs resolved under a declared
- * mirror (or from the public registry), is a registry copy of its own name and
- * version, and pins hashes a public-registry comparison can check; it then
- * names real versions and carries those hashes for `verifyMirrorBump`. A name
- * routed to any registry outside the declared mirrors is never a candidate:
- * verifying it would send that name to the public registry.
+ * Each side is placed by what fetches it: a public entry by the name's route
+ * (pnpm, Berry, and npm all fetch from the configured registry, npm rewriting
+ * public `resolved` URLs to it), a registry or remote entry by the URLs the
+ * lockfile records. A URL or route is private only under a declared private
+ * registry and a mirror copy only under a declared mirror; any other
+ * non-public host is remote, since the PR chooses that URL and so cannot also
+ * choose an exemption. An unreadable route is remote.
+ *
+ * - Every side public: a public bump. It carries the target's strong pins as
+ *   `pinnedHashes` when the format records them, for `verifyPublicPin`.
+ * - Some side under a mirror and the rest public or mirror: a mirror
+ *   candidate when every side pins hashes a public comparison can check, with
+ *   real versions and those hashes in `mirror` for `verifyMirrorBump`; the
+ *   same release on both sides is a candidate re-pin (`fromVersion` null).
+ *   Otherwise the mirror copy proves nothing and the bump is remote.
+ * - Some side private and none remote: private.
+ * - Otherwise remote.
+ *
+ * A name in a declared private scope is never public and never a mirror
+ * candidate, so it is never sent to a public registry, whatever routing
+ * outside the repository it relies on.
  */
 export function routedBump(
   change: LockfileChange,
   route: NameRoute,
-  mirrors: readonly string[],
+  policy: SourcePolicy,
 ): DependencyBump {
-  const bump: DependencyBump =
-    route.kind === "public" ? change.bump : { ...change.bump, privateSource: true };
-  if (!bump.privateSource || bump.remoteSource || mirrors.length === 0) return bump;
-  if (route.kind === "unknown") return bump;
-  if (route.kind === "registries" && !route.urls.every((url) => indexUnderMirror(url, mirrors))) {
-    return bump;
+  const {
+    privateSource: _private,
+    remoteSource: _remote,
+    mirror: _mirror,
+    pinnedHashes: _pinned,
+    ...rest
+  } = change.bump;
+  const bump: DependencyBump = rest;
+  const sides = change.from ? [change.from, change.to] : [change.to];
+  const places = sides.map((source) => placeOf(bump, source, route, policy));
+  let place = places.reduce(worse);
+  const secret = privateScope(bump, policy);
+  if (secret && (place === "public" || place === "mirror")) place = "private";
+  if (place === "public") {
+    const hashes = change.to.hashes;
+    return hashes && !change.to.mixed ? { ...bump, pinnedHashes: hashes } : bump;
   }
-  const side = (source: LockfileSource | null) =>
-    source && mirrorSide(bump, source, route, mirrors) ? source : null;
-  const to = side(change.to);
-  if (!to) return bump;
-  if (bump.fromVersion === null) {
-    return {
-      ...bump,
-      toVersion: to.version!,
-      mirror: { fromHashes: null, toHashes: to.hashes! },
-    };
+  if (place === "mirror") {
+    const candidate = mirrorCandidate(bump, change, route, policy);
+    if (candidate) return candidate;
+    place = "remote";
   }
-  const from = side(change.from);
-  // The same release on both sides (a re-pin or a move onto the mirror) has
-  // no public pair to diff.
-  if (!from || sameRelease(bump.ecosystem, from.version!, to.version!)) return bump;
-  return {
-    ...bump,
-    fromVersion: from.version,
-    toVersion: to.version!,
-    mirror: { fromHashes: from.hashes!, toHashes: to.hashes! },
-  };
+  if (place === "private") return { ...bump, privateSource: true };
+  return { ...bump, privateSource: true, remoteSource: true };
 }
 
-function mirrorSide(
+function privateScope(bump: DependencyBump, policy: SourcePolicy): boolean {
+  if (bump.ecosystem !== "npm" || !bump.name.startsWith("@")) return false;
+  const scope = bump.name.slice(0, bump.name.indexOf("/")).toLowerCase();
+  return policy.privateScopes.includes(scope);
+}
+
+function placeOf(
   bump: DependencyBump,
   source: LockfileSource,
   route: NameRoute,
-  mirrors: readonly string[],
-): boolean {
+  policy: SourcePolicy,
+): Place {
+  if (source.kind === "public") return routePlace(route, policy);
+  if (source.kind === "remote") {
+    // A remote tarball under a declared private registry is that registry's.
+    return source.location !== null &&
+      underPrefix(source.location, policy.privateRegistries, "file")
+      ? "private"
+      : "remote";
+  }
+  if (source.location === null) return "remote";
+  let place = urlPlace(bump.ecosystem, source.location, policy, "location");
+  for (const url of source.urls)
+    place = worse(place, urlPlace(bump.ecosystem, url, policy, "file"));
+  return place;
+}
+
+function routePlace(route: NameRoute, policy: SourcePolicy): Place {
+  if (route.kind === "public") return "public";
+  if (route.kind === "unknown" || route.urls.length === 0) return "remote";
+  return route.urls.map((url) => indexPlace(url, policy)).reduce(worse);
+}
+
+function indexPlace(url: string, policy: SourcePolicy): Place {
+  if (underPrefix(url, policy.privateRegistries, "index")) return "private";
+  if (underPrefix(url, policy.publicMirrors, "index")) return "mirror";
+  return "remote";
+}
+
+// A registry entry's recorded URL. npm: a registry-shaped tarball URL; uv: the
+// index (`location`) and each file URL. PyPI's own index and file host are
+// public.
+function urlPlace(
+  ecosystem: DependencyEcosystem,
+  url: string,
+  policy: SourcePolicy,
+  role: "location" | "file",
+): Place {
+  if (ecosystem === "pypi") {
+    if (role === "location" ? isPyPiSimpleIndex(url) : isPublicPyPiFileUrl(url)) return "public";
+    if (role === "location") return indexPlace(url, policy);
+  }
+  if (underPrefix(url, policy.privateRegistries, "file")) return "private";
+  if (underPrefix(url, policy.publicMirrors, "file")) return "mirror";
+  return "remote";
+}
+
+function mirrorCandidate(
+  bump: DependencyBump,
+  change: LockfileChange,
+  route: NameRoute,
+  policy: SourcePolicy,
+): DependencyBump | null {
+  // Checking a copy sends the name to the public registry, so a route to any
+  // registry but a declared mirror rules it out.
+  if (route.kind === "unknown") return null;
+  if (
+    route.kind === "registries" &&
+    route.urls.some((url) => indexPlace(url, policy) !== "mirror")
+  ) {
+    return null;
+  }
+  const side = (source: LockfileSource) => mirrorSide(bump, source, policy);
+  const to = change.to;
+  if (!side(to)) return null;
+  const from = change.from;
+  const toVersion = to.version!;
+  const repin =
+    bump.fromVersion === null ||
+    (from !== null &&
+      from.version !== null &&
+      sameRelease(bump.ecosystem, from.version, toVersion));
+  if (from !== null && !repin && !side(from)) return null;
+  if (repin) {
+    // A new package, a copy moved onto the mirror, or a re-pin: there is no
+    // earlier release to diff, and the target's pins are what is proven.
+    const moved = from !== null || bump.repinned === true;
+    return {
+      ...bump,
+      fromVersion: null,
+      toVersion,
+      privateSource: true,
+      ...(moved ? { repinned: true as const } : {}),
+      mirror: { fromHashes: null, toHashes: to.hashes! },
+    };
+  }
+  return {
+    ...bump,
+    fromVersion: from!.version,
+    toVersion,
+    privateSource: true,
+    mirror: { fromHashes: from!.hashes!, toHashes: to.hashes! },
+  };
+}
+
+// A side a public comparison can check: one place, a real version, usable
+// hashes, and (for a recorded URL) the mirror's copy of exactly this release.
+function mirrorSide(bump: DependencyBump, source: LockfileSource, policy: SourcePolicy): boolean {
   if (source.mixed || !source.version || !source.hashes?.length) return false;
   if (source.kind === "public") return true;
-  if (source.kind !== "registry") return false;
-  // `pnpm-lock.yaml` and Berry's `yarn.lock` record no URL for a registry
-  // copy; the repository's routing, already checked to point only at mirrors,
-  // says where it came from.
-  if (source.location === null) return route.kind === "registries";
-  if (bump.ecosystem === "pypi") return indexUnderMirror(source.location, mirrors);
+  if (source.kind !== "registry" || source.location === null) return false;
+  if (bump.ecosystem === "pypi") return true;
   const tails = npmRegistryTarballPaths(bump.name, source.version);
-  return mirrors.some(
-    (prefix) =>
-      source.location!.startsWith(prefix) && tails.includes(source.location!.slice(prefix.length)),
+  const location = source.location;
+  return policy.publicMirrors.some(
+    (prefix) => location.startsWith(prefix) && tails.includes(location.slice(prefix.length)),
   );
 }
 
 /**
- * A registry or index URL under a declared mirror prefix. The URL must be
- * already canonical and plain https with nothing percent-encoded after the
- * prefix, so the text compared is the path a server would serve.
+ * A URL under one of `prefixes`. It must be plain https, already canonical
+ * (what a server would be asked for), with no credentials, query, or
+ * fragment, and nothing after the prefix that could climb out of it: for an
+ * index no percent-encoding at all; for a file no `..`, and no encoding but
+ * the `%2f` of a scoped tarball name.
  */
-function indexUnderMirror(url: string, mirrors: readonly string[]): boolean {
+function underPrefix(url: string, prefixes: readonly string[], role: "index" | "file"): boolean {
+  if (prefixes.length === 0) return false;
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -101,33 +236,42 @@ function indexUnderMirror(url: string, mirrors: readonly string[]): boolean {
     parsed.password ||
     url.includes("?") ||
     url.includes("#") ||
-    (parsed.href !== url && parsed.href !== `${url}/`)
+    (parsed.href !== url && !(role === "index" && parsed.href === `${url}/`))
   ) {
     return false;
   }
-  const root = parsed.href.endsWith("/") ? parsed.href : `${parsed.href}/`;
-  return mirrors.some(
-    (prefix) => root.startsWith(prefix) && !root.slice(prefix.length).includes("%"),
-  );
+  const target = role === "index" && !parsed.href.endsWith("/") ? `${parsed.href}/` : parsed.href;
+  return prefixes.some((prefix) => {
+    if (!target.startsWith(prefix)) return false;
+    const rest = target.slice(prefix.length);
+    if (role === "index") return !rest.includes("%");
+    return !rest.includes("..") && !rest.replace(/%2f/gi, "").includes("%");
+  });
 }
 
 /**
  * Folds a bump into one already collected for the same change (another
- * lockfile, or another copy). Mirror hashes are unioned, since every one must
- * match the public registry; a change only one of them reads as a mirror copy
- * stays a plain private change.
+ * lockfile, or another copy). Mirror hashes and pinned hashes are unioned,
+ * since every one must match the public registry; a change only one of them
+ * pins comparably keeps no proof material and stays unproven.
  */
 export function mergeBump(existing: DependencyBump, bump: DependencyBump): void {
   existing.direct ||= bump.direct;
   if (bump.remoteSource) existing.remoteSource = true;
+  if (bump.repinned) existing.repinned = true;
+  const union = (a: readonly string[] | null, b: readonly string[] | null) =>
+    a === null || b === null ? null : [...new Set([...a, ...b])].sort();
   if (existing.mirror && bump.mirror && !existing.remoteSource) {
-    const union = (a: readonly string[] | null, b: readonly string[] | null) =>
-      a === null || b === null ? null : [...new Set([...a, ...b])].sort();
     existing.mirror = {
       fromHashes: union(existing.mirror.fromHashes, bump.mirror.fromHashes),
       toHashes: union(existing.mirror.toHashes, bump.mirror.toHashes)!,
     };
   } else {
     delete existing.mirror;
+  }
+  if (existing.pinnedHashes && bump.pinnedHashes && !existing.privateSource) {
+    existing.pinnedHashes = union(existing.pinnedHashes, bump.pinnedHashes)!;
+  } else {
+    delete existing.pinnedHashes;
   }
 }

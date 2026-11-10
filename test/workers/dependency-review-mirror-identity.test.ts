@@ -1,6 +1,9 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { verifyMirrorBump } from "../../server/lib/dependency-review/mirror-identity";
+import {
+  verifyMirrorBump,
+  verifyPublicPin,
+} from "../../server/lib/dependency-review/mirror-identity";
 import type { DependencyBump } from "../../server/lib/dependency-review/types";
 import { createPackumentExtractor } from "../../server/lib/ecosystems/npm/packument-stream";
 import {
@@ -44,10 +47,14 @@ function stubRegistry(route: Route) {
   });
 }
 
-async function verify(bump: DependencyBump, overrides: Partial<Cloudflare.Env> = {}) {
+async function verify(
+  bump: DependencyBump,
+  overrides: Partial<Cloudflare.Env> = {},
+  check = verifyMirrorBump,
+) {
   const ctx = createExecutionContext();
   try {
-    return await verifyMirrorBump(
+    return await check(
       {
         ...env,
         COMPARE_CACHE: fakeKv(),
@@ -270,6 +277,104 @@ describe("verifyMirrorBump: PyPI", () => {
   test("an unknown release fails", async () => {
     await pypi({ "2.31.0": ["a"] });
     expect(await verify(pypiBump(null, "9.0.0", null, [await pin("a")]))).toBe(false);
+  });
+});
+
+describe("verifyPublicPin", () => {
+  const pinned = (toVersion: string, pinnedHashes: string[]): DependencyBump => ({
+    ecosystem: "npm",
+    name: "left-pad",
+    fromVersion: null,
+    toVersion,
+    direct: true,
+    lockfilePath: "package-lock.json",
+    repinned: true,
+    pinnedHashes,
+  });
+  const check = (bump: DependencyBump, overrides: Partial<Cloudflare.Env> = {}) =>
+    verify(bump, overrides, verifyPublicPin);
+  async function registry(versions: Record<string, string>) {
+    const body = await (await packument(versions)).text();
+    return stubRegistry((url) =>
+      url.host === "registry.npmjs.org" && url.pathname === "/left-pad"
+        ? new Response(body, { headers: { "content-type": "application/json" } })
+        : new Response("not found", { status: 404 }),
+    );
+  }
+
+  test("the lockfile's pin is what the public registry published", async () => {
+    const b = await sha512("1.1.0");
+    const fetchSpy = await registry({ "1.1.0": b });
+    expect(await check(pinned("1.1.0", [b]))).toBe(true);
+    expect(
+      await check({ ...pinned("1.1.0", [b]), fromVersion: "1.0.0", repinned: undefined }),
+    ).toBe(true);
+    for (const [input, init] of fetchSpy.mock.calls) {
+      const request = new Request(input as RequestInfo, init);
+      expect(new URL(request.url).host).toBe("registry.npmjs.org");
+      expect(request.headers.get("authorization")).toBeNull();
+    }
+  });
+
+  test("a pin the public registry did not publish fails", async () => {
+    const b = await sha512("1.1.0");
+    await registry({ "1.1.0": b });
+    expect(await check(pinned("1.1.0", [await sha512("evil")]))).toBe(false);
+    expect(await check(pinned("1.1.0", [b, await sha512("evil")]))).toBe(false);
+    expect(await check(pinned("9.9.9", [b]))).toBe(false);
+  });
+
+  test("nothing to prove, or a bump that is not public, fails without a fetch", async () => {
+    const b = await sha512("1.1.0");
+    const fetchSpy = await registry({ "1.1.0": b });
+    const { pinnedHashes: _, ...unpinned } = pinned("1.1.0", [b]);
+    for (const bump of <DependencyBump[]>[
+      unpinned,
+      pinned("1.1.0", []),
+      { ...pinned("1.1.0", [b]), privateSource: true },
+      { ...pinned("1.1.0", [b]), privateSource: true, remoteSource: true },
+      { ...pinned("1.1.0", [b]), mirror: { fromHashes: null, toHashes: [b] } },
+      { ...pinned("1.1.0", [b]), name: "Left-Pad" },
+    ]) {
+      expect(await check(bump)).toBe(false);
+    }
+    expect(
+      await check(pinned("1.1.0", [b]), { NPM_REGISTRY: "https://npm.internal.example" }),
+    ).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  test("PyPI: every pinned sha256 is among the release's files", async () => {
+    const body = JSON.stringify({
+      info: { name: "requests", version: "2.32.0" },
+      releases: {
+        "2.32.0": await Promise.all(
+          ["c", "d"].map(async (seed) => ({
+            filename: `requests-2.32.0-${seed}.whl`,
+            packagetype: "bdist_wheel",
+            url: `https://files.pythonhosted.org/packages/${seed}.whl`,
+            digests: { sha256: await hex(seed) },
+          })),
+        ),
+      },
+    });
+    stubRegistry((url) =>
+      url.host === "pypi.org" && url.pathname === "/pypi/requests/json"
+        ? new Response(body, { headers: { "content-type": "application/json" } })
+        : new Response("not found", { status: 404 }),
+    );
+    const bump = (): DependencyBump => ({
+      ecosystem: "pypi",
+      name: "requests",
+      fromVersion: "2.31.0",
+      toVersion: "2.32.0",
+      direct: false,
+      lockfilePath: "uv.lock",
+      pinnedHashes: [],
+    });
+    const pin = async (seed: string) => `sha256:${await hex(seed)}`;
+    expect(await check({ ...bump(), pinnedHashes: [await pin("c")] })).toBe(true);
+    expect(await check({ ...bump(), pinnedHashes: [await pin("c"), await pin("x")] })).toBe(false);
   });
 });
 

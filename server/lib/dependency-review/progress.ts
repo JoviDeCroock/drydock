@@ -1,4 +1,5 @@
 import { isRecord } from "../platform/guards";
+import { bumpIdentityKey } from "./identity";
 import type { BumpEvidence, DependencyBump } from "./types";
 
 /**
@@ -41,6 +42,12 @@ export interface StoredBumpProgress {
   publishedAt?: string | null;
   // `verifyMirrorBump`'s answer for a mirror-resolved bump.
   mirrorVerified?: boolean;
+  // `verifyPublicPin`'s answer for a public bump with `pinnedHashes`.
+  pinVerified?: boolean;
+  // Cold diffs started on this bump that never recorded an outcome: each one
+  // is written before the diff runs, so a pass the platform kills mid-diff
+  // leaves the count behind.
+  coldStarts?: number;
 }
 
 // Above this the stored findings are trimmed (counts stay): the row also
@@ -59,19 +66,12 @@ export function emptyProgress(nowMs: number): DependencyReviewProgress {
 }
 
 /**
- * The identity a stored outcome belongs to. The source is part of it: a
- * mirror bump and a public bump of the same versions are different changes
- * until the mirror is verified.
+ * The identity a stored outcome belongs to: the change as collected, before
+ * any proof (`bumpIdentityKey`). A proof is stored under the exact hashes it
+ * proved, so two pins of the same versions never share one.
  */
 export function bumpProgressKey(bump: DependencyBump): string {
-  const source = bump.mirror
-    ? "mirror"
-    : bump.remoteSource
-      ? "remote"
-      : bump.privateSource
-        ? "private"
-        : "public";
-  return [bump.ecosystem, bump.name, bump.fromVersion ?? "", bump.toVersion, source].join("\u0000");
+  return bumpIdentityKey(bump);
 }
 
 /** Stored progress, or a fresh one when the row has none or it is unreadable. */

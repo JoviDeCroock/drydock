@@ -34,6 +34,18 @@ export interface DependencyBump {
   // Proven byte-identical to the public release through `mirror`; set by the
   // review stage, which then clears `privateSource` and `mirror`.
   viaMirror?: true;
+  // On a public bump: the strong hashes the lockfile pins for the target
+  // version, in the same forms as `mirror`. Whatever registry the installer is
+  // configured to use, it only accepts bytes with these hashes, so the review
+  // stage diffs the public release only after `verifyPublicPin` proves they are
+  // the public registry's. A failed proof makes the bump a remote source.
+  // Absent when the format records no comparable pin (Yarn Berry, unhashed
+  // requirements).
+  pinnedHashes?: readonly string[];
+  // The lockfile kept this version and changed what it pins for it. There is
+  // no previous version to diff (`fromVersion` is null), and the pin is proven
+  // like any other.
+  repinned?: true;
 }
 
 export type LockfileKind = "npm" | "pnpm" | "yarn" | "uv" | "requirements";
@@ -65,6 +77,16 @@ export interface DependencyReviewPolicy {
   // resolved under a prefix are compared with the public registry by hash;
   // naming a prefix sends those package names and versions to it.
   publicMirrors: string[];
+  // https URL prefixes of the organization's own registries. A bump resolved
+  // under one is unreviewed and exempt from the age fallback (it has no public
+  // publish time and the organization vouches for its own registry). Any other
+  // non-public host is a remote source: the PR chooses that URL, so it cannot
+  // also choose the exemption.
+  privateRegistries: string[];
+  // npm scopes (`@corp`) whose names are never sent to the public registry,
+  // for lockfiles that record no URL and routing configured outside the
+  // repository.
+  privateScopes: string[];
 }
 
 export const DEFAULT_DEPENDENCY_REVIEW_POLICY: DependencyReviewPolicy = {
@@ -78,10 +100,14 @@ export const DEFAULT_DEPENDENCY_REVIEW_POLICY: DependencyReviewPolicy = {
   holdOnNewPackages: false,
   unreadMinimumAgeDays: 3,
   publicMirrors: [],
+  privateRegistries: [],
+  privateScopes: [],
 };
 
 export const MAX_UNREAD_MINIMUM_AGE_DAYS = 90;
 export const MAX_PUBLIC_MIRRORS = 10;
+export const MAX_PRIVATE_REGISTRIES = 10;
+export const MAX_PRIVATE_SCOPES = 50;
 
 export type HoldReason =
   | "install-script-added"
@@ -102,7 +128,11 @@ export type UnreviewedReason =
   | "failed"
   | "timed-out"
   | "private-source"
-  | "remote-source";
+  | "remote-source"
+  // A public bump whose pinned hashes `verifyPublicPin` could not match to the
+  // public registry's release. Like a remote source: nothing to diff and no
+  // publish time to wait out.
+  | "unverified-pin";
 
 export interface BumpFinding {
   severity: FindingSeverity;
@@ -144,6 +174,9 @@ export type BumpVerdict =
       // With `too-new`: when the age fallback stops holding (ISO time). Absent
       // when the registry gave no publish time, which holds until approved.
       passesAt?: string;
+      // With `too-new` and no `passesAt`: the bump was past the per-PR review
+      // limit, so nobody looked its publish time up.
+      pastReviewLimit?: true;
     }
   | { status: "unreviewed"; unreviewed: UnreviewedReason }
   | { status: "new-package" };
@@ -152,12 +185,18 @@ export type BumpVerdict =
  * What the review stage learned about one bump, before any policy reads it.
  * `publishedAt` is the target version's publish time on the public registry:
  * an ISO time, null when the lookup found none, absent when nobody looked.
- * Both null and absent read as unknown.
+ * Both null and absent read as unknown. `pastReviewLimit`: the bump was past
+ * the per-PR review limit, so the stage did no work on it.
  */
 export type BumpOutcome =
   | { kind: "diffed"; evidence: BumpEvidence; publishedAt?: string | null }
-  | { kind: "unreviewed"; reason: UnreviewedReason; publishedAt?: string | null }
-  | { kind: "new-package"; publishedAt?: string | null };
+  | {
+      kind: "unreviewed";
+      reason: UnreviewedReason;
+      publishedAt?: string | null;
+      pastReviewLimit?: true;
+    }
+  | { kind: "new-package"; publishedAt?: string | null; pastReviewLimit?: true };
 
 export interface ReviewedBump {
   bump: DependencyBump;

@@ -17,17 +17,24 @@ import {
   type DependencyBump,
   type DependencyReviewPolicy,
 } from "../server/lib/dependency-review/types";
+import { decideBump } from "../server/lib/dependency-review/policy";
 import { PublicDiffError } from "../server/lib/public-diff/error";
 import type { PublicPackageDiff } from "../server/lib/public-diff";
 
-const { verifyMirrorBump, readCached, loadDiff, listVersions } = vi.hoisted(() => ({
-  verifyMirrorBump: vi.fn(),
-  readCached: vi.fn(),
-  loadDiff: vi.fn(),
-  listVersions: vi.fn(),
-}));
+const { verifyMirrorBump, verifyPublicPin, readCached, loadDiff, listVersions } = vi.hoisted(
+  () => ({
+    verifyMirrorBump: vi.fn(),
+    verifyPublicPin: vi.fn(),
+    readCached: vi.fn(),
+    loadDiff: vi.fn(),
+    listVersions: vi.fn(),
+  }),
+);
 
-vi.mock("../server/lib/dependency-review/mirror-identity", () => ({ verifyMirrorBump }));
+vi.mock("../server/lib/dependency-review/mirror-identity", () => ({
+  verifyMirrorBump,
+  verifyPublicPin,
+}));
 vi.mock("../server/lib/public-diff", async () => {
   const { PublicDiffError: Err } = await import("../server/lib/public-diff/error");
   const { publicDiffEgressAllowed } = await import("../server/lib/public-diff/egress");
@@ -154,7 +161,9 @@ async function stage(
 }
 
 beforeEach(() => {
-  for (const fn of [verifyMirrorBump, readCached, loadDiff, listVersions]) fn.mockReset();
+  for (const fn of [verifyMirrorBump, verifyPublicPin, readCached, loadDiff, listVersions]) {
+    fn.mockReset();
+  }
   readCached.mockResolvedValue(null);
   loadDiff.mockResolvedValue(diffPayload([{ path: "index.js", status: "modified", flags: [] }]));
   listVersions.mockRejectedValue(new Error("not stubbed"));
@@ -174,11 +183,13 @@ describe("review stage budget", () => {
     expect(result.complete).toBe(false);
     expect(result.settled).toBe(60 + MAX_COLD_DIFFS_PER_PASS);
     // The unreached three read as over the cap if no pass followed.
-    expect(result.outcomes.slice(-3)).toEqual([
-      { kind: "unreviewed", reason: "over-cap" },
-      { kind: "unreviewed", reason: "over-cap" },
-      { kind: "unreviewed", reason: "over-cap" },
-    ]);
+    expect(result.outcomes.slice(-3)).toEqual(
+      Array.from({ length: 3 }, () => ({
+        kind: "unreviewed",
+        reason: "over-cap",
+        pastReviewLimit: true,
+      })),
+    );
 
     // The next pass diffs only what is left.
     loadDiff.mockClear();
@@ -220,7 +231,8 @@ describe("review stage budget", () => {
 
     readCached.mockResolvedValue(null);
     const cold = await stage(Array.from({ length: 5 }, (_, i) => bump(`c-${i}`)));
-    expect(cold.saves).toHaveLength(5);
+    // Each cold diff is written when it starts and when it lands.
+    expect(cold.saves).toHaveLength(10);
   });
 });
 
@@ -338,3 +350,264 @@ describe("mirror-resolved bumps", () => {
     expect(offline.outcomes[0]).toEqual({ kind: "unreviewed", reason: "private-source" });
   });
 });
+
+const pinnedMirror = (name: string, toHash: string, lockfilePath: string): DependencyBump =>
+  bump(name, {
+    lockfilePath,
+    privateSource: true,
+    mirror: { fromHashes: ["sha512-old"], toHashes: [toHash] },
+  });
+
+const pinnedPublic = (name: string, hash: string, overrides: Partial<DependencyBump> = {}) =>
+  bump(name, { pinnedHashes: [hash], ...overrides });
+
+describe("a proof belongs to the hashes it proved", () => {
+  const honestMirror = pinnedMirror("left-pad", "sha512-honest", "a/package-lock.json");
+  const evilMirror = pinnedMirror("left-pad", "sha512-evil", "b/package-lock.json");
+  const honestPin = pinnedPublic("left-pad", "sha512-honest", {
+    lockfilePath: "a/package-lock.json",
+  });
+  const evilPin = pinnedPublic("left-pad", "sha512-evil", { lockfilePath: "b/package-lock.json" });
+  const honestOnly = async (_env: unknown, _ctx: unknown, candidate: DependencyBump) =>
+    (candidate.mirror?.toHashes ?? candidate.pinnedHashes ?? []).includes("sha512-honest");
+
+  test("two pins of the same versions never share a key", () => {
+    expect(bumpProgressKey(honestMirror)).not.toBe(bumpProgressKey(evilMirror));
+    expect(dependencyChangeKey(honestMirror)).not.toBe(dependencyChangeKey(evilMirror));
+    expect(bumpProgressKey(honestPin)).not.toBe(bumpProgressKey(evilPin));
+    expect(dependencyChangeKey(honestPin)).not.toBe(dependencyChangeKey(evilPin));
+  });
+
+  test("across passes, a hostile mirror pin is proven on its own, not skipped", async () => {
+    verifyMirrorBump.mockImplementation(honestOnly);
+    // An earlier pass proved the honest pin.
+    const first = await stage([honestMirror]);
+    expect(first.bumps[0]).toMatchObject({ viaMirror: true });
+
+    const next = await stage([honestMirror, evilMirror], { progress: first.progress });
+
+    expect(verifyMirrorBump).toHaveBeenCalledTimes(2);
+    expect(verifyMirrorBump.mock.calls[1][2]).toBe(evilMirror);
+    expect(next.bumps[0]).toMatchObject({ viaMirror: true });
+    expect(next.bumps[1]).toMatchObject({ privateSource: true, mirror: {} });
+    expect(next.bumps[1].viaMirror).toBeUndefined();
+    expect(next.outcomes[1]).toEqual({ kind: "unreviewed", reason: "private-source" });
+  });
+
+  test.each([
+    ["honest first", [honestMirror, evilMirror]],
+    ["hostile first", [evilMirror, honestMirror]],
+  ])("in one pass, each mirror pin keeps its own proof (%s)", async (_order, bumps) => {
+    verifyMirrorBump.mockImplementation(honestOnly);
+    const result = await stage(bumps);
+    for (const [index, original] of bumps.entries()) {
+      const honest = original === honestMirror;
+      expect(result.bumps[index].viaMirror).toBe(honest ? true : undefined);
+      expect(result.progress.bumps[bumpProgressKey(original)]).toEqual(
+        expect.objectContaining({ mirrorVerified: honest }),
+      );
+    }
+  });
+
+  test("across passes, a hostile public pin is proven on its own, not skipped", async () => {
+    verifyPublicPin.mockImplementation(honestOnly);
+    const first = await stage([honestPin]);
+    const next = await stage([honestPin, evilPin], { progress: first.progress });
+
+    expect(verifyPublicPin).toHaveBeenCalledTimes(2);
+    expect(next.bumps[0]).toEqual(bump("left-pad", { lockfilePath: "a/package-lock.json" }));
+    expect(next.bumps[1]).toMatchObject({ privateSource: true, remoteSource: true });
+    expect(next.outcomes[1]).toEqual({ kind: "unreviewed", reason: "unverified-pin" });
+  });
+
+  test.each([
+    ["honest first", [honestPin, evilPin]],
+    ["hostile first", [evilPin, honestPin]],
+  ])("in one pass, each public pin keeps its own proof (%s)", async (_order, bumps) => {
+    verifyPublicPin.mockImplementation(honestOnly);
+    const result = await stage(bumps);
+    for (const [index, original] of bumps.entries()) {
+      const honest = original === honestPin;
+      expect(Boolean(result.bumps[index].privateSource)).toBe(!honest);
+      expect(result.progress.bumps[bumpProgressKey(original)]).toEqual(
+        expect.objectContaining({ pinVerified: honest }),
+      );
+    }
+  });
+});
+
+describe("public pins", () => {
+  test("a proven pin is diffed as a plain public bump and keyed as one", async () => {
+    verifyPublicPin.mockResolvedValue(true);
+    const result = await stage([pinnedPublic("lib", "sha512-x")]);
+    expect(result.bumps[0]).toEqual(bump("lib"));
+    expect(result.outcomes[0]).toMatchObject({ kind: "diffed" });
+    expect(dependencyChangeKey(result.bumps[0])).toBe(dependencyChangeKey(bump("lib")));
+  });
+
+  test("a failed pin is never diffed and holds under the age fallback", async () => {
+    verifyPublicPin.mockResolvedValue(false);
+    const result = await stage([pinnedPublic("lib", "sha512-x")]);
+    expect(loadDiff).not.toHaveBeenCalled();
+    expect(listVersions).not.toHaveBeenCalled();
+    expect(result.bumps[0]).toMatchObject({
+      privateSource: true,
+      remoteSource: true,
+      pinnedHashes: ["sha512-x"],
+    });
+    expect(result.outcomes[0]).toEqual({ kind: "unreviewed", reason: "unverified-pin" });
+    expect(decideBump(result.outcomes[0], DEFAULT_DEPENDENCY_REVIEW_POLICY, NOW)).toEqual({
+      status: "hold",
+      reasons: ["too-new"],
+      evidence: null,
+      unreviewed: "unverified-pin",
+    });
+  });
+
+  test("a proof that throws, or egress off, reads as failed; the proof is asked once", async () => {
+    verifyPublicPin.mockRejectedValue(new Error("registry down"));
+    const first = await stage([pinnedPublic("lib", "sha512-x")]);
+    expect(first.outcomes[0]).toEqual({ kind: "unreviewed", reason: "unverified-pin" });
+    await stage([pinnedPublic("lib", "sha512-x")], { progress: first.progress });
+    expect(verifyPublicPin).toHaveBeenCalledTimes(1);
+
+    verifyPublicPin.mockClear();
+    const offline = await stage([pinnedPublic("lib", "sha512-x")], {
+      env: { NPM_REGISTRY: "https://npm.internal.example" },
+    });
+    expect(verifyPublicPin).not.toHaveBeenCalled();
+    expect(offline.outcomes[0]).toEqual({ kind: "unreviewed", reason: "unverified-pin" });
+  });
+
+  test("a proven re-pin is a new-package outcome the age fallback dates", async () => {
+    verifyPublicPin.mockResolvedValue(true);
+    listVersions.mockResolvedValue({
+      packageName: "lib",
+      versions: [{ version: "1.0.1", publishedAt: new Date(NOW - DAY).toISOString() }],
+      suggested: null,
+    });
+    const repin = pinnedPublic("lib", "sha512-x", { fromVersion: null, repinned: true });
+    const result = await stage([repin]);
+    expect(loadDiff).not.toHaveBeenCalled();
+    expect(result.bumps[0]).toEqual({ ...bump("lib", { fromVersion: null }), repinned: true });
+    expect(result.outcomes[0]).toEqual({
+      kind: "new-package",
+      publishedAt: new Date(NOW - DAY).toISOString(),
+    });
+  });
+
+  test("proofs share the per-pass registry lookup budget", async () => {
+    verifyPublicPin.mockResolvedValue(true);
+    readCached.mockResolvedValue(diffPayload());
+    const result = await stage(
+      Array.from({ length: 160 }, (_, i) => pinnedPublic(`p-${i}`, `sha512-${i}`)),
+    );
+    expect(verifyPublicPin).toHaveBeenCalledTimes(150);
+    expect(result.complete).toBe(false);
+  });
+});
+
+describe("the review limit bounds proofs", () => {
+  test("bumps past the first 500 reviewable ones are never proven, diffed, or dated", async () => {
+    const reviewed = Array.from({ length: 500 }, (_, i) => bump(`r-${i}`));
+    const progress = emptyProgress(NOW);
+    for (const entry of reviewed) {
+      progress.bumps[bumpProgressKey(entry)] = {
+        evidence: { ...emptyEvidence(), releaseRisk: "low" },
+      };
+    }
+    const past = [mirrorBump("m-late"), pinnedPublic("p-late", "sha512-late"), bump("d-late")];
+    const added = bump("n-late", { fromVersion: null });
+
+    const result = await stage([...reviewed, ...past, added], { progress });
+
+    expect(verifyMirrorBump).not.toHaveBeenCalled();
+    expect(verifyPublicPin).not.toHaveBeenCalled();
+    expect(loadDiff).not.toHaveBeenCalled();
+    expect(listVersions).not.toHaveBeenCalled();
+    expect(result.complete).toBe(true);
+    expect(result.outcomes.slice(500)).toEqual([
+      { kind: "unreviewed", reason: "over-cap", pastReviewLimit: true },
+      { kind: "unreviewed", reason: "over-cap", pastReviewLimit: true },
+      { kind: "unreviewed", reason: "over-cap", pastReviewLimit: true },
+      { kind: "new-package", pastReviewLimit: true },
+    ]);
+    // Without a proof, the past-limit pins keep their pin-specific identity.
+    expect(dependencyChangeKey(result.bumps[501])).toBe(
+      dependencyChangeKey(pinnedPublic("p-late", "sha512-late")),
+    );
+    const verdict = decideBump(result.outcomes[503], DEFAULT_DEPENDENCY_REVIEW_POLICY, NOW);
+    expect(verdict).toMatchObject({ status: "hold", reasons: ["too-new"], pastReviewLimit: true });
+  });
+});
+
+describe("a cold diff that takes its pass down", () => {
+  test("is retried alone first, then given up on as failed", async () => {
+    const poison = bump("poison");
+    const others = [bump("a"), bump("b")];
+    const progress = emptyProgress(NOW);
+    progress.bumps[bumpProgressKey(poison)] = { coldStarts: 1 };
+    progress.bumps[bumpProgressKey(others[0])] = { coldStarts: 1 };
+    const order: string[] = [];
+    loadDiff.mockImplementation(async (_env, _ctx, input: { packageName: string }) => {
+      order.push(input.packageName);
+      return diffPayload();
+    });
+
+    // One suspect runs before anything else; the other waits for a later pass.
+    const first = await stage([poison, ...others], { progress });
+    expect(order).toEqual(["poison", "b"]);
+    expect(first.progress.bumps[bumpProgressKey(poison)]).toMatchObject({ coldStarts: 2 });
+    expect(first.outcomes[1]).toEqual({
+      kind: "unreviewed",
+      reason: "over-cap",
+      pastReviewLimit: true,
+    });
+
+    // A suspect that took a pass down twice is recorded as failed, not retried.
+    order.length = 0;
+    const killed = emptyProgress(NOW);
+    killed.bumps[bumpProgressKey(poison)] = { coldStarts: 2 };
+    const next = await stage([poison, ...others], { progress: killed });
+    expect(order).toEqual(["a", "b"]);
+    expect(next.outcomes[0]).toMatchObject({ kind: "unreviewed", reason: "failed" });
+    expect(next.complete).toBe(true);
+  });
+
+  test("its start is written before the diff runs", async () => {
+    let savedBeforeDiff: string | undefined;
+    const w = writer();
+    loadDiff.mockImplementation(async () => {
+      savedBeforeDiff = w.saves.at(-1);
+      throw new Error("killed");
+    });
+    await runReviewStage(
+      context(),
+      [bump("slow")],
+      DEFAULT_DEPENDENCY_REVIEW_POLICY,
+      w.instance,
+      Date.now() + 60_000,
+    );
+    expect(JSON.parse(savedBeforeDiff ?? "{}").bumps[bumpProgressKey(bump("slow"))]).toEqual({
+      coldStarts: 1,
+    });
+  });
+});
+
+function emptyEvidence() {
+  return {
+    releaseRisk: "low" as const,
+    filesAdded: 0,
+    filesRemoved: 0,
+    filesChanged: 1,
+    installScriptsAdded: 0,
+    installScriptsChanged: 0,
+    nativeBinariesAdded: 0,
+    dependenciesAdded: 0,
+    binCommandsAdded: 0,
+    uninspectedFiles: 0,
+    coverageNotices: 0,
+    findings: [],
+    findingCount: 0,
+  };
+}

@@ -138,6 +138,8 @@ async function installSettingsMocks(page: Page, channelsReady: Promise<void>) {
             holdOnNewPackages: false,
             unreadMinimumAgeDays: 3,
             publicMirrors: [],
+            privateRegistries: [],
+            privateScopes: [],
           },
           extraBotLogins: [],
         },

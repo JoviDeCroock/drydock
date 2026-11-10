@@ -10,7 +10,10 @@ import {
   saveDependencyReviewSettings,
 } from "../../server/db/dependency-reviews";
 import * as schema from "../../server/db/schema";
-import { executeDependencyReviewJob } from "../../server/lib/dependency-review/job";
+import {
+  DependencyReviewLeaseError,
+  executeDependencyReviewJob,
+} from "../../server/lib/dependency-review/job";
 import { MAX_COLD_DIFFS_PER_PASS } from "../../server/lib/dependency-review/review-bumps";
 import {
   DEFAULT_DEPENDENCY_REVIEW_POLICY,
@@ -253,9 +256,17 @@ describe("dependency review continuation", () => {
     // Each finished cold diff is written at once, not only at the pass's end.
     const midPass = await readReview(review.id);
     expect(storedOutcomeCount(midPass.progressJson)).toBeGreaterThanOrEqual(7);
-    const stored = Object.keys(
-      (JSON.parse(midPass.progressJson ?? "{}") as { bumps: Record<string, unknown> }).bumps,
-    ).map((key) => key.split("\u0000")[1]);
+    // Diffs the dead pass started but never finished are stored as started
+    // (`coldStarts`) and may run again; finished ones never do.
+    const midBumps = (
+      JSON.parse(midPass.progressJson ?? "{}") as {
+        bumps: Record<string, { evidence?: unknown; unreviewed?: unknown; coldStarts?: number }>;
+      }
+    ).bumps;
+    const stored = Object.entries(midBumps)
+      .filter(([, entry]) => entry.evidence || entry.unreviewed)
+      .map(([key]) => key.split("\u0000")[1]);
+    expect(Object.values(midBumps).some((entry) => entry.coldStarts && !entry.evidence)).toBe(true);
     const firstRun = api.checkRunCreates[0].id;
     await createDb(env.DB)
       .update(schema.dependencyReviews)
@@ -272,16 +283,53 @@ describe("dependency review continuation", () => {
       conclusion: "cancelled",
     });
 
-    // The dead pass wakes up and finds a newer claim: it writes nothing more.
+    // The dead pass wakes up and finds a newer claim: it writes nothing more,
+    // reopens no run, and queues nothing.
     const replacement = await readReview(review.id);
+    const oldRunUpdates = api.checkRunUpdates.filter((run) => run.id === firstRun).length;
+    const sends = queue.sent.length;
     resume();
     expect(await original).toBeNull();
     await waitOnExecutionContext(ctx);
+    expect(api.checkRunUpdates.filter((run) => run.id === firstRun)).toHaveLength(oldRunUpdates);
+    expect(queue.sent).toHaveLength(sends);
     const after2 = await readReview(review.id);
     expect(after2.attempt).toBe(replacement.attempt);
     expect(after2.progressJson).toBe(replacement.progressJson);
     expect(after2.status).toBe(replacement.status);
     expect(names).toHaveLength(MAX_COLD_DIFFS_PER_PASS + 5);
+  });
+
+  test("a pass that starts past the pass bound fails the review with a clear result", async () => {
+    const { before, after } = manyBumps("bound", MAX_COLD_DIFFS_PER_PASS + 5);
+    const { api, review, queue, run } = await scenario({ before, after });
+    await run();
+    const between = await readReview(review.id);
+    // Every pass since was killed: the count reached the bound with no pass ending.
+    const progress = JSON.parse(between.progressJson ?? "{}") as { passes: number };
+    await createDb(env.DB)
+      .update(schema.dependencyReviews)
+      .set({ progressJson: JSON.stringify({ ...progress, passes: 50 }) })
+      .where(eq(schema.dependencyReviews.id, review.id));
+    const sentBefore = api.requests.length;
+
+    await run(queue.sent[0].body);
+
+    expect(registryNames(api, sentBefore)).toEqual([]);
+    expect(await readReview(review.id)).toMatchObject({
+      status: "failed",
+      failureReason: "DependencyReviewPassLimitError",
+      progressJson: null,
+    });
+    expect(api.checkRunUpdates.at(-1)).toMatchObject({
+      id: api.checkRunCreates[0].id,
+      body: {
+        status: "completed",
+        conclusion: "failure",
+        output: { summary: expect.stringContaining("passes kept ending before they finished") },
+      },
+    });
+    expect(queue.sent).toHaveLength(1);
   });
 
   test("a pass on a commit that stopped being the head spends nothing and cancels its run", async () => {
@@ -467,6 +515,122 @@ describe("dependency review age recheck", () => {
       });
     },
   );
+
+  test("a recheck released for a retry is resumed by its redelivery, not stranded", async () => {
+    const { pr, api, review, queue, run } = await ageHeldReview({ publishedDaysAgo: 2 });
+    const recheck = queue.sent[0].body;
+    const due = { ...recheck, recheck: { ...recheck.recheck!, at: new Date().toISOString() } };
+    pr.filesStatus = 502;
+    const ctx = createExecutionContext();
+
+    await expect(
+      executeDependencyReviewJob(dependencyReviewJobEnv({ SCAN_QUEUE: queue.binding }), ctx, due, {
+        finalAttempt: false,
+      }),
+    ).rejects.toThrow();
+    await waitOnExecutionContext(ctx);
+    const recheckRun = api.checkRunCreates[1].id;
+    expect(await readReview(review.id)).toMatchObject({ status: "queued", checkRunId: recheckRun });
+
+    pr.filesStatus = undefined;
+    await run(due);
+
+    expect(await readReview(review.id)).toMatchObject({
+      status: "completed",
+      conclusion: "held",
+      checkRunId: recheckRun,
+    });
+    expect(api.checkRunUpdates.at(-1)).toMatchObject({
+      id: recheckRun,
+      body: { status: "completed", conclusion: "action_required" },
+    });
+    // Approvable again, and rechecked again when the hold passes.
+    expect(queue.sent.at(-1)?.body.recheck?.checkRunId).toBe(recheckRun);
+  });
+
+  test("a recheck pass the platform killed is recovered by its redelivery after the lease", async () => {
+    const { api, review, queue, run } = await ageHeldReview({ publishedDaysAgo: 2 });
+    const recheck = queue.sent[0].body;
+    const due = { ...recheck, recheck: { ...recheck.recheck!, at: new Date().toISOString() } };
+    let stalling = true;
+    let reached!: () => void;
+    const reachedRegistry = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const inner = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = request instanceof Request ? request.url : String(request);
+        if (stalling && url.startsWith("https://registry.npmjs.org/")) {
+          reached();
+          await released;
+        }
+        return inner(request, init);
+      }),
+    );
+    const ctx = createExecutionContext();
+    const killed = executeDependencyReviewJob(
+      dependencyReviewJobEnv({ SCAN_QUEUE: queue.binding }),
+      ctx,
+      due,
+      { finalAttempt: true },
+    ).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    await reachedRegistry;
+    const recheckRun = api.checkRunCreates[1].id;
+    expect(await readReview(review.id)).toMatchObject({
+      status: "running",
+      checkRunId: recheckRun,
+    });
+
+    // Redelivered inside the lease: retried later rather than acknowledged.
+    const early = createExecutionContext();
+    await expect(
+      executeDependencyReviewJob(
+        dependencyReviewJobEnv({ SCAN_QUEUE: queue.binding }),
+        early,
+        due,
+        {
+          finalAttempt: false,
+        },
+      ),
+    ).rejects.toBeInstanceOf(DependencyReviewLeaseError);
+    await waitOnExecutionContext(early);
+
+    await createDb(env.DB)
+      .update(schema.dependencyReviews)
+      .set({ updatedAt: new Date(Date.now() - 16 * 60 * 1000) })
+      .where(eq(schema.dependencyReviews.id, review.id));
+    stalling = false;
+    await run(due);
+
+    const done = await readReview(review.id);
+    expect(done).toMatchObject({ status: "completed", conclusion: "held" });
+    expect(done.checkRunId).toBe(api.checkRunCreates.at(-1)?.id);
+    expect(api.checkRunUpdates.at(-1)).toMatchObject({
+      id: done.checkRunId,
+      body: { status: "completed", conclusion: "action_required" },
+    });
+    expect(
+      api.checkRunUpdates.filter((u) => u.id === recheckRun).map((u) => u.body.conclusion),
+    ).toContain("cancelled");
+
+    release();
+    expect(await killed).toBeNull();
+    await waitOnExecutionContext(ctx);
+    expect(await readReview(review.id)).toMatchObject({
+      status: "completed",
+      checkRunId: done.checkRunId,
+      attempt: done.attempt,
+    });
+  });
 
   test("a recheck for a review that is no longer the held result does nothing", async () => {
     const { api, review, queue, run } = await ageHeldReview({ publishedDaysAgo: 2 });

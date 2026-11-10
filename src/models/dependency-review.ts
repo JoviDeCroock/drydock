@@ -66,8 +66,8 @@ export function parseMinimumAgeInput(text: string): number | null | "invalid" {
   return days >= 1 && days <= MAX_UNREAD_MINIMUM_AGE_DAYS ? days : "invalid";
 }
 
-/** Mirror URL prefixes typed as one comma- or whitespace-separated line. */
-export function parseMirrorsInput(text: string): string[] {
+/** URL prefixes or scopes typed as one comma- or whitespace-separated line. */
+export function parseListInput(text: string): string[] {
   return text
     .split(/[\s,]+/)
     .map((entry) => entry.trim())
@@ -100,6 +100,8 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
   const draftBotLogins = signal("");
   const draftMinimumAge = signal("");
   const draftMirrors = signal("");
+  const draftPrivateRegistries = signal("");
+  const draftPrivateScopes = signal("");
   const saving = signal(false);
   const saveError = signal<string | null>(null);
   const justSaved = signal(false);
@@ -149,13 +151,17 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
     const age = minimumAge.value;
     const policy = draftPolicy.value;
     const mirrors = draftMirrors.value;
+    const privateRegistries = draftPrivateRegistries.value;
+    const privateScopes = draftPrivateScopes.value;
     const botLogins = draftBotLogins.value;
     return {
       enabled: draftEnabled.value,
       policy: {
         ...policy,
         unreadMinimumAgeDays: age === "invalid" ? policy.unreadMinimumAgeDays : age,
-        publicMirrors: parseMirrorsInput(mirrors),
+        publicMirrors: parseListInput(mirrors),
+        privateRegistries: parseListInput(privateRegistries),
+        privateScopes: parseListInput(privateScopes),
       },
       extraBotLogins: parseBotLoginsInput(botLogins),
     };
@@ -176,6 +182,8 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
         ? ""
         : String(settings.policy.unreadMinimumAgeDays);
     draftMirrors.value = settings.policy.publicMirrors.join(", ");
+    draftPrivateRegistries.value = settings.policy.privateRegistries.join(", ");
+    draftPrivateScopes.value = settings.policy.privateScopes.join(", ");
   }
 
   return {
@@ -190,6 +198,8 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
     draftBotLogins,
     draftMinimumAge,
     draftMirrors,
+    draftPrivateRegistries,
+    draftPrivateScopes,
     minimumAgeError,
     saving,
     saveError,
@@ -252,6 +262,16 @@ export const DependencyReviewsModel = createModel((options: { followReviews?: bo
 
     setMirrors(value: string) {
       draftMirrors.value = value;
+      justSaved.value = false;
+    },
+
+    setPrivateRegistries(value: string) {
+      draftPrivateRegistries.value = value;
+      justSaved.value = false;
+    },
+
+    setPrivateScopes(value: string) {
+      draftPrivateScopes.value = value;
       justSaved.value = false;
     },
 

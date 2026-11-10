@@ -40,13 +40,22 @@ import { postSkippedCheck } from "./skip";
 import type { ReviewedBump } from "./types";
 
 // 500 stored bumps at 12 cold diffs a pass need 42; the rest is slack for
-// passes cut short. Past it, what is left reads as over the cap.
+// passes cut short. A pass that survives at the bound publishes what is left
+// as over the cap; a pass that starts past it (the ones before were killed)
+// fails the review.
 const MAX_REVIEW_PASSES = 50;
 // Sent before the claim is released, so it must outlast the release; one
 // arriving early waits out the lease like any duplicate.
 const CONTINUATION_DELAY_SECONDS = 10;
 
 export type { DependencyReviewJobInput } from "./context";
+
+class DependencyReviewPassLimitError extends Error {
+  constructor() {
+    super("review exceeded its pass limit");
+    this.name = "DependencyReviewPassLimitError";
+  }
+}
 
 export class DependencyReviewLeaseError extends Error {
   readonly retryAfterSeconds: number;
@@ -82,10 +91,19 @@ export async function executeDependencyReviewJob(
   if (!input.reviewId) return;
   const review = await getDependencyReview(db, input.organizationId, input.reviewId);
   if (!review) return;
-  if (input.recheck) {
-    if (!recheckApplies(review, input.recheck)) return;
-    if (recheckEarly(input.recheck, Date.now())) {
-      await sendAgeRecheck(env, review, input.recheck, Date.now());
+  let recheck = input.recheck;
+  if (recheck) {
+    if (recheckApplies(review, recheck)) {
+      if (recheckEarly(recheck, Date.now())) {
+        await sendAgeRecheck(env, review, recheck, Date.now());
+        return;
+      }
+    } else if (review.status === "queued" || review.status === "running") {
+      // A redelivery of a recheck whose pass was released for a retry or
+      // killed mid-pass: the review now carries that recheck's run, so the
+      // message resumes it like any redelivery instead of stranding it.
+      recheck = undefined;
+    } else {
       return;
     }
   }
@@ -120,7 +138,7 @@ export async function executeDependencyReviewJob(
     await applyApproval(context, input.approver);
     return;
   }
-  if (input.recheck) {
+  if (recheck) {
     // A merged or closed PR keeps its finished check as it is: the recheck
     // claims nothing and posts nothing unless the commit is still the head.
     const pr = await fetchPullRequest(token, repo, review.pullNumber);
@@ -129,12 +147,12 @@ export async function executeDependencyReviewJob(
   const attempt = await claimDependencyReviewAttempt(
     db,
     review.id,
-    input.recheck
-      ? { recheckOfRun: input.recheck.checkRunId }
+    recheck
+      ? { recheckOfRun: recheck.checkRunId }
       : { rerun: input.rerun, continuation: input.continuation },
   );
   if (attempt === null) {
-    if (input.recheck) return;
+    if (recheck) return;
     const current = await getDependencyReview(db, review.organizationId, review.id);
     // A redelivery may be the only survivor of a terminated worker. Do not
     // acknowledge it while its claim is still leased; retry after it can be
@@ -152,6 +170,14 @@ export async function executeDependencyReviewJob(
   } catch (err) {
     // A newer claim owns the review; it posts the result.
     if (err instanceof DependencyReviewStalePassError) return;
+    if (err instanceof DependencyReviewPassLimitError) {
+      await failReview(
+        context,
+        err,
+        "Drydock stopped this review after its passes kept ending before they finished. Use Re-run to start it over; a pull request with fewer dependency updates reviews in fewer passes.",
+      );
+      return;
+    }
     const retryable = err instanceof DependencyReviewGithubError ? err.retryable : true;
     if (retryable && !options.finalAttempt) {
       await releaseDependencyReview(db, review.id, context.review.checkRunId, attempt);
@@ -191,18 +217,26 @@ async function runReview(
     progress.passes > 0 ? progressLine(progress) : null,
   );
 
+  // Ownership: every GitHub write and queue send below follows a fenced
+  // write (the claim, or a `writer.flush()`) closely. A fenced write renews
+  // the lease, and nothing can claim a running review inside its lease, so a
+  // pass that has lost its claim stops at that write instead of touching a
+  // run a newer attempt replaced.
+  const writer = new ProgressWriter(progress, (json) =>
+    saveDependencyReviewProgress(db, review.id, attempt, json),
+  );
+  // A pass the platform kills never reaches its end, so the bound is checked
+  // here, before the next one spends anything.
+  if (progress.passes >= MAX_REVIEW_PASSES) throw new DependencyReviewPassLimitError();
+  // Counted before any work, so a pass the platform kills still counts.
+  progress.passes += 1;
+  await writer.flush();
+
   const pr = await fetchPullRequest(token, repo, review.pullNumber);
   if (!pr || pr.headSha !== review.headSha || pr.state !== "open") {
     await cancelSupersededReview(context, checkRunId);
     return;
   }
-
-  const writer = new ProgressWriter(progress, (json) =>
-    saveDependencyReviewProgress(db, review.id, attempt, json),
-  );
-  // Counted before any work, so a pass the platform kills still counts.
-  progress.passes += 1;
-  await writer.flush();
 
   const settings = await getDependencyReviewSettings(db, review.organizationId);
   // The head is fixed, so what the first pass collected still holds; a pass
@@ -270,14 +304,18 @@ async function runReview(
   });
 
   let conclusion = concludeDependencyReview(reviewed);
-  // An unread lockfile, or a listing GitHub cut short, may hide bumps, so the
-  // review can't call the PR clear on what it saw.
+  // An unread lockfile or registry config, or a listing GitHub cut short, may
+  // hide bumps nothing vouched for and that have no publish time to wait out,
+  // so it holds whenever the age fallback is on (unknown age holds), as well
+  // as under `holdOnUnreviewed`. Either way the PR is never called clear.
   const partial = collected.unreadLockfiles.length > 0 || !collected.listingComplete;
-  const heldOnCoverage = partial && settings.policy.holdOnUnreviewed;
+  const heldOnCoverage =
+    partial && (settings.policy.holdOnUnreviewed || settings.policy.unreadMinimumAgeDays !== null);
   if (heldOnCoverage && conclusion !== "held") conclusion = "held";
   // Diffs can run for minutes. A bot may have rebased or closed its PR after
   // the first head check; never publish that work as the current review.
   const currentPr = await fetchPullRequest(token, repo, review.pullNumber);
+  await writer.flush();
   if (!currentPr || currentPr.headSha !== review.headSha || currentPr.state !== "open") {
     await cancelSupersededReview(context, checkRunId);
     return;
@@ -333,7 +371,11 @@ function storedBumps(reviewed: readonly ReviewedBump[]): ReviewedBump[] {
   );
 }
 
-async function failReview(context: ReviewContext, err: unknown): Promise<void> {
+async function failReview(
+  context: ReviewContext,
+  err: unknown,
+  summary = "Drydock could not finish this review. Use Re-run to try again.",
+): Promise<void> {
   const reason = err instanceof Error ? err.name : "error";
   emitOperationalEvent("error", "dependency_review.failed", {
     organizationId: context.review.organizationId,
@@ -358,7 +400,7 @@ async function failReview(context: ReviewContext, err: unknown): Promise<void> {
       conclusion: "failure",
       output: {
         title: "Dependency review failed",
-        summary: "Drydock could not finish this review. Use Re-run to try again.",
+        summary,
       },
     },
     context.detailsUrl,

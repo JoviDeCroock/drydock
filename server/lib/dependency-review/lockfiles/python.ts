@@ -1,8 +1,15 @@
 import { createHash } from "node:crypto";
 import { textLines } from "./lines";
-import { createSnapshotBuilder, incompleteSnapshot, type LockfileSnapshot } from "./snapshot";
+import {
+  createSnapshotBuilder,
+  incompleteSnapshot,
+  isPublicPyPiFileUrl,
+  type LockfileSnapshot,
+} from "./snapshot";
 
 const PYPI_SIMPLE = /^https:\/\/pypi\.org\/simple\/?$/;
+// The keys uv writes in an `sdist` / `wheels` entry.
+const FILE_KEYS = new Set(["url", "hash", "size", "upload-time"]);
 const LOCAL_UV_SOURCES = new Set(["path", "directory"]);
 const SOURCE_KINDS = ["registry", "git", "url", "path", "directory", "editable", "virtual"];
 const TOML_STRING_FIELD = /^(name|version) = "([^"\\]*)"$/;
@@ -27,6 +34,8 @@ interface UvPackage {
   // The `sha256:` hash of each `sdist` / `wheels` file, while every file
   // entry read cleanly as one with a sha256 hash.
   hashes: string[];
+  // The `url` of each file entry.
+  urls: string[];
   files: number;
   filesClean: boolean;
   // Field lines seen twice, or a name/version/source line in a form this
@@ -119,11 +128,22 @@ export function parseUvLock(text: string): LockfileSnapshot {
     if (kind === "editable" || kind === "virtual") {
       for (const name of pkg.dependsOn) builder.markDirect(name);
     } else if (kind === "registry") {
-      builder.add(pkg.name, pkg.version, {
-        ...(PYPI_SIMPLE.test(value) ? {} : { registry: { location: value, ref: null } }),
-        hashes,
-        pin,
-      });
+      const pypi = PYPI_SIMPLE.test(value);
+      // uv fetches each file from the `url` the lock records, so the index
+      // alone does not place the bytes. A PyPI package is public only when
+      // every file is on PyPI's own file host and the files read cleanly
+      // (each one pins a sha256); one whose files cannot be read cannot be
+      // bound to PyPI's release, so the snapshot is unread.
+      if (pypi && pkg.files > 0 && !pkg.filesClean) builder.markIncomplete();
+      if (pypi && pkg.urls.every((url) => isPublicPyPiFileUrl(url))) {
+        builder.add(pkg.name, pkg.version, { hashes, pin });
+      } else {
+        builder.add(pkg.name, pkg.version, {
+          registry: { location: value, ref: null, urls: pkg.urls },
+          hashes,
+          pin,
+        });
+      }
     } else if (!LOCAL_UV_SOURCES.has(kind)) {
       builder.addRemote(pkg.name, value, pkg.version, pin);
     }
@@ -138,6 +158,7 @@ function newPackage(): UvPackage {
     source: null,
     dependsOn: [],
     hashes: [],
+    urls: [],
     files: 0,
     filesClean: true,
     malformed: false,
@@ -220,12 +241,28 @@ function uvSource(value: string): { kind: string; value: string } | null {
   return { kind, value: fields.get(kind)! };
 }
 
+// A file entry pins one sha256 and names the URL it is fetched from.
 function readFileEntry(pkg: UvPackage, text: string): void {
   pkg.files += 1;
-  const hash = inlineTable(text)?.get("hash");
-  if (hash !== undefined && SHA256_HASH.test(hash)) pkg.hashes.push(hash.toLowerCase());
+  const fields = inlineTable(text);
+  const hash = fields?.get("hash");
+  const url = fields?.get("url");
+  if (
+    !fields ||
+    [...fields.keys()].some((key) => !FILE_KEYS.has(key)) ||
+    hash === undefined ||
+    !SHA256_HASH.test(hash) ||
+    url === undefined
+  ) {
+    pkg.filesClean = false;
+    return;
+  }
+  pkg.hashes.push(hash.toLowerCase());
+  if (pkg.urls.length < MAX_FILE_URLS) pkg.urls.push(url);
   else pkg.filesClean = false;
 }
+
+const MAX_FILE_URLS = 1024;
 
 // A single-line inline table of bare keys and plain values, the only form uv
 // writes. Strings with escapes, nested values, and repeated keys read as null,
@@ -282,30 +319,186 @@ function filePin(pkg: UvPackage, hashes: string[] | null): string | null {
   return `lock entry sha256:${pkg.block.digest("hex")}`;
 }
 
-const PIN = /^\s*([A-Za-z0-9][\w.-]*)(?:\[[^\]]*\])?\s*==\s*([\w.+!-]+)(?=[\s;#]|$)/;
-// Options that change where pins resolve. pip accepts a short option glued to
-// its value (`-ihttps://...`).
-const INDEX_OPTION = /^(?:-[if]|--(?:index-url|extra-index-url|find-links|no-index)(?=[=\s]|$))/;
+const PIN = /^([A-Za-z0-9][\w.-]*)(?:\[[^\]]*\])? ?== ?([\w.+!-]+)(?: ?;.*)?$/;
+// pip substitutes `${NAME}` from the environment before it splits a line, so
+// the value may hold options of its own.
+const PIP_ENV_VAR = /\$\{[A-Z0-9_]+\}/;
+const PIP_HASH = /^(sha256|sha384|sha512):([0-9a-fA-F]+)$/;
+const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
 
-// requirements*.txt exact `==` pins, all of them direct. The snapshot is
-// incomplete when a pin may resolve somewhere other than pypi.org (any index
-// option except an explicit pypi.org `--index-url`) or when a name is pinned to
-// two versions (per-marker pins), since neither has one public version to
-// review. Every other requirement line (ranges, `name @ url`, VCS and `-e`
-// lines, includes) lands in `unpinned`: the file names no version for those,
-// so the caller treats any change to that list as an unread lockfile, rather
-// than this parser guessing names out of URLs.
-export function parseRequirements(text: string): LockfileSnapshot {
-  const builder = createSnapshotBuilder("pypi");
-  const pins = new Map<string, string>();
-  const unpinned: string[] = [];
-  for (const line of logicalLines(text)) {
-    const option = INDEX_OPTION.exec(line)?.[0];
-    if (option !== undefined) {
-      if (!defaultIndex(option, line.slice(option.length))) return incompleteSnapshot();
+type PipOptionRole =
+  // Where pins resolve: exactly PyPI or the file is unread.
+  | "index"
+  // Another source of distributions: the file is unread.
+  | "source"
+  // Names requirements this file does not pin (includes, editables) or
+  // changes how they install: kept as text in `unpinned`.
+  | "other"
+  // Per-requirement options.
+  | "hash"
+  | "requirement";
+
+// The options pip accepts in a requirements file, by long name, and whether
+// each takes a value. pip (optparse) also accepts any unambiguous prefix of a
+// long name and the short forms below, so both resolve here the same way.
+const PIP_OPTIONS: Record<string, { role: PipOptionRole; value: boolean }> = {
+  "index-url": { role: "index", value: true },
+  "extra-index-url": { role: "source", value: true },
+  "no-index": { role: "source", value: false },
+  "find-links": { role: "source", value: true },
+  constraint: { role: "other", value: true },
+  requirement: { role: "other", value: true },
+  editable: { role: "other", value: true },
+  "no-binary": { role: "other", value: true },
+  "only-binary": { role: "other", value: true },
+  "prefer-binary": { role: "other", value: false },
+  "require-hashes": { role: "other", value: false },
+  pre: { role: "other", value: false },
+  "trusted-host": { role: "other", value: true },
+  "use-feature": { role: "other", value: true },
+  hash: { role: "hash", value: true },
+  "global-option": { role: "requirement", value: true },
+  "config-settings": { role: "requirement", value: true },
+};
+const PIP_SHORT: Record<string, string> = {
+  i: "index-url",
+  f: "find-links",
+  c: "constraint",
+  r: "requirement",
+  e: "editable",
+};
+
+function pipLongOption(name: string): string | null {
+  if (Object.hasOwn(PIP_OPTIONS, name)) return name;
+  const matches = Object.keys(PIP_OPTIONS).filter((option) => option.startsWith(name));
+  return name && matches.length === 1 ? matches[0] : null;
+}
+
+// Every option on a line, as pip reads them: `--name=value`, `--name value`,
+// `-xvalue`, `-x value`. Null when any is unknown, ambiguous, missing its
+// value, or given one it does not take, or when a word is quoted in a way
+// pip's shell-style split reads differently (see `shellWord`).
+function pipOptions(raw: readonly string[]): Array<[string, string | null]> | null {
+  const tokens: string[] = [];
+  for (const word of raw) {
+    const token = shellWord(word);
+    if (token === null) return null;
+    tokens.push(token);
+  }
+  const out: Array<[string, string | null]> = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token === "--") break;
+    let name: string | null;
+    let value: string | null = null;
+    if (token.startsWith("--")) {
+      const eq = token.indexOf("=");
+      name = pipLongOption(eq === -1 ? token.slice(2) : token.slice(2, eq));
+      if (eq !== -1) value = token.slice(eq + 1);
+    } else if (token.startsWith("-") && token.length > 1) {
+      name = PIP_SHORT[token[1]] ?? null;
+      if (token.length > 2) value = token.slice(2);
+    } else {
+      // A stray positional argument, which pip ignores.
       continue;
     }
-    const m = PIN.exec(line);
+    if (name === null) return null;
+    const option = PIP_OPTIONS[name];
+    if (option.value && value === null) {
+      value = tokens[++i] ?? null;
+      if (value === null) return null;
+    } else if (!option.value && value !== null) {
+      return null;
+    }
+    out.push([name, value]);
+  }
+  return out;
+}
+
+// One whitespace-free word as shlex reads it: quoted runs lose their quotes.
+// Null for a backslash (an escape) or an unclosed quote, which in shlex would
+// join the next word.
+function shellWord(word: string): string | null {
+  if (word.includes("\\")) return null;
+  let out = "";
+  let i = 0;
+  while (i < word.length) {
+    const c = word[i];
+    if (c === "'" || c === '"') {
+      const close = word.indexOf(c, i + 1);
+      if (close === -1) return null;
+      out += word.slice(i + 1, close);
+      i = close + 1;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
+
+interface Pin {
+  version: string;
+  // Every `--hash` given for the name, as `algorithm:hex`.
+  hashes: Set<string>;
+  // Some line pins the name with no hash.
+  unhashed: boolean;
+}
+
+// requirements*.txt exact `==` pins, all of them direct, read the way pip
+// reads the file (see `pipLines`). The snapshot is incomplete when a pin may
+// resolve somewhere other than pypi.org (any index or find-links option
+// except an explicit pypi.org `--index-url`), when any option on any line is
+// not one pip accepts exactly as written, or when a name is pinned to two
+// versions (per-marker pins), since neither has one public version to review.
+// Every other requirement line (ranges, `name @ url`, VCS and `-e` lines,
+// includes, install options) lands in `unpinned`: the file names no version
+// for those, so the caller treats any change to that list as an unread
+// lockfile, rather than this parser guessing names out of URLs. `--hash`
+// values pin the release's files.
+export function parseRequirements(text: string): LockfileSnapshot {
+  const builder = createSnapshotBuilder("pypi");
+  const pins = new Map<string, Pin>();
+  const unpinned: string[] = [];
+  const lines = pipLines(text);
+  if (lines === null) return incompleteSnapshot();
+  for (const line of lines) {
+    const tokens = line.split(" ");
+    let split = tokens.findIndex((token) => token.startsWith("-"));
+    if (split === -1) split = tokens.length;
+    const options = pipOptions(tokens.slice(split));
+    if (options === null) return incompleteSnapshot();
+    const args = tokens.slice(0, split).join(" ");
+    const substituted = PIP_ENV_VAR.test(line);
+    // Unless a requirement comes first, a substitution may expand into any
+    // option.
+    if (substituted && (!args || PIP_ENV_VAR.test(tokens[0]))) return incompleteSnapshot();
+    if (!args) {
+      for (const [name, value] of options) {
+        const role = PIP_OPTIONS[name].role;
+        if (role === "source") return incompleteSnapshot();
+        if (role === "index" && !PYPI_SIMPLE.test(value ?? "")) return incompleteSnapshot();
+      }
+      if (options.some(([name]) => PIP_OPTIONS[name].role !== "index")) {
+        if (!builder.reserve()) break;
+        unpinned.push(line);
+      }
+      continue;
+    }
+    // On a requirement line pip ignores file-wide options; they are not a
+    // shape this reads.
+    const hashes: string[] = [];
+    for (const [name, value] of options) {
+      const role = PIP_OPTIONS[name].role;
+      if (role === "hash") {
+        const m = PIP_HASH.exec(value ?? "");
+        if (!m) return incompleteSnapshot();
+        hashes.push(`${m[1]}:${m[2].toLowerCase()}`);
+      } else if (role !== "requirement") {
+        return incompleteSnapshot();
+      }
+    }
+    const m = substituted ? null : PIN.exec(args);
     if (!m) {
       if (!builder.reserve()) break;
       unpinned.push(line);
@@ -313,52 +506,92 @@ export function parseRequirements(text: string): LockfileSnapshot {
     }
     const key = m[1].toLowerCase().replace(/[-_.]+/g, "-");
     const pinned = pins.get(key);
-    if (pinned !== undefined && pinned !== m[2]) return incompleteSnapshot();
+    if (pinned !== undefined && pinned.version !== m[2]) return incompleteSnapshot();
     if (pinned === undefined && !builder.reserve()) break;
-    pins.set(key, m[2]);
+    const pin = pinned ?? { version: m[2], hashes: new Set(), unhashed: false };
+    for (const hash of hashes) pin.hashes.add(hash);
+    if (hashes.length === 0) pin.unhashed = true;
+    pins.set(key, pin);
   }
-  for (const [name, version] of pins) {
-    builder.add(name, version);
+  for (const [name, { version, hashes, unhashed }] of pins) {
+    const all = [...hashes].sort();
+    // pip accepts a file matching any hash given; only when all of them are
+    // sha256 (PyPI's digest) can a comparison cover every one.
+    const sha256 =
+      !unhashed &&
+      all.length > 0 &&
+      all.every((hash) => hash.startsWith("sha256:") && SHA256_HEX.test(hash.slice(7)));
+    builder.add(name, version, {
+      hashes: sha256 ? all : null,
+      pin: all.length > 0 ? `${unhashed ? "unhashed " : ""}${all.join(" ")}` : null,
+    });
     builder.markDirect(name);
   }
   return builder.finish(unpinned.sort());
 }
 
-// pip's reading: `\` at a line end continues it, `#` at the start or after
-// whitespace starts a comment (a `#` inside a URL fragment does not), and
-// runs of whitespace are insignificant. Blank results are dropped.
-function* logicalLines(text: string): Generator<string> {
-  let pending = "";
-  for (const raw of textLines(text)) {
-    const trimmed = raw.trimEnd();
-    if (trimmed.endsWith("\\")) {
-      pending += `${trimmed.slice(0, -1)} `;
-      continue;
+// Python's `splitlines` breaks lines on `\r`, `\v`, `\f`, 0x1c-0x1e, 0x85,
+// U+2028, and U+2029 as well as `\n`; a file holding one (or any other control
+// character but a tab) is not split the same way here, so it is unread.
+function plainRequirementsText(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 0x09 || c === 0x0a) continue;
+    if (c < 0x20 || c === 0x7f || c === 0x85 || c === 0x2028 || c === 0x2029 || c === 0xfeff) {
+      return false;
     }
-    const line = normalizeRequirement(pending + raw);
-    pending = "";
-    if (line) yield line;
   }
-  const last = normalizeRequirement(pending);
-  if (last) yield last;
+  return true;
 }
 
-function normalizeRequirement(line: string): string {
-  let cut = line.length;
+/**
+ * The logical lines pip reads from a requirements file: a line ending in `\`
+ * joins the next unless it is a comment line (`#` first, after optional
+ * whitespace), which pip never continues and which ends a continuation it
+ * follows; then a `#` at the start or after whitespace starts a comment, and
+ * runs of whitespace collapse. Null when the text has a line break or control
+ * character pip and this would split differently.
+ */
+function pipLines(text: string): string[] | null {
+  const body = text.replace(/\r\n/g, "\n");
+  if (!plainRequirementsText(body)) return null;
+  const out: string[] = [];
+  const push = (line: string) => {
+    const clean = stripComment(line).split(/\s+/).filter(Boolean).join(" ");
+    if (clean) out.push(clean);
+  };
+  let joined: string[] = [];
+  for (const line of textLines(body)) {
+    const comment = /^\s*#/.test(line);
+    if (!line.endsWith("\\") || comment) {
+      if (joined.length > 0) {
+        joined.push(comment ? ` ${line}` : line);
+        push(joined.join(""));
+        joined = [];
+      } else {
+        push(line);
+      }
+    } else {
+      joined.push(trimBackslashes(line));
+    }
+  }
+  if (joined.length > 0) push(joined.join(""));
+  return out;
+}
+
+// Python's `str.strip("\\")`: every backslash at either end.
+function trimBackslashes(line: string): string {
+  let start = 0;
+  let end = line.length;
+  while (start < end && line[start] === "\\") start++;
+  while (end > start && line[end - 1] === "\\") end--;
+  return line.slice(start, end);
+}
+
+// Everything from the first `#` that starts the line or follows whitespace.
+function stripComment(line: string): string {
   for (let i = line.indexOf("#"); i !== -1; i = line.indexOf("#", i + 1)) {
-    if (i === 0 || /\s/.test(line[i - 1])) {
-      cut = i;
-      break;
-    }
+    if (i === 0 || /\s/.test(line[i - 1])) return line.slice(0, i);
   }
-  return line.slice(0, cut).split(/\s+/).filter(Boolean).join(" ");
-}
-
-function defaultIndex(option: string, rest: string): boolean {
-  if (option !== "-i" && option !== "--index-url") return false;
-  const value = rest
-    .replace(/^[=\s]+/, "")
-    .split(/\s/, 1)[0]
-    .replace(/^(["'])(.*)\1$/, "$2");
-  return PYPI_SIMPLE.test(value);
+  return line;
 }

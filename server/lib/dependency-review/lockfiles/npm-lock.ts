@@ -28,9 +28,14 @@ export function parseNpmLock(text: string): LockfileSnapshot {
     return incompleteSnapshot();
   }
   const builder = createSnapshotBuilder("npm");
-  const entries = Object.entries(packages as Record<string, unknown>);
+  const all = packages as Record<string, unknown>;
+  const entries = Object.entries(all);
   for (const [path, entry] of entries) {
-    const pkg = installedPackage(path, entry);
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      if (path.includes(NODE_MODULES)) builder.markIncomplete();
+      continue;
+    }
+    const pkg = installedPackage(path, entry, all);
     if (pkg) recordInstalled(builder, pkg.name, entry);
   }
   for (const [importer, entry] of entries) {
@@ -43,9 +48,7 @@ export function parseNpmLock(text: string): LockfileSnapshot {
         const hoisted = `${NODE_MODULES}${dep}`;
         const path = Object.hasOwn(packages, local) ? local : hoisted;
         if (!Object.hasOwn(packages, path)) continue;
-        builder.markDirect(
-          installedPackage(path, (packages as Record<string, unknown>)[path])?.name,
-        );
+        builder.markDirect(installedPackage(path, all[path], all)?.name);
       }
     }
   }
@@ -53,17 +56,43 @@ export function parseNpmLock(text: string): LockfileSnapshot {
 }
 
 // The package an installed entry stands for, or null when its code is in the
-// repository: a workspace link, a `file:` source, or a bundled copy that ships
-// inside its parent's tarball.
-function installedPackage(path: string, entry: unknown): { name: string } | null {
+// repository (a workspace link, a `file:` source) or ships inside a bundling
+// parent's tarball. npm (arborist) only takes `inBundle` from a nested entry
+// with no `resolved` of its own under a package that declares bundled
+// dependencies; anywhere else it fetches the entry like any other, so the flag
+// is ignored there. A `name` that is not a string is recorded as is, which the
+// builder refuses (incomplete).
+function installedPackage(
+  path: string,
+  entry: unknown,
+  packages: Record<string, unknown>,
+): { name: unknown } | null {
   const at = path.lastIndexOf(NODE_MODULES);
   if (at === -1) return null;
-  if (ownField(entry, "link") === true || ownField(entry, "inBundle") === true) return null;
+  if (ownField(entry, "link") === true) return null;
   if (isLocalSource(ownField(entry, "resolved"))) return null;
+  if (ownField(entry, "inBundle") === true && bundled(path, entry, packages)) return null;
   // An alias (`"x": "npm:real@^1"`) installs under its alias path and names the
   // real package in `name`.
   const name = ownField(entry, "name");
-  return { name: typeof name === "string" ? name : path.slice(at + NODE_MODULES.length) };
+  return { name: name === undefined ? path.slice(at + NODE_MODULES.length) : name };
+}
+
+function bundled(path: string, entry: unknown, packages: Record<string, unknown>): boolean {
+  if (ownField(entry, "resolved") !== undefined) return false;
+  // Every ancestor install path: `a/node_modules/b/node_modules/c` has `a` and
+  // `a/node_modules/b`; the root (``) never bundles.
+  for (let at = path.lastIndexOf(`/${NODE_MODULES}`); at > 0;) {
+    const parent = path.slice(0, at);
+    if (parent.includes(NODE_MODULES) && Object.hasOwn(packages, parent)) {
+      const declared = packages[parent];
+      const list =
+        ownField(declared, "bundleDependencies") ?? ownField(declared, "bundledDependencies");
+      if (list === true || (Array.isArray(list) && list.length > 0)) return true;
+    }
+    at = path.lastIndexOf(`/${NODE_MODULES}`, at - 1);
+  }
+  return false;
 }
 
 // With no `resolved`, npm fetches `name@version` from the configured registry
@@ -72,7 +101,7 @@ function installedPackage(path: string, entry: unknown): { name: string } | null
 // (a range, a URL), which pins nothing here, so it is a remote source rather
 // than a dropped entry. With a `resolved`, the URL decides (see
 // `classifyNpmTarball`); one that is not a string is a remote source.
-function recordInstalled(builder: SnapshotBuilder, name: string, entry: unknown): void {
+function recordInstalled(builder: SnapshotBuilder, name: unknown, entry: unknown): void {
   const version = ownField(entry, "version");
   const resolved = ownField(entry, "resolved");
   const { pin, hashes } = npmIntegrity(ownField(entry, "integrity"));
@@ -84,7 +113,7 @@ function recordInstalled(builder: SnapshotBuilder, name: string, entry: unknown)
     }
     return;
   }
-  if (typeof resolved !== "string") {
+  if (typeof resolved !== "string" || typeof name !== "string") {
     builder.addRemote(name, null, version, pin);
     return;
   }
@@ -96,5 +125,5 @@ function recordInstalled(builder: SnapshotBuilder, name: string, entry: unknown)
       hashes,
       pin,
     });
-  } else builder.addRemote(name, resolved, version, pin);
+  } else builder.addRemote(name, resolved, version, pin, source.location);
 }

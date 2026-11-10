@@ -25,16 +25,47 @@ export async function verifyMirrorBump(
   bump: DependencyBump,
 ): Promise<boolean> {
   const mirror = bump.mirror;
-  if (!mirror || bump.remoteSource || !publicDiffEgressAllowed(env)) return false;
-  const adapter = getPublicDiffAdapter(bump.ecosystem);
-  if (!adapter?.publicReleaseDigests || !adapter.isValidPackageName(bump.name)) return false;
-  const sides: Array<{ version: string; hashes: readonly string[] }> = [
-    { version: bump.toVersion, hashes: mirror.toHashes },
-  ];
+  if (!mirror || bump.remoteSource) return false;
   if ((bump.fromVersion === null) !== (mirror.fromHashes === null)) return false;
+  const sides: PinnedSide[] = [{ version: bump.toVersion, hashes: mirror.toHashes }];
   if (bump.fromVersion !== null) {
     sides.push({ version: bump.fromVersion, hashes: mirror.fromHashes! });
   }
+  return publicDigestsMatch(env, ctx, bump, sides);
+}
+
+/**
+ * Whether the hashes a lockfile pins for a public bump's target version
+ * (`bump.pinnedHashes`) are the public registry's own for that release:
+ * every one must be among the digests it records for exactly that name and
+ * version, read the same anonymous, cached way as `verifyMirrorBump` and
+ * false on the same doubts. A bump with no pinned hashes, or one that is not
+ * public, is never looked up.
+ */
+export async function verifyPublicPin(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  bump: DependencyBump,
+): Promise<boolean> {
+  const hashes = bump.pinnedHashes;
+  if (!hashes || bump.privateSource || bump.remoteSource || bump.mirror) return false;
+  return publicDigestsMatch(env, ctx, bump, [{ version: bump.toVersion, hashes }]);
+}
+
+interface PinnedSide {
+  version: string;
+  hashes: readonly string[];
+}
+
+async function publicDigestsMatch(
+  env: Cloudflare.Env,
+  ctx: ExecutionContext,
+  bump: DependencyBump,
+  sides: readonly PinnedSide[],
+): Promise<boolean> {
+  if (!publicDiffEgressAllowed(env)) return false;
+  const adapter = getPublicDiffAdapter(bump.ecosystem);
+  if (!adapter?.publicReleaseDigests || !adapter.isValidPackageName(bump.name)) return false;
   for (const side of sides) {
     // npm's public diff also takes preview URLs as versions; a pin never is one.
     if (!adapter.isValidVersion(side.version) || side.version.includes(":")) return false;

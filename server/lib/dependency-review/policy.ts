@@ -6,6 +6,8 @@ import type { FindingSeverity, RiskLevel } from "../review/types";
 import { hasUnreadContent } from "./evidence";
 import {
   DEFAULT_DEPENDENCY_REVIEW_POLICY,
+  MAX_PRIVATE_REGISTRIES,
+  MAX_PRIVATE_SCOPES,
   MAX_PUBLIC_MIRRORS,
   MAX_UNREAD_MINIMUM_AGE_DAYS,
   type BumpEvidence,
@@ -16,6 +18,7 @@ import {
   type DependencyReviewPolicy,
   type HoldReason,
   type ReviewedBump,
+  type UnreviewedReason,
 } from "./types";
 
 export { hasUnreadContent };
@@ -125,10 +128,21 @@ export function evaluateBumpEvidence(
   ) {
     reasons.push("release-risk");
   }
-  if (policy.holdOnUninspectedFiles && hasUnreadContent(evidence)) {
+  if (policy.holdOnUninspectedFiles && hasUnreadContent(evidence, unreadOptions(policy))) {
     reasons.push("uninspected-files");
   }
   return reasons.length > 0 ? { status: "hold", reasons, evidence } : { status: "clear", evidence };
+}
+
+// An added native binary the policy holds as a capability is not also unread.
+function unreadOptions(policy: DependencyReviewPolicy) {
+  return { nativeAddedHeld: policy.holdOnNativeBinaries };
+}
+
+// No publish time could vouch for these bytes: a git ref, URL, or tarball, or a
+// pin that is not the public release's.
+function hasNoPublishTime(reason: UnreviewedReason): boolean {
+  return reason === "remote-source" || reason === "unverified-pin";
 }
 
 /**
@@ -153,22 +167,23 @@ export function ageHold(
 /**
  * Whether `decideBump` reads this outcome's publish time under `policy`, so
  * the review stage looks one up only where it matters. A private-registry
- * bump is exempt (its versions are not public), a remote source has no
- * publish time to look up, and a switch that already holds the bump wins.
+ * bump is exempt (its versions are not public), a remote source or an
+ * unverified pin has no publish time to look up, and a switch that already
+ * holds the bump wins.
  */
 export function needsReleaseAge(outcome: BumpOutcome, policy: DependencyReviewPolicy): boolean {
   if (policy.unreadMinimumAgeDays === null) return false;
   switch (outcome.kind) {
     case "diffed":
       return (
-        hasUnreadContent(outcome.evidence) &&
+        hasUnreadContent(outcome.evidence, unreadOptions(policy)) &&
         evaluateBumpEvidence(outcome.evidence, policy).status === "clear"
       );
     case "unreviewed":
       return (
         !policy.holdOnUnreviewed &&
         outcome.reason !== "private-source" &&
-        outcome.reason !== "remote-source"
+        !hasNoPublishTime(outcome.reason)
       );
     case "new-package":
       return !policy.holdOnNewPackages;
@@ -180,8 +195,9 @@ export function needsReleaseAge(outcome: BumpOutcome, policy: DependencyReviewPo
  * fallback covers what nothing vouched for. The switches that hold such a
  * bump outright (`holdOnUnreviewed`, `holdOnNewPackages`,
  * `holdOnUninspectedFiles`) take precedence over the fallback, and a bump
- * the diff already holds gets no age reason on top. Pure: `nowMs` is the
- * clock.
+ * the diff already holds gets no age reason on top. A bump past the review
+ * limit (`pastReviewLimit`) had no publish time looked up, so it holds as
+ * unknown and says why. Pure: `nowMs` is the clock.
  */
 export function decideBump(
   outcome: BumpOutcome,
@@ -191,7 +207,12 @@ export function decideBump(
   switch (outcome.kind) {
     case "diffed": {
       const verdict = evaluateBumpEvidence(outcome.evidence, policy);
-      if (verdict.status !== "clear" || !hasUnreadContent(outcome.evidence)) return verdict;
+      if (
+        verdict.status !== "clear" ||
+        !hasUnreadContent(outcome.evidence, unreadOptions(policy))
+      ) {
+        return verdict;
+      }
       const age = ageHold(policy, outcome.publishedAt, nowMs);
       return age
         ? { status: "hold", reasons: ["too-new"], evidence: outcome.evidence, ...age }
@@ -203,10 +224,16 @@ export function decideBump(
         return { status: "hold", reasons: ["unreviewed"], evidence: null, unreviewed: reason };
       }
       if (reason === "private-source") return { status: "unreviewed", unreviewed: reason };
-      // A git ref, URL, or tarball has no registry publish time to wait out.
-      const age = ageHold(policy, reason === "remote-source" ? null : outcome.publishedAt, nowMs);
+      const age = ageHold(policy, hasNoPublishTime(reason) ? null : outcome.publishedAt, nowMs);
       return age
-        ? { status: "hold", reasons: ["too-new"], evidence: null, unreviewed: reason, ...age }
+        ? {
+            status: "hold",
+            reasons: ["too-new"],
+            evidence: null,
+            unreviewed: reason,
+            ...age,
+            ...unchecked(outcome, age),
+          }
         : { status: "unreviewed", unreviewed: reason };
     }
     case "new-package": {
@@ -215,10 +242,23 @@ export function decideBump(
       }
       const age = ageHold(policy, outcome.publishedAt, nowMs);
       return age
-        ? { status: "hold", reasons: ["too-new"], evidence: null, ...age }
+        ? {
+            status: "hold",
+            reasons: ["too-new"],
+            evidence: null,
+            ...age,
+            ...unchecked(outcome, age),
+          }
         : { status: "new-package" };
     }
   }
+}
+
+function unchecked(
+  outcome: { pastReviewLimit?: true },
+  age: { passesAt?: string },
+): { pastReviewLimit?: true } {
+  return outcome.pastReviewLimit && !age.passesAt ? { pastReviewLimit: true } : {};
 }
 
 /**
@@ -266,7 +306,9 @@ export function parseDependencyReviewPolicy(value: unknown): DependencyReviewPol
     holdOnUnreviewed: flag("holdOnUnreviewed"),
     holdOnNewPackages: flag("holdOnNewPackages"),
     unreadMinimumAgeDays: parseMinimumAgeDays(record.unreadMinimumAgeDays),
-    publicMirrors: parsePublicMirrors(record.publicMirrors),
+    publicMirrors: parseRegistryPrefixes(record.publicMirrors, MAX_PUBLIC_MIRRORS),
+    privateRegistries: parseRegistryPrefixes(record.privateRegistries, MAX_PRIVATE_REGISTRIES),
+    privateScopes: parsePrivateScopes(record.privateScopes),
   };
 }
 
@@ -280,32 +322,67 @@ function parseMinimumAgeDays(raw: unknown): number | null {
     : DEFAULT_DEPENDENCY_REVIEW_POLICY.unreadMinimumAgeDays;
 }
 
-const MAX_MIRROR_PREFIX_LENGTH = 200;
+const MAX_REGISTRY_PREFIX_LENGTH = 200;
 
 /**
- * A mirror prefix widens what is sent to the public registry, so an entry that
- * is not a plain https URL is dropped rather than repaired: no credentials,
- * query, or fragment, and a path that ends in `/` so `…/npm` cannot also match
- * `…/npm-private`.
+ * Registry URL prefixes (`publicMirrors`, `privateRegistries`). A mirror
+ * widens what is sent to the public registry and a private registry widens
+ * what skips the age fallback, so an entry that is not a plain https URL is
+ * dropped rather than repaired: no credentials, query, or fragment, and a
+ * path that ends in `/` so `…/npm` cannot also match `…/npm-private`.
  */
-function parsePublicMirrors(raw: unknown): string[] {
+function parseRegistryPrefixes(raw: unknown, max: number): string[] {
   if (!Array.isArray(raw)) return [];
-  const mirrors = new Set<string>();
+  const prefixes = new Set<string>();
   for (const entry of raw) {
-    if (mirrors.size >= MAX_PUBLIC_MIRRORS) break;
-    if (typeof entry !== "string" || entry.length > MAX_MIRROR_PREFIX_LENGTH) continue;
-    let url: URL;
-    try {
-      url = new URL(entry.trim());
-    } catch {
-      continue;
-    }
-    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
-      continue;
-    }
-    mirrors.add(`${url.origin}${url.pathname.endsWith("/") ? url.pathname : `${url.pathname}/`}`);
+    if (prefixes.size >= max) break;
+    const prefix = registryPrefix(entry);
+    if (prefix) prefixes.add(prefix);
   }
-  return [...mirrors];
+  return [...prefixes];
+}
+
+function registryPrefix(entry: unknown): string | null {
+  if (typeof entry !== "string" || entry.length > MAX_REGISTRY_PREFIX_LENGTH) return null;
+  let url: URL;
+  try {
+    url = new URL(entry.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+    return null;
+  }
+  return `${url.origin}${url.pathname.endsWith("/") ? url.pathname : `${url.pathname}/`}`;
+}
+
+// npm's scope grammar: lowercase, URL-safe, not starting with `.` or `_`.
+const NPM_SCOPE = /^@[a-z0-9~-][a-z0-9._~-]*$/;
+const MAX_SCOPE_LENGTH = 214;
+
+function privateScope(entry: unknown): string | null {
+  if (typeof entry !== "string") return null;
+  const scope = entry.trim().toLowerCase();
+  return scope.length <= MAX_SCOPE_LENGTH && NPM_SCOPE.test(scope) ? scope : null;
+}
+
+function parsePrivateScopes(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const scopes = new Set<string>();
+  for (const entry of raw) {
+    if (scopes.size >= MAX_PRIVATE_SCOPES) break;
+    const scope = privateScope(entry);
+    if (scope) scopes.add(scope);
+  }
+  return [...scopes];
+}
+
+function prefixListError(raw: unknown, max: number, what: string): string | null {
+  if (raw === undefined) return null;
+  if (!Array.isArray(raw) || raw.length > max || raw.some((entry) => !registryPrefix(entry))) {
+    return `List up to ${max} ${what}, each starting with https:// and without a user name, password, query, or fragment.`;
+  }
+  return null;
 }
 
 /**
@@ -327,14 +404,25 @@ export function dependencyReviewPolicyInputError(input: Record<string, unknown>)
   ) {
     return `The minimum age for unread updates is a whole number of days from 1 to ${MAX_UNREAD_MINIMUM_AGE_DAYS}, or off.`;
   }
-  const mirrors = input.publicMirrors;
+  const listError =
+    prefixListError(input.publicMirrors, MAX_PUBLIC_MIRRORS, "mirror URLs") ??
+    prefixListError(input.privateRegistries, MAX_PRIVATE_REGISTRIES, "private registry URLs");
+  if (listError) return listError;
+  const scopes = input.privateScopes;
   if (
-    mirrors !== undefined &&
-    (!Array.isArray(mirrors) ||
-      mirrors.length > MAX_PUBLIC_MIRRORS ||
-      mirrors.some((entry) => parsePublicMirrors([entry]).length !== 1))
+    scopes !== undefined &&
+    (!Array.isArray(scopes) ||
+      scopes.length > MAX_PRIVATE_SCOPES ||
+      scopes.some((entry) => !privateScope(entry)))
   ) {
-    return `List up to ${MAX_PUBLIC_MIRRORS} mirror URLs, each starting with https:// and without a user name, password, query, or fragment.`;
+    return `List up to ${MAX_PRIVATE_SCOPES} npm scopes, each written like @your-company.`;
+  }
+  // One URL can't be both: a mirror's entries go to the public registry for
+  // proof, a private registry's never leave it.
+  const mirrors = parseRegistryPrefixes(input.publicMirrors, MAX_PUBLIC_MIRRORS);
+  const registries = parseRegistryPrefixes(input.privateRegistries, MAX_PRIVATE_REGISTRIES);
+  if (mirrors.some((m) => registries.some((r) => m.startsWith(r) || r.startsWith(m)))) {
+    return "A URL can't be both a mirror and a private registry, or sit under one listed as the other.";
   }
   return null;
 }

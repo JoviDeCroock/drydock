@@ -16,6 +16,8 @@ const POLICY = {
   holdOnNewPackages: false,
   unreadMinimumAgeDays: 3,
   publicMirrors: [],
+  privateRegistries: [],
+  privateScopes: [],
 };
 
 const REVIEW = {
@@ -134,9 +136,15 @@ test("dependency review settings save the hold policy", async ({ page }) => {
   await section.getByLabel("Extra bot logins").fill("my-renovate[bot], deps-bot");
   await expect(section.getByLabel("Minimum age for unread updates")).toHaveValue("3");
   await section.getByLabel("Minimum age for unread updates").fill("7");
-  await section.getByText("Registry mirrors of npm or PyPI").click();
-  await expect(section.getByText(/sends the names and versions of the packages/)).toBeVisible();
-  await section.getByLabel("Mirror URL prefixes").fill("https://artifacts.example.com/npm/");
+  await section.getByText("Registries other than public npm and PyPI").click();
+  await expect(
+    section.getByText(/sends the names and versions resolved from a mirror/),
+  ).toBeVisible();
+  await expect(section.getByText(/every name the repository routes to the mirror/)).toBeVisible();
+  await expect(section.getByText(/exempt from the minimum age/)).toBeVisible();
+  await section.getByLabel("Mirrors of npm or PyPI").fill("https://artifacts.example.com/npm/");
+  await section.getByLabel("Private registries").fill("https://npm.corp.example/");
+  await section.getByLabel("Private npm scopes").fill("@corp, @corp-tools");
   await section.screenshot({ path: `${SCREENSHOTS}/settings.png` });
   await section.getByRole("button", { name: "Save dependency review" }).click();
   await expect(section.getByText("Saved.")).toBeVisible();
@@ -150,6 +158,8 @@ test("dependency review settings save the hold policy", async ({ page }) => {
         holdAtReleaseRisk: "critical",
         unreadMinimumAgeDays: 7,
         publicMirrors: ["https://artifacts.example.com/npm/"],
+        privateRegistries: ["https://npm.corp.example/"],
+        privateScopes: ["@corp", "@corp-tools"],
       },
       extraBotLogins: ["my-renovate[bot]", "deps-bot"],
     },

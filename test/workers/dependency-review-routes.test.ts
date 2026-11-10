@@ -286,12 +286,14 @@ describe("dependency review routes", () => {
     expect(await settingsEvents(seeded.organizationId)).toEqual([]);
   });
 
-  test("the minimum age and mirror list are saved, normalized, and audited", async () => {
+  test("the minimum age and registry lists are saved, normalized, and audited", async () => {
     const seeded = await seedDependencyReviewOrg({ enabled: null });
     const policy = {
       ...VALID_SETTINGS.policy,
       unreadMinimumAgeDays: 14,
       publicMirrors: ["https://artifacts.example.com/api/npm/npm-remote"],
+      privateRegistries: ["https://npm.corp.example/npm"],
+      privateScopes: ["@Corp", "@corp-tools"],
     };
 
     const res = await call(buildTestApp(mount, seeded), "PUT", `${BASE}/settings`, {
@@ -302,6 +304,8 @@ describe("dependency review routes", () => {
     const saved = {
       ...policy,
       publicMirrors: ["https://artifacts.example.com/api/npm/npm-remote/"],
+      privateRegistries: ["https://npm.corp.example/npm/"],
+      privateScopes: ["@corp", "@corp-tools"],
     };
     const stored = await getDependencyReviewSettings(createDb(env.DB), seeded.organizationId);
     expect(stored.policy).toEqual(saved);
@@ -328,6 +332,16 @@ describe("dependency review routes", () => {
       "more than ten mirrors",
       { publicMirrors: Array.from({ length: 11 }, (_, i) => `https://m${i}.example/`) },
     ],
+    ["a plain-http private registry", { privateRegistries: ["http://npm.corp.example/"] }],
+    [
+      "a URL listed as both a mirror and a private registry",
+      {
+        publicMirrors: ["https://artifacts.example/npm/"],
+        privateRegistries: ["https://artifacts.example/"],
+      },
+    ],
+    ["a scope without its @", { privateScopes: ["corp"] }],
+    ["more than fifty scopes", { privateScopes: Array.from({ length: 51 }, (_, i) => `@s${i}`) }],
   ])("rejects %s", async (_label, fields) => {
     const seeded = await seedDependencyReviewOrg({ enabled: false });
 

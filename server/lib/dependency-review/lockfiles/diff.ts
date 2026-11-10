@@ -27,6 +27,11 @@ export interface LockfileChange {
 // same-named release it never was. Another copy of the name elsewhere in the
 // tree does not make it private. It is remote when either side is a remote
 // source.
+//
+// A public release both sides keep (or spell equivalently) whose recorded pins
+// differ is a re-pin: `fromVersion` null, `toVersion` the release, `repinned`.
+// The installer accepts whatever bytes match the new pin, so it is reviewed
+// like a new release of its own.
 export function diffLockfileChanges(
   base: LockfileSnapshot | null,
   head: LockfileSnapshot,
@@ -52,8 +57,31 @@ export function diffLockfileChanges(
     let added = [...pkg.sources.keys()].filter((v) => !baseSources.has(v));
     let removed = before.filter((v) => !pkg.sources.has(v));
     const same = added.filter((v) => removed.some((r) => equivalent(v, r)));
+    const kept: Array<[string, string]> = [...pkg.sources.keys()]
+      .filter((v) => baseSources.has(v))
+      .map((v) => [v, v]);
+    for (const v of same) kept.push([removed.find((r) => equivalent(v, r))!, v]);
     added = added.filter((v) => !same.includes(v));
     removed = removed.filter((r) => !same.some((v) => equivalent(v, r)));
+    for (const [fromId, toId] of kept) {
+      const fromSource = baseSources.get(fromId)!;
+      const to = pkg.sources.get(toId)!;
+      if (fromSource.kind !== "public" || to.kind !== "public") continue;
+      if (samePins(fromSource.pins, to.pins)) continue;
+      changes.push({
+        bump: {
+          ecosystem: pkg.ecosystem,
+          name: pkg.name,
+          fromVersion: null,
+          toVersion: toId,
+          direct: pkg.direct,
+          lockfilePath,
+          repinned: true,
+        },
+        from: fromSource,
+        to,
+      });
+    }
     added.sort(compare);
     const from = new Map<string, string | null>();
     for (const toVersion of added) {
@@ -114,6 +142,10 @@ export function sameRelease(ecosystem: DependencyEcosystem, a: string, b: string
 }
 
 type Compare = (a: string, b: string) => number;
+
+function samePins(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((pin, i) => pin === b[i]);
+}
 
 function take(pool: string[], version: string): string {
   pool.splice(pool.indexOf(version), 1);

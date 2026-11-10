@@ -5,7 +5,11 @@ import {
   POLICY_SWITCHES,
   RELEASE_RISK_THRESHOLDS,
 } from "../../../features/dependency-review/wording";
-import { MAX_PUBLIC_MIRRORS } from "../../../../server/lib/dependency-review/types";
+import {
+  MAX_PRIVATE_REGISTRIES,
+  MAX_PRIVATE_SCOPES,
+  MAX_PUBLIC_MIRRORS,
+} from "../../../../server/lib/dependency-review/types";
 import type { RiskLevel } from "../../../../server/lib/review/types";
 import { Alert } from "../../../components/Alert";
 import { Button, LinkButton } from "../../../components/Button";
@@ -95,6 +99,14 @@ function DependencyReviewForm({ model }: { model: InstanceType<typeof Dependency
   const policy = model.draftPolicy.value;
   const dirty = model.dirty.value;
   const saveError = model.saveError.value;
+  const savedPolicy = model.saved.value?.policy;
+  const registriesConfigured = Boolean(
+    savedPolicy &&
+    savedPolicy.publicMirrors.length +
+      savedPolicy.privateRegistries.length +
+      savedPolicy.privateScopes.length >
+      0,
+  );
 
   const onSubmit = (event: Event) => {
     event.preventDefault();
@@ -177,9 +189,10 @@ function DependencyReviewForm({ model }: { model: InstanceType<typeof Dependency
         </Field>
         <p id="dependencyReviewMinimumAgeHint" class="text-[12px] m-0 max-w-[600px] text-ink-muted">
           An update Drydock could not fully read (no diff, a package the PR adds, a git or URL
-          source, changed native binaries, or files no rule read) holds until its version is this
-          old on the public registry, or until someone approves it. An unknown publish time holds
-          too. Private-registry updates follow "has no Drydock verdict" instead. Leave empty to turn
+          source, native binaries no rule reads, or files no rule read) holds until its version is
+          this old on the public registry, or until someone approves it. An unknown publish time
+          holds too, and so does a lockfile or registry config Drydock could not read. Updates from
+          a listed private registry follow "has no Drydock verdict" instead. Leave empty to turn
           this off.
         </p>
         {model.minimumAgeError.value ? (
@@ -187,20 +200,17 @@ function DependencyReviewForm({ model }: { model: InstanceType<typeof Dependency
         ) : null}
       </SettingsCardBody>
 
-      {/* Specialist setting: folded unless it already lists mirrors. */}
-      <details
-        class="group/mirrors border-t border-border"
-        open={(model.saved.value?.policy.publicMirrors.length ?? 0) > 0}
-      >
+      {/* Specialist settings: folded unless one of them is already set. */}
+      <details class="group/registries border-t border-border" open={registriesConfigured}>
         <summary class="cursor-pointer list-none px-5 py-4 text-[13px] font-medium text-ink-muted hover:text-ink">
           <span aria-hidden class="mr-1.5 font-mono text-ink-subtle">
-            <span class="group-open/mirrors:hidden">▸</span>
-            <span class="hidden group-open/mirrors:inline">▾</span>
+            <span class="group-open/registries:hidden">▸</span>
+            <span class="hidden group-open/registries:inline">▾</span>
           </span>
-          Registry mirrors of npm or PyPI
+          Registries other than public npm and PyPI
         </summary>
         <SettingsCardBody inset="belowHeader" gap="compact">
-          <Field label="Mirror URL prefixes" for="dependencyReviewMirrors">
+          <Field label="Mirrors of npm or PyPI" for="dependencyReviewMirrors">
             <Input
               id="dependencyReviewMirrors"
               mono
@@ -213,11 +223,47 @@ function DependencyReviewForm({ model }: { model: InstanceType<typeof Dependency
             />
           </Field>
           <Muted class="text-[12px] m-0">
-            For a registry that only proxies the public one. An update resolved under a listed
-            prefix is reviewed like a public one once its lockfile hashes match the public
-            registry's. Listing a mirror sends the names and versions of the packages resolved from
-            it to the public npm registry or PyPI. Separate with commas, up to {MAX_PUBLIC_MIRRORS}{" "}
-            https URLs.
+            URL prefixes of registries that only proxy the public one, up to {MAX_PUBLIC_MIRRORS}.
+            An update resolved under one is reviewed like a public update once its lockfile hashes
+            match the public registry's. Drydock sends the names and versions resolved from a mirror
+            to the public npm registry or PyPI. For lockfiles that record no URL (pnpm, Yarn Berry),
+            that is every name the repository routes to the mirror, so list scopes whose registry is
+            set outside the repository under private npm scopes.
+          </Muted>
+          <Field label="Private registries" for="dependencyReviewPrivateRegistries">
+            <Input
+              id="dependencyReviewPrivateRegistries"
+              mono
+              value={model.draftPrivateRegistries.value}
+              placeholder="https://npm.example.com/"
+              spellcheck={false}
+              autocomplete="off"
+              disabled={disabled}
+              onInput={(e) => model.setPrivateRegistries((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+          <Muted class="text-[12px] m-0">
+            URL prefixes of your organization's own registries, up to {MAX_PRIVATE_REGISTRIES}.
+            Updates from them are not reviewed and are exempt from the minimum age; they hold only
+            under "has no Drydock verdict". An update from any other registry is treated like a git
+            or URL source.
+          </Muted>
+          <Field label="Private npm scopes" for="dependencyReviewPrivateScopes">
+            <Input
+              id="dependencyReviewPrivateScopes"
+              mono
+              value={model.draftPrivateScopes.value}
+              placeholder="@your-company"
+              spellcheck={false}
+              autocomplete="off"
+              disabled={disabled}
+              onInput={(e) => model.setPrivateScopes((e.target as HTMLInputElement).value)}
+            />
+          </Field>
+          <Muted class="text-[12px] m-0">
+            Scopes whose names Drydock never sends to the public registry, up to{" "}
+            {MAX_PRIVATE_SCOPES}. Needed when a scope's registry is set outside the repository, such
+            as in a CI or user .npmrc. Separate entries in each field with commas.
           </Muted>
         </SettingsCardBody>
       </details>

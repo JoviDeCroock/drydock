@@ -12,12 +12,14 @@ import { parseYarnLock } from "./yarn-lock";
 //
 // Lockfile bytes are repository data, parsed as data only. Nothing here
 // throws on hostile input; unreadable text yields an incomplete snapshot, and
-// every name and version is validated before it leaves this module. Private
-// registries configured in `.npmrc` / `.yarnrc.yml` are not visible from the
-// lockfile, so callers still filter names against that config.
+// every name and version is validated before it leaves this module, and an
+// entry that cannot be placed makes its snapshot incomplete rather than being
+// dropped. Registries configured in `.npmrc` / `.yarnrc.yml` are not visible
+// from the lockfile, so callers place names with that config (`routedBump`).
 
 export { diffLockfileChanges, diffLockfileSnapshots } from "./diff";
 export { mergeBump, PUBLIC_ROUTE, routedBump, type NameRoute } from "./mirror";
+export { readStrictYaml } from "./lines";
 
 // Whether the requirement lines that name no version changed. A new file
 // with any such line counts as changed.
