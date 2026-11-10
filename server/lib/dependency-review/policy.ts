@@ -203,6 +203,24 @@ function youngPackage(
   return null;
 }
 
+/**
+ * Why an update nothing vouched for (its diff was not served) counts as
+ * young at `nowMs`, or null when its version is at least
+ * `YOUNG_VERSION_DAYS` old. The package was already in the lockfile, so only
+ * the version's age applies; unknown, or not looked up past the review
+ * limit, is young.
+ */
+function youngVersion(
+  outcome: Extract<BumpOutcome, { kind: "unreviewed" }>,
+  nowMs: number,
+): YoungPackage | null {
+  if (outcome.pastReviewLimit) return { why: "age-unknown" };
+  const at = outcome.publishedAt;
+  const ms = at ? Date.parse(at) : Number.NaN;
+  if (!at || !Number.isFinite(ms)) return { why: "age-unknown" };
+  return nowMs - ms < YOUNG_VERSION_DAYS * DAY_MS ? { why: "version-published", at } : null;
+}
+
 // An added native binary the policy holds as a capability is not also unread.
 function unreadOptions(policy: DependencyReviewPolicy) {
   return { nativeAddedHeld: policy.holdOnNativeBinaries };
@@ -251,22 +269,27 @@ export function needsReleaseAge(outcome: BumpOutcome, policy: DependencyReviewPo
       (policy.unreadMinimumAgeDays !== null || (policy.holdOnNewDependencies && !outcome.repinned))
     );
   }
-  if (policy.unreadMinimumAgeDays === null) return false;
-  switch (outcome.kind) {
-    case "diffed":
-      // Coverage is applied after the stage, so `dependency-added` never
-      // stands in for the age lookup here.
-      return (
-        hasUnreadContent(outcome.evidence, unreadOptions(policy)) &&
-        evaluateBumpEvidence(outcome.evidence, policy, null).status === "clear"
-      );
-    case "unreviewed":
-      return (
-        !policy.holdOnUnreviewed &&
-        outcome.reason !== "private-source" &&
-        !hasNoPublishTime(outcome.reason)
-      );
+  if (outcome.kind === "unreviewed") {
+    if (
+      policy.holdOnUnreviewed ||
+      outcome.reason === "private-source" ||
+      hasNoPublishTime(outcome.reason)
+    ) {
+      return false;
+    }
+    // The young-version check reads an update's publish time whether or not
+    // the age fallback is on.
+    return (
+      policy.unreadMinimumAgeDays !== null || (policy.holdOnNewDependencies && !outcome.newPackage)
+    );
   }
+  if (policy.unreadMinimumAgeDays === null) return false;
+  // Coverage is applied after the stage, so `dependency-added` never stands
+  // in for the age lookup here.
+  return (
+    hasUnreadContent(outcome.evidence, unreadOptions(policy)) &&
+    evaluateBumpEvidence(outcome.evidence, policy, null).status === "clear"
+  );
 }
 
 /**
@@ -278,7 +301,8 @@ export function needsReleaseAge(outcome: BumpOutcome, policy: DependencyReviewPo
  * limit (`pastReviewLimit`) had no publish time looked up, so it holds as
  * unknown and says why. A package new to the lockfile holds while young
  * (`young-package`, under `holdOnNewDependencies`), which takes precedence over
- * the age fallback; `holdOnNewPackages` holds every new package before it.
+ * the age fallback; `holdOnNewPackages` holds every new package before it. So
+ * does an update whose diff was not served, by its version's age alone.
  * Pure: `nowMs` is the clock.
  */
 export function decideBump(
@@ -322,6 +346,24 @@ export function decideBump(
           young: { why: "no-verdict" },
           ...(outcome.pastReviewLimit ? { pastReviewLimit: true as const } : {}),
         };
+      }
+      // An update whose diff was not served (too large, failed, not found,
+      // past the limit) is vouched for by nothing, like a new package, so it
+      // meets the same version-age bar before the age fallback. Not an age
+      // hold: no recheck lifts it once the version ages; it holds until
+      // approved or re-run.
+      if (policy.holdOnNewDependencies && !outcome.newPackage && !hasNoPublishTime(reason)) {
+        const young = youngVersion(outcome, nowMs);
+        if (young) {
+          return {
+            status: "hold",
+            reasons: ["young-package"],
+            evidence: null,
+            unreviewed: reason,
+            young,
+            ...(outcome.pastReviewLimit ? { pastReviewLimit: true as const } : {}),
+          };
+        }
       }
       const age = ageHold(policy, hasNoPublishTime(reason) ? null : outcome.publishedAt, nowMs);
       return age
@@ -394,18 +436,33 @@ export function collectionPolicy(policy: CollectionPolicy): CollectionPolicy {
   };
 }
 
-// The collect stage's classification rules. A stored collection is reused
-// only under the same version, so a review collected by older code is
-// collected again after a deploy. Bump it whenever collection would classify
-// the same lockfiles differently (sources, tree pinning, completeness).
-const COLLECTION_SEMANTICS_VERSION = 2;
+// What a review stores between passes means: the bumps collection produces
+// (sources, tree pinning, completeness) and the evidence extraction records
+// for each release. Bump it whenever either would produce something
+// different for the same input; a review stored under another version is
+// collected again and its stored progress discarded (see `job.ts`).
+const REVIEW_SEMANTICS_VERSION = 3;
 
 /**
  * Equal for two policies exactly when collection would classify every bump
- * alike: the same collection rules and the same declarations.
+ * alike: the same semantics version, collection rules, and declarations.
  */
 export function collectionPolicyKey(policy: CollectionPolicy): string {
-  return JSON.stringify({ version: COLLECTION_SEMANTICS_VERSION, ...collectionPolicy(policy) });
+  return JSON.stringify({ version: REVIEW_SEMANTICS_VERSION, ...collectionPolicy(policy) });
+}
+
+/** Whether a stored `collectionPolicyKey` was written under the current semantics. */
+export function currentReviewSemantics(policyKey: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(policyKey);
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      (parsed as { version?: unknown }).version === REVIEW_SEMANTICS_VERSION
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**

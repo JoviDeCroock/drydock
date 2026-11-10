@@ -40,6 +40,9 @@ export interface LockfileSource {
   // uv: some copy records an sdist and no wheel at all, so every install
   // builds the release from source.
   sourceBuild?: true;
+  // A public copy whose lockfile entry records a URL on the public registry's
+  // own host, rather than leaving the registry to the installer's routing.
+  publicUrl?: true;
   // Every copy is one the format writes no pin for because it ships inside
   // another package's tarball (`RegistryEntry.unpinned`). Never fetched from
   // the registry, so it is no predecessor of a copy that is.
@@ -161,8 +164,9 @@ interface RegistryEntry {
   // A public copy the format writes no pin for (see `LockfileSource.pins`);
   // `hashes` and `pin` are then ignored.
   unpinned?: boolean;
-  // See `LockfileSource.sourceBuild`.
+  // See `LockfileSource.sourceBuild` and `publicUrl`.
   sourceBuild?: boolean;
+  publicUrl?: boolean;
 }
 
 export interface SnapshotBuilder {
@@ -214,10 +218,11 @@ function mergeSources(a: LockfileSource, b: LockfileSource): LockfileSource {
 }
 
 function withFlags(source: LockfileSource, a: LockfileSource, b: LockfileSource) {
-  const { sourceBuild: _build, bundledOnly: _bundled, ...rest } = source;
+  const { sourceBuild: _build, publicUrl: _url, bundledOnly: _bundled, ...rest } = source;
   return {
     ...rest,
     ...(a.sourceBuild || b.sourceBuild ? { sourceBuild: true as const } : {}),
+    ...(a.publicUrl || b.publicUrl ? { publicUrl: true as const } : {}),
     ...(a.bundledOnly && b.bundledOnly ? { bundledOnly: true as const } : {}),
   };
 }
@@ -283,7 +288,10 @@ export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotB
         complete = false;
         return;
       }
-      const flags = entry.sourceBuild ? { sourceBuild: true as const } : {};
+      const flags = {
+        ...(entry.sourceBuild ? { sourceBuild: true as const } : {}),
+        ...(entry.publicUrl && !entry.registry ? { publicUrl: true as const } : {}),
+      };
       if (entry.unpinned && !entry.registry) {
         const source = { version, hashes: null, pins: [], usablePins: [], mixed: false };
         record(key, version, {

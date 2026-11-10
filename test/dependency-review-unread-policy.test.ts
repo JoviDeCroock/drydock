@@ -148,7 +148,7 @@ describe("age fallback", () => {
     "an unreviewed public bump (%s) holds as too new, then passes unreviewed",
     (reason) => {
       expect(
-        decideBump({ kind: "unreviewed", reason, publishedAt: ONE_DAY_OLD }, POLICY, NOW),
+        decideBump({ kind: "unreviewed", reason, publishedAt: ONE_DAY_OLD }, AGE_ONLY, NOW),
       ).toMatchObject({
         status: "hold",
         reasons: ["too-new"],
@@ -157,10 +157,10 @@ describe("age fallback", () => {
         passesAt: iso(NOW + 2 * DAY),
       });
       expect(
-        decideBump({ kind: "unreviewed", reason, publishedAt: TEN_DAYS_OLD }, POLICY, NOW),
+        decideBump({ kind: "unreviewed", reason, publishedAt: TEN_DAYS_OLD }, AGE_ONLY, NOW),
       ).toEqual({ status: "unreviewed", unreviewed: reason });
       // Not looked up, or the lookup failed: unknown holds until approved.
-      const unknown = decideBump({ kind: "unreviewed", reason }, POLICY, NOW);
+      const unknown = decideBump({ kind: "unreviewed", reason }, AGE_ONLY, NOW);
       expect(unknown).toMatchObject({ status: "hold", reasons: ["too-new"] });
       expect(unknown).not.toHaveProperty("passesAt");
     },
@@ -507,6 +507,140 @@ describe("added native binaries", () => {
     expect(summary).toContain("### Passed with unread changes (1)");
     expect(summary).toContain("adds 1 native binary no rule reads");
     expect(summary).not.toContain("### Clear");
+  });
+});
+
+describe("an update whose diff was not served meets the version-age bar", () => {
+  const SEVEN_DAYS_OLD = iso(NOW - 7 * DAY);
+  const FOUR_DAYS_OLD = iso(NOW - 4 * DAY);
+  const young = (reason: UnreviewedReason, extra: Partial<Hold> = {}): Hold => ({
+    status: "hold",
+    reasons: ["young-package"],
+    evidence: null,
+    unreviewed: reason,
+    ...extra,
+  });
+  type Hold = Extract<BumpVerdict, { status: "hold" }>;
+
+  test.each<UnreviewedReason>(["over-cap", "timed-out", "not-found", "unsupported", "failed"])(
+    "%s: a version under seven days old holds as young, past the age fallback",
+    (reason) => {
+      expect(
+        decideBump({ kind: "unreviewed", reason, publishedAt: FOUR_DAYS_OLD }, POLICY, NOW),
+      ).toEqual(young(reason, { young: { why: "version-published", at: FOUR_DAYS_OLD } }));
+    },
+  );
+
+  test("at exactly seven days it falls to the age fallback", () => {
+    const outcome: BumpOutcome = {
+      kind: "unreviewed",
+      reason: "unsupported",
+      publishedAt: SEVEN_DAYS_OLD,
+    };
+    expect(decideBump(outcome, POLICY, NOW)).toEqual({
+      status: "unreviewed",
+      unreviewed: "unsupported",
+    });
+    // A longer fallback still holds it, as an age hold that passes.
+    expect(decideBump(outcome, { ...POLICY, unreadMinimumAgeDays: 10 }, NOW)).toMatchObject({
+      status: "hold",
+      reasons: ["too-new"],
+      passesAt: iso(NOW + 3 * DAY),
+    });
+  });
+
+  test("an unknown publish time, or none looked up past the review limit, holds", () => {
+    expect(decideBump({ kind: "unreviewed", reason: "failed" }, POLICY, NOW)).toEqual(
+      young("failed", { young: { why: "age-unknown" } }),
+    );
+    expect(
+      decideBump({ kind: "unreviewed", reason: "over-cap", pastReviewLimit: true }, POLICY, NOW),
+    ).toEqual(young("over-cap", { young: { why: "age-unknown" }, pastReviewLimit: true }));
+  });
+
+  test("with holdOnNewDependencies off only the age fallback applies", () => {
+    expect(
+      decideBump(
+        { kind: "unreviewed", reason: "unsupported", publishedAt: FOUR_DAYS_OLD },
+        AGE_ONLY,
+        NOW,
+      ),
+    ).toEqual({ status: "unreviewed", unreviewed: "unsupported" });
+    expect(
+      decideBump(
+        { kind: "unreviewed", reason: "unsupported", publishedAt: ONE_DAY_OLD },
+        AGE_ONLY,
+        NOW,
+      ),
+    ).toMatchObject({ status: "hold", reasons: ["too-new"] });
+  });
+
+  test("with the age fallback off the bar still applies, and the time is looked up", () => {
+    const outcome: BumpOutcome = {
+      kind: "unreviewed",
+      reason: "unsupported",
+      publishedAt: FOUR_DAYS_OLD,
+    };
+    expect(decideBump(outcome, NO_AGE, NOW)).toMatchObject({
+      reasons: ["young-package"],
+      young: { why: "version-published" },
+    });
+    expect(decideBump({ ...outcome, publishedAt: TEN_DAYS_OLD }, NO_AGE, NOW)).toEqual({
+      status: "unreviewed",
+      unreviewed: "unsupported",
+    });
+    expect(needsReleaseAge(outcome, NO_AGE)).toBe(true);
+    expect(needsReleaseAge(outcome, { ...NO_AGE, ...AGE_ONLY_SWITCH })).toBe(false);
+  });
+
+  test("private, remote, unverified, and private-scope bumps keep their own handling", () => {
+    expect(
+      decideBump(
+        { kind: "unreviewed", reason: "private-source", publishedAt: ONE_DAY_OLD },
+        POLICY,
+        NOW,
+      ),
+    ).toEqual({ status: "unreviewed", unreviewed: "private-source" });
+    expect(needsReleaseAge({ kind: "unreviewed", reason: "private-source" }, NO_AGE)).toBe(false);
+    for (const reason of ["remote-source", "unverified-pin"] as const) {
+      expect(decideBump({ kind: "unreviewed", reason }, POLICY, NOW)).toMatchObject({
+        reasons: ["too-new"],
+      });
+    }
+    expect(
+      decideBump({ kind: "unreviewed", reason: "private-scope-public" }, POLICY, NOW),
+    ).toMatchObject({ reasons: ["unreviewed"] });
+  });
+
+  test("it reads as an update with no verdict, not a package new to the lockfile", () => {
+    const render = (verdict: Hold) =>
+      renderDependencyReviewCheck({
+        bumps: [
+          {
+            bump: bump({ name: "payload", fromVersion: "1.0.0", toVersion: "2.0.0" }),
+            verdict,
+            approved: false,
+          },
+        ],
+        conclusion: "held",
+        diffUrl: () => null,
+        approvedBy: null,
+        unreadLockfiles: [],
+      }).summary;
+    const at = "2026-11-06T12:00:00.000Z";
+    const recent = render(young("unsupported", { young: { why: "version-published", at } }));
+    expect(recent).toContain(
+      "no Drydock verdict (Drydock can't diff this version); its version was published 2026-11-06 12:00 UTC",
+    );
+    expect(recent).not.toContain("new to the lockfile");
+    expect(render(young("failed", { young: { why: "age-unknown" } }))).toContain(
+      "no Drydock verdict (the diff failed); its version's publish time is unknown, so it holds until approved",
+    );
+    expect(
+      render(young("over-cap", { young: { why: "age-unknown" }, pastReviewLimit: true })),
+    ).toContain(
+      "no Drydock verdict (over the per-PR review limit); Drydock did not look up its age, so it holds until approved",
+    );
   });
 });
 

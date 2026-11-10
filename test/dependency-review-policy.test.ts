@@ -280,11 +280,11 @@ describe("evaluateBumpEvidence", () => {
         now,
       ),
     ).toMatchObject({ status: "hold", reasons: ["unreviewed"], unreviewed: "over-cap" });
-    expect(decideBump({ kind: "unreviewed", reason: "not-found" }, noAge, now)).toEqual({
+    const noYoung = { ...noAge, holdOnNewDependencies: false };
+    expect(decideBump({ kind: "unreviewed", reason: "not-found" }, noYoung, now)).toEqual({
       status: "unreviewed",
       unreviewed: "not-found",
     });
-    const noYoung = { ...noAge, holdOnNewDependencies: false };
     expect(decideBump({ kind: "new-package" }, noYoung, now)).toEqual({ status: "new-package" });
     expect(
       decideBump({ kind: "new-package" }, { ...noYoung, holdOnNewPackages: true }, now).status,

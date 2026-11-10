@@ -194,7 +194,7 @@ function recordEntry(builder: SnapshotBuilder, entry: PnpmEntry): void {
     const source: TarballSource = keyed
       ? classifyNpmTarball(tarball, name, version)
       : { kind: "remote", location: null };
-    if (source.kind === "public") builder.add(name, version, { hashes, pin });
+    if (source.kind === "public") builder.add(name, version, { hashes, pin, publicUrl: true });
     else if (source.kind === "registry") {
       builder.add(name, version, {
         registry: { location: source.location, ref: tarball },

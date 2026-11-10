@@ -68,8 +68,9 @@ export interface DependencyBump {
   buildsFromSource?: true;
   // With `privateSource` and `remoteSource`: a name in a declared private
   // scope that this change moves off a non-public source onto the public
-  // registry or a mirror. Never sent to a public registry; it holds until
-  // approved (`private-scope-public`).
+  // registry or a mirror, or that is new to its lockfile with a recorded
+  // public registry URL or a declared mirror. Never sent to a public
+  // registry; it holds until approved (`private-scope-public`).
   privateScopePublic?: true;
 }
 
@@ -148,7 +149,8 @@ export type HoldReason =
   | "unreviewed"
   | "new-package"
   // A package new to the lockfile, first published or released too recently,
-  // or of unknown age (`holdOnNewDependencies`).
+  // or of unknown age, or an update whose diff was not served with a version
+  // released too recently or of unknown age (`holdOnNewDependencies`).
   | "young-package"
   | "too-new";
 
@@ -212,7 +214,9 @@ export type BumpVerdict =
       // With `too-new` and no `passesAt`: the bump was past the per-PR review
       // limit, so nobody looked its publish time up.
       pastReviewLimit?: true;
-      // With `young-package`: why the new package counts as young.
+      // With `young-package`: why the new package counts as young, or (with
+      // `unreviewed`, `version-published` or `age-unknown`) why an update
+      // whose diff was not served does.
       young?: YoungPackage;
       // With `dependency-added`: why Drydock can't see what the dependency
       // installs. Absent on verdicts decided before the field existed.

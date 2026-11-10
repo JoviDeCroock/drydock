@@ -287,7 +287,8 @@ interface YarnPackage {
   name: string;
   version: string | null;
   source:
-    | { kind: "public" }
+    // `url`: the entry records a URL on the public registry's host.
+    | { kind: "public"; url?: true }
     | { kind: "registry"; location: string; ref: string }
     // `ref` identifies the fetched code: a resolved URL or commit, a Berry
     // locator, or the descriptor's own range when nothing was resolved;
@@ -306,8 +307,9 @@ function recordPackage(builder: SnapshotBuilder, pkg: YarnPackage): void {
   const { name, version, source, pin, hashes } = pkg;
   if (source.kind !== "remote" && version !== null && !validLockfileVersion("npm", version)) {
     builder.addRemote(name, version, null, pin);
-  } else if (source.kind === "public") builder.add(name, version, { hashes, pin });
-  else if (source.kind === "registry") {
+  } else if (source.kind === "public") {
+    builder.add(name, version, { hashes, pin, publicUrl: source.url === true });
+  } else if (source.kind === "registry") {
     builder.add(name, version, {
       registry: { location: source.location, ref: source.ref },
       hashes,
@@ -351,7 +353,7 @@ function v1Package(entry: YarnEntry): YarnPackage | "invalid" | null {
     ...pkg,
     source:
       source.kind === "public"
-        ? source
+        ? { kind: "public", url: true }
         : { kind: "registry", location: source.location, ref: resolved },
   };
 }
@@ -423,7 +425,9 @@ function berryPackage(
       archiveUrl === null
         ? ({ kind: "remote", location: null } as const)
         : classifyNpmTarball(archiveUrl, name, npmVersion);
-    if (source.kind === "public") return { name, version: npmVersion, source };
+    if (source.kind === "public") {
+      return { name, version: npmVersion, source: { kind: "public", url: true } };
+    }
     if (source.kind === "registry") {
       return {
         name,

@@ -469,7 +469,7 @@ describe("a move off a non-public source onto the public registry is a new packa
   });
 });
 
-describe("a name in a private scope holds only on its move off a non-public source", () => {
+describe("a name in a private scope holds on a move to, or arrival from, a public source", () => {
   const PRIVATE = "https://private.example/npm/";
   const NPMJS = "https://registry.npmjs.org/";
   const scope = { privateRegistries: [PRIVATE], privateScopes: ["@corp"] };
@@ -519,24 +519,66 @@ describe("a name in a private scope holds only on its move off a non-public sour
       [scoped(PRIVATE, "1.0.0"), scoped(PRIVATE, "1.0.1")],
       [npmLock({}), scoped(PRIVATE, "1.0.1")],
       [scoped(MIRROR, "1.0.0"), scoped(MIRROR, "1.0.1")],
-      [npmLock({}), scoped(MIRROR, "1.0.1")],
     ]) {
       const [bump] = routed("npm", before, after, scope);
       ownPackage(bump);
     }
   });
 
+  test("the reviewer's input: new to the lockfile from npmjs.org beside a host update", () => {
+    const lock = (host: string, extra: Record<string, NpmEntry> = {}) =>
+      npmLock({
+        host: {
+          version: host,
+          resolved: `${NPMJS}host/-/host-${host}.tgz`,
+          integrity: sha512(`host${host}`),
+        },
+        ...extra,
+      });
+    const bumps = routed(
+      "npm",
+      lock("1.0.0"),
+      lock("1.0.1", {
+        "@corp/payload": {
+          version: "1.0.0",
+          resolved: `${NPMJS}@corp/payload/-/payload-1.0.0.tgz`,
+          integrity: sha512("payload"),
+        },
+      }),
+      scope,
+    );
+    expect(bumps.find((b) => b.name === "@corp/payload")).toMatchObject({
+      fromVersion: null,
+      ...confused,
+    });
+    expect(bumps.find((b) => b.name === "host")).not.toHaveProperty("privateSource");
+  });
+
+  test("new to the lockfile from a declared mirror", () => {
+    const [bump] = routed("npm", npmLock({}), scoped(MIRROR, "1.0.1"), scope);
+    expect(bump).toMatchObject({ fromVersion: null, ...confused });
+    expect(bump).not.toHaveProperty("mirror");
+  });
+
   describe("an organization that hosts its scope on the public registry keeps it private", () => {
     // `@corp` packages published to npmjs.org, fetched with the organization's
     // token, and listed as private so their names are never sent anywhere.
-    test("npm: a public URL on both sides, and new to the lockfile", () => {
-      for (const before of [scoped(NPMJS, "1.0.0"), npmLock({})]) {
-        const [bump] = routed("npm", before, scoped(NPMJS, "1.0.1"), scope);
-        ownPackage(bump);
-      }
+    test("npm: a public URL on both sides, for a version change and a re-pin", () => {
+      const [bump] = routed("npm", scoped(NPMJS, "1.0.0"), scoped(NPMJS, "1.0.1"), scope);
+      ownPackage(bump);
+      const repin = npmLock({
+        "@corp/fresh": {
+          version: "1.0.1",
+          resolved: `${NPMJS}@corp/fresh/-/fresh-1.0.1.tgz`,
+          integrity: sha512("other bytes"),
+        },
+      });
+      const [repinned] = routed("npm", repin, scoped(NPMJS, "1.0.1"), scope);
+      expect(repinned).toMatchObject({ repinned: true });
+      ownPackage(repinned);
     });
 
-    test("Yarn classic and Berry", () => {
+    test("Yarn classic: a version change; new to the lockfile with a public URL holds", () => {
       const classic = (version: string) =>
         yarnV1([
           {
@@ -546,6 +588,13 @@ describe("a name in a private scope holds only on its move off a non-public sour
             integrity: sha512(version),
           },
         ]);
+      const [bump] = routed("yarn", classic("1.0.0"), classic("1.0.1"), scope);
+      ownPackage(bump);
+      const [added] = routed("yarn", null, classic("1.0.1"), scope);
+      expect(added).toMatchObject(confused);
+    });
+
+    test("Yarn Berry, which records no URL: a version change and new to the lockfile", () => {
       const berry = (version: string) =>
         [
           "__metadata:",
@@ -555,11 +604,9 @@ describe("a name in a private scope holds only on its move off a non-public sour
           `  resolution: "@corp/fresh@npm:${version}"`,
           `  checksum: 10c0/${"a".repeat(128)}`,
         ].join("\n");
-      for (const lock of [classic, berry]) {
-        for (const before of [lock("1.0.0"), null]) {
-          const [bump] = routed("yarn", before, lock("1.0.1"), scope);
-          ownPackage(bump);
-        }
+      for (const before of [berry("1.0.0"), null]) {
+        const [bump] = routed("yarn", before, berry("1.0.1"), scope);
+        ownPackage(bump);
       }
     });
 

@@ -85,14 +85,22 @@ export function routedBump(
   const secret = privateScope(bump, policy);
   const head = places[places.length - 1];
   const nonPublicBase = places.length === 2 && PLACE_RANK[places[0]] >= PLACE_RANK.private;
-  // A private-scope name this change moves off a non-public source (a private
-  // registry, another host, git, a URL) onto the public registry or a mirror:
-  // what the install now fetches is a public package under the
-  // organization's name, which is dependency confusion's signal. The move is
-  // the signal, not the location: an organization may host its scope on the
-  // public registry itself, so a scope name public on both sides, or new to
-  // the lockfile, stays the organization's own.
-  if (secret && (head === "public" || head === "mirror") && nonPublicBase) {
+  // A private-scope name the install now fetches as a public package under
+  // the organization's name, which is dependency confusion's signal: one this
+  // change moves off a non-public source (a private registry, another host,
+  // git, a URL) onto the public registry or a mirror, or one new to its
+  // lockfile whose entry records a public registry URL or a declared mirror.
+  // Not the location alone: an organization may host its scope on the public
+  // registry itself, so a scope name already public at the base stays its
+  // own, and so does a new one the lockfile records no URL for and the
+  // repository routes nowhere (its registry is set outside the repository).
+  const newToLockfile = change.from === null && !change.bump.repinned;
+  const publicHead = (head === "public" && change.to.publicUrl === true) || head === "mirror";
+  if (
+    secret &&
+    (head === "public" || head === "mirror") &&
+    (nonPublicBase || (newToLockfile && publicHead))
+  ) {
     return { ...bump, privateSource: true, remoteSource: true, privateScopePublic: true };
   }
   // A head that resolves publicly (or through a mirror) where the base was a

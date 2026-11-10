@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { dependencyChangeKey } from "../server/db/dependency-reviews";
 import { bumpDiffUrl } from "../server/lib/dependency-review/approvable";
@@ -17,7 +18,13 @@ import {
   type DependencyBump,
   type DependencyReviewPolicy,
 } from "../server/lib/dependency-review/types";
-import { decideBump } from "../server/lib/dependency-review/policy";
+import {
+  diffLockfileChanges,
+  parseLockfile,
+  PUBLIC_ROUTE,
+  routedBump,
+} from "../server/lib/dependency-review/lockfiles";
+import { decideBump, needsReleaseAge } from "../server/lib/dependency-review/policy";
 import { PublicDiffError } from "../server/lib/public-diff/error";
 import type { PublicPackageDiff } from "../server/lib/public-diff";
 
@@ -233,6 +240,108 @@ describe("review stage budget", () => {
     const cold = await stage(Array.from({ length: 5 }, (_, i) => bump(`c-${i}`)));
     // Each cold diff is written when it starts and when it lands.
     expect(cold.saves).toHaveLength(10);
+  });
+});
+
+describe("an update whose diff was not served meets the version-age bar", () => {
+  const sha512 = (seed: string) => `sha512-${createHash("sha512").update(seed).digest("base64")}`;
+  const at = (name: string, version: string, extra: Record<string, unknown> = {}) => ({
+    version,
+    resolved: `https://registry.npmjs.org/${name}/-/${name}-${version}.tgz`,
+    integrity: sha512(`${name}@${version}`),
+    ...extra,
+  });
+  const lock = (packages: Record<string, unknown>) =>
+    JSON.stringify({
+      lockfileVersion: 3,
+      packages: { "": { dependencies: { carrier: "^1.0.0", host: "^1.0.0" } }, ...packages },
+    });
+  // The base has `carrier → payload@1`; the reviewed `host@1.0.1` adds
+  // `payload@^2`, so a nested `payload@2` enters beside it and pairs with
+  // `payload@1` as a version change, not a new package.
+  const BEFORE = lock({
+    "node_modules/carrier": at("carrier", "1.0.0", { dependencies: { payload: "^1.0.0" } }),
+    "node_modules/payload": at("payload", "1.0.0"),
+    "node_modules/host": at("host", "1.0.0"),
+  });
+  const AFTER = lock({
+    "node_modules/carrier": at("carrier", "1.0.0", { dependencies: { payload: "^1.0.0" } }),
+    "node_modules/payload": at("payload", "1.0.0"),
+    "node_modules/host": at("host", "1.0.1", { dependencies: { payload: "^2.0.0" } }),
+    "node_modules/host/node_modules/payload": at("payload", "2.0.0"),
+  });
+  const collected = () =>
+    diffLockfileChanges(
+      parseLockfile("npm", BEFORE),
+      parseLockfile("npm", AFTER),
+      "package-lock.json",
+    ).map((change) => ({
+      ...routedBump(change, PUBLIC_ROUTE, {
+        publicMirrors: [],
+        privateRegistries: [],
+        privateScopes: [],
+      }),
+      lockfilePinsTree: true as const,
+    }));
+  const published = (days: number | null) =>
+    listVersions.mockImplementation(async (_env: unknown, _ctx: unknown, name: string) => ({
+      packageName: name,
+      versions:
+        days === null
+          ? []
+          : [{ version: "2.0.0", publishedAt: new Date(NOW - days * DAY).toISOString() }],
+      suggested: null,
+    }));
+
+  beforeEach(() => {
+    verifyPublicPin.mockResolvedValue(true);
+    loadDiff.mockImplementation(async (_env, _ctx, input: { packageName: string }) => {
+      if (input.packageName === "payload") throw new PublicDiffError("too large", 413);
+      return diffPayload([{ path: "index.js", status: "modified", flags: [] }]);
+    });
+  });
+
+  test("the reviewer's input: too large to diff, published four days ago, it holds", async () => {
+    published(4);
+    const bumps = collected();
+    expect(bumps.map((b) => [b.name, b.fromVersion, b.toVersion])).toEqual([
+      ["host", "1.0.0", "1.0.1"],
+      ["payload", "1.0.0", "2.0.0"],
+    ]);
+    const result = await stage(bumps);
+    const payload = result.outcomes[1];
+    expect(payload).toEqual({
+      kind: "unreviewed",
+      reason: "unsupported",
+      publishedAt: new Date(NOW - 4 * DAY).toISOString(),
+    });
+    // Past the default three-day fallback, yet held by the version-age bar.
+    expect(decideBump(payload, DEFAULT_DEPENDENCY_REVIEW_POLICY, NOW)).toEqual({
+      status: "hold",
+      reasons: ["young-package"],
+      evidence: null,
+      unreviewed: "unsupported",
+      young: { why: "version-published", at: new Date(NOW - 4 * DAY).toISOString() },
+    });
+  });
+
+  test("with the age fallback off the version is still looked up and the bar still applies", async () => {
+    const policy = { ...DEFAULT_DEPENDENCY_REVIEW_POLICY, unreadMinimumAgeDays: null };
+    published(4);
+    const result = await stage(collected(), { policy });
+    expect(listVersions).toHaveBeenCalledWith(expect.anything(), expect.anything(), "payload");
+    expect(decideBump(result.outcomes[1], policy, NOW)).toMatchObject({
+      status: "hold",
+      reasons: ["young-package"],
+      young: { why: "version-published" },
+    });
+    // Off both switches, nothing reads the time and nothing looks it up.
+    expect(
+      needsReleaseAge(
+        { kind: "unreviewed", reason: "unsupported" },
+        { ...policy, holdOnNewDependencies: false },
+      ),
+    ).toBe(false);
   });
 });
 

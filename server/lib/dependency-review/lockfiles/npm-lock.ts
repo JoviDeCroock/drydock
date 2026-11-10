@@ -198,7 +198,7 @@ function recordInstalled(
     return;
   }
   const source = classifyNpmTarball(resolved, name, version);
-  if (source.kind === "public") builder.add(name, version, { hashes, pin });
+  if (source.kind === "public") builder.add(name, version, { hashes, pin, publicUrl: true });
   else if (source.kind === "registry") {
     builder.add(name, version, {
       registry: { location: source.location, ref: resolved },

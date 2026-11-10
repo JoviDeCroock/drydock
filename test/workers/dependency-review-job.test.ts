@@ -378,9 +378,9 @@ describe("dependency review job", () => {
     expectTokenStaysOnGithub(api);
   });
 
-  test("with holdOnUnreviewed and the age fallback off, a failed diff no longer blocks the check", async () => {
+  test("with holdOnUnreviewed, the young-version bar, and the age fallback off, a failed diff no longer blocks the check", async () => {
     const { api, review, input } = await scenario({
-      policy: { holdOnUnreviewed: false, unreadMinimumAgeDays: null },
+      policy: { holdOnUnreviewed: false, holdOnNewDependencies: false, unreadMinimumAgeDays: null },
     });
 
     await runDependencyReviewJob(input);

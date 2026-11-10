@@ -418,14 +418,80 @@ describe("dependency review continuation", () => {
     const sentBefore = api.requests.length;
 
     await run(queue.sent[0].body);
-
     const reread = api.requests.slice(sentBefore).some((r) => r.url.includes("/contents/"));
+    // Progress stored by older code is discarded too, so its cold work runs again.
+    for (let i = 0; i < 5 && (await readReview(review.id)).status === "queued"; i++) {
+      await run(queue.sent.at(-1)!.body);
+    }
+
     expect(reread).toBe(older);
     const done = await readReview(review.id);
     expect(done.status).toBe("completed");
     expect(done.bumps.find((b) => b.bump.name === names[0])?.bump).not.toHaveProperty(
       "privateSource",
     );
+  });
+
+  test.each([
+    ["progress stored under another semantics version is discarded whole", true],
+    ["a policy input change under the same version prunes only", false],
+  ])("%s", async (_, older) => {
+    const cold = manyBumps("semantics", MAX_COLD_DIFFS_PER_PASS + 5);
+    const cached = manyBumps("semantics-cached", 5);
+    for (const name of cached.names) await seedNpmDiff({ name, from: "1.0.0", to: "1.0.1" });
+    const { seeded, review, queue, run } = await scenario({
+      before: { ...cold.before, ...cached.before },
+      after: { ...cold.after, ...cached.after },
+    });
+    await run();
+    const between = await readReview(review.id);
+    expect(between.status).toBe("queued");
+    const progress = JSON.parse(between.progressJson ?? "{}") as {
+      bumps: Record<string, { evidence?: { installScriptsAdded: number } }>;
+      collected: { policyKey: string };
+    };
+    // Evidence the first pass stored, as older extraction might have read the
+    // same release: an install script the current code does not see.
+    let stale = 0;
+    for (const entry of Object.values(progress.bumps)) {
+      if (!entry.evidence) continue;
+      entry.evidence.installScriptsAdded = 1;
+      stale += 1;
+    }
+    expect(stale).toBeGreaterThan(0);
+    if (older) {
+      const key = JSON.parse(progress.collected.policyKey) as { version: number };
+      progress.collected.policyKey = JSON.stringify({ ...key, version: key.version - 1 });
+    }
+    await createDb(env.DB)
+      .update(schema.dependencyReviews)
+      .set({ progressJson: JSON.stringify(progress) })
+      .where(eq(schema.dependencyReviews.id, review.id));
+    if (!older) {
+      // A declaration no bump here falls under: the key changes, the bumps don't.
+      await saveDependencyReviewSettings(
+        createDb(env.DB),
+        seeded.organizationId,
+        {
+          enabled: true,
+          policy: { ...DEFAULT_DEPENDENCY_REVIEW_POLICY, privateScopes: ["@unrelated"] },
+          extraBotLogins: [],
+        },
+        seeded.userId,
+      );
+    }
+
+    for (let i = 0; i < 5 && (await readReview(review.id)).status === "queued"; i++) {
+      await run(queue.sent.at(-1)!.body);
+    }
+
+    const done = await readReview(review.id);
+    expect(done.status).toBe("completed");
+    expect(done.bumps).toHaveLength(cold.names.length + cached.names.length);
+    const scripted = done.bumps.filter(
+      (b) => b.verdict.status === "hold" && b.verdict.reasons.includes("install-script-added"),
+    );
+    expect(scripted).toHaveLength(older ? 0 : stale);
   });
 
   test("a scope made private between passes is never sent for a pending mirror proof", async () => {

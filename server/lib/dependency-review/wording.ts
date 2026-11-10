@@ -156,7 +156,8 @@ export function dependencyAddedText(
   return HOLD_REASON_TEXT["dependency-added"];
 }
 
-// The `young-package` phrase: why the new package counts as young.
+// The `young-package` phrase: why the new package, or the update nothing
+// vouched for, counts as young.
 function youngPackageText(
   verdict: Extract<BumpVerdict, { status: "hold" }>,
   bump: WordedBump,
@@ -165,6 +166,17 @@ function youngPackageText(
   const young = verdict.young;
   const base = "a package new to the lockfile";
   if (!young) return HOLD_REASON_TEXT["young-package"];
+  // An unreviewed update held by its version's age: the package was already
+  // in the lockfile. A new package with no verdict holds as `no-verdict`.
+  if (verdict.unreviewed && (young.why === "version-published" || young.why === "age-unknown")) {
+    const none = `${HOLD_REASON_TEXT.unreviewed} (${unreviewedText(verdict.unreviewed, bump)})`;
+    if (young.why === "version-published") {
+      return `${none}; its version was published ${formatTime(young.at)}`;
+    }
+    return verdict.pastReviewLimit
+      ? `${none}; Drydock did not look up its age, so it holds until approved`
+      : `${none}; its version's publish time is unknown, so it holds until approved`;
+  }
   switch (young.why) {
     case "first-published":
       return `${base}, first published ${formatTime(young.at)}`;
