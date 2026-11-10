@@ -24,7 +24,7 @@ import { dirname as pathDirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { collectBumps } from "../../server/lib/dependency-review/collect";
-import { hasUnreadContent } from "../../server/lib/dependency-review/evidence";
+import { hasCheckablePin, hasUnreadContent } from "../../server/lib/dependency-review/evidence";
 import {
   lockfileKindForPath,
   parseLockfile,
@@ -620,7 +620,7 @@ async function diffFor(bump, deadline) {
 
 // ---------------------------------------------------------------------------
 // Proofs and outcomes, as `runReviewStage` makes them. `proofPending`,
-// `resolveBump`, and `settledOutcome` are module-private in review-bumps.ts and
+// `needsPinProof`, `resolveBump`, and `settledOutcome` are module-private in review-bumps.ts and
 // copied here without the progress store; the proofs themselves are the
 // production functions, reading the public registry through the cached fetch.
 
@@ -636,7 +636,7 @@ function proofKey(bump) {
 function runProof(bump) {
   // An empty pin (the format always writes one, this entry has none usable)
   // proves nothing and is never looked up, as in production.
-  if (!hasPins(bump)) return Promise.resolve(false);
+  if (!hasCheckablePin(bump)) return Promise.resolve(false);
   const key = proofKey(bump);
   if (!proofs.has(key)) {
     const env = { LOADER: loader };
@@ -658,13 +658,6 @@ function proofPending(bump) {
 // A defined `pinnedHashes`, empty included, must be proven.
 function needsPinProof(bump) {
   return bump.pinnedHashes !== undefined && !bump.privateSource;
-}
-
-function hasPins(bump) {
-  const hashes = bump.mirror ? bump.mirror.toHashes : bump.pinnedHashes;
-  return (
-    (hashes?.length ?? 0) > 0 && (!bump.mirror?.fromHashes || bump.mirror.fromHashes.length > 0)
-  );
 }
 
 // null: a proof not yet made either way.

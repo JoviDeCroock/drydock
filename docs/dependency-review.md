@@ -21,21 +21,18 @@ make it required.
 
 1. GitHub sends `pull_request` (`opened`, `synchronize`, `reopened`) to
    `POST /webhooks/github`. `server/lib/dependency-review/webhook.ts` records a
-   review only when the installation is active and mapped to an organization,
-   the organization turned dependency review on, and the head branch is in
-   the same repository. For a human-authored PR, the author and event sender
-   (the pusher on `synchronize`) must both have repository write access before
-   a review row is created. Trusted dependency automation is recognized by
-   `dependabot[bot]` or `renovate[bot]` with account type `Bot`, or a login
-   the organization listed for self-hosted automation. Each
-   (installation, repository, head sha) gets one `dependency_reviews` row. A
-   redelivered event enqueues a row again when it is `queued` or `failed` (the
-   first enqueue may have been lost), `superseded` (the PR was reopened), or
-   `running` past its 15-minute claim lease (its worker died). A completed row
-   is left alone. Fork PRs are outside the review scope: trusted bot fork PRs
-   are ignored, and other fork PRs use the guarded skip path below. A same-repo
-   PR whose author or sender lacks write access also uses that path, without
-   claiming a review row for another person's branch.
+   review only when the installation is active and mapped to an organization
+   that turned dependency review on, and the head branch is in the same
+   repository. For a human-authored PR, the author and event sender (the pusher
+   on `synchronize`) must both have write access. Trusted automation is
+   `dependabot[bot]` or `renovate[bot]` with account type `Bot`, or a login the
+   organization listed. Each (installation, repository, head sha) gets one
+   `dependency_reviews` row. A redelivery enqueues it again when it is `queued`
+   or `failed` (the first enqueue may have been lost), `superseded` (the PR was
+   reopened), or `running` past its 15-minute lease (its worker died); a
+   completed row is left alone. Trusted bot fork PRs are ignored; other fork
+   PRs, and same-repo PRs whose author or sender lacks write access, use the
+   guarded skip path below without claiming a review row.
 2. **Newest run wins.** Check runs belong to a commit, and GitHub reads the
    newest run of a name. Anyone can open a PR from a fork at a bot PR's head
    commit, so a skip is never posted on a commit that has a review. A skip is
@@ -44,11 +41,10 @@ make it required.
    a commit that is the tip of a branch in the repository (always so for a
    same-repo PR, and possible from a fork) completes `skipped` only when the
    PR's author and the event's sender (the pusher, on a new commit) both have
-   write access, and `cancelled` otherwise. Renovate pushes its
-   branch before opening the PR and can automerge it on a green check, and
-   anyone who can read the repository can open a PR from that branch. An author
-   stuck behind such a skip pushes a new commit. If a
-   review appeared meanwhile, the skip completes `cancelled` and the review
+   write access, and `cancelled` otherwise: Renovate pushes its branch before
+   opening the PR and can automerge it on a green check, and any reader can
+   open a PR from that branch. An author stuck behind such a skip pushes a new
+   commit. If a review appeared meanwhile, the skip completes `cancelled` and the review
    re-runs (a re-run asked for while the review is running is retried, not
    dropped, and Re-run on the cancelled skip re-runs the review too). Before
    publishing, the review lists the commit's Drydock runs (`check_name` plus
@@ -87,13 +83,13 @@ make it required.
    | Changed file | Unread when |
    | --- | --- |
    | Supported lockfile (`package-lock.json` / `npm-shrinkwrap.json` v2–v3, `pnpm-lock.yaml` v5–v9, `yarn.lock` classic and Berry, `uv.lock`) | Past the 20-per-review cap, over 8 MiB, deleted by the PR, or not finished by the parser: malformed, outside the canonical shape, over its entry caps, or holding an entry it can't classify (an unplaceable entry makes the snapshot incomplete; it is never dropped). Peer variants of one release in `pnpm-lock.yaml` are one entry; variants with different resolutions make the file unread. |
-   | Requirements (`requirements*.txt`, `constraints*.txt`, `requirements/*.txt`, and any other changed `.txt`, since pip follows `-r`/`-c` into files of any name) | As above, plus: an index or find-links option other than an explicit pypi.org `--index-url`, any option pip doesn't accept exactly as written, a name pinned to two versions, a change to its unpinned lines (ranges such as `foo>=1.3`, URLs, VCS and `-e` lines, includes), or a change to a pin's extras, environment marker, or per-requirement install options. A `.txt` that isn't requirements holds on its text change. |
+   | Requirements (`requirements*.txt`, `constraints*.txt`, `requirements/*.txt`, and any other changed `.txt`, since pip follows `-r`/`-c` into files of any name) | As above, plus: an index or find-links option other than an explicit pypi.org `--index-url`, any option pip doesn't accept exactly as written, a name pinned to two versions, a change to its unpinned lines (ranges such as `foo>=1.3`, URLs, VCS and `-e` lines, includes), or a change to the extras, marker, or per-requirement install options of a name pinned to the same release on both sides (adding, removing, or re-versioning a conditional line is an ordinary bump). A `.txt` that isn't requirements holds on its text change. |
    | Unparsed npm or PyPI lockfile (`bun.lock`, `poetry.lock`, `Pipfile.lock`, `pdm.lock`, `pylock*.toml`) | Always. |
    | Dependency manifest (`package.json`, `pyproject.toml`, `setup.cfg`, `setup.py`, `Pipfile`, pip-tools `*.in`) | Unless the PR changes a parsed lockfile of its ecosystem that covers it: one in the same directory, or one above it whose parsed snapshot records the directory as a project: npm importer keys, pnpm `importers` from every YAML document, Berry `workspace:` resolutions, uv editable, virtual, and directory sources, or the Yarn root manifest's `workspaces` globs. A requirements file covers only its own pip-tools input (`X.in` for `X.txt`) or a manifest its `pip-compile` or `uv pip compile` header line names. |
    | `.npmrc`, `.yarnrc.yml` (anywhere in the PR) | Any change other than to comments and blank lines (an added or removed file counts unless it holds only those), any rename, and any side that does not read in the strict shape. Over 64 KiB a file does not read. |
    | Yarn classic `.yarnrc`, `uv.toml`, `pip.conf`, `pip.ini` | Any change. |
    | `pyproject.toml` `[tool]` and `[tool.uv…]` tables | Any change to their text (whitespace-normalized). |
-   | Committed Yarn install files: anything under `.yarn/cache`, `.yarn/unplugged`, `.yarn/releases`, or `.yarn/plugins`, the PnP loader (`.pnp.cjs`, `.pnp.js`, `.pnp.loader.mjs`, `.pnp.data.json`), and Berry cache archives (`*-npm-*.zip`) anywhere | Added, removed, changed, or renamed; reported once per directory (per file for the loader). Yarn installs or runs these with nothing the lockfile diff binds. |
+   | Committed Yarn install files: anything under `.yarn/cache`, `.yarn/unplugged`, `.yarn/releases`, or `.yarn/plugins`, the PnP loader (`.pnp.cjs`, `.pnp.js`, `.pnp.loader.mjs`, `.pnp.data.json`), and any zip in the cache a `.yarnrc.yml` `cacheFolder` names (read at the head, relative to that file) | Added, removed, changed, or renamed; reported once per directory (per file for the loader). Yarn installs or runs these with nothing the lockfile diff binds. A zip elsewhere is an ordinary file; a moved `pnpUnpluggedFolder` is not followed. |
 
    Up to 20 changed `.npmrc`, `.yarnrc.yml`, and `pyproject.toml` files are
    compared per review; past that, a changed one is unread. Up to 20 uncovered
@@ -109,10 +105,11 @@ make it required.
    come from, per side of the bump, and the bump takes the worse side
    (public, mirror, private, remote, in that order). Sources whose code is in
    the PR itself (`file:`, `link:`, `workspace:`, `portal:`, `exec:`, paths)
-   are left out. An npm entry marked `inBundle` is left out only when npm would
-   ship it inside the bundling package's tarball (no `resolved` of its own, and
-   reached from that package's `bundleDependencies` within its own
-   `node_modules`); every other copy is reviewed.
+   are left out. An npm `inBundle` entry without its own `resolved` is left out
+   only when npm ships it in the bundler's tarball: a named bundle dependency,
+   anything a bundled package depends on (peers included) that resolves inside
+   the bundler, or anything installed inside a bundled package. Every other
+   copy is reviewed.
 
    | Place | When | Review |
    | --- | --- | --- |
@@ -122,13 +119,13 @@ make it required.
    | Remote (`remoteSource`) | Everything else: any other host or route (including a public-host URL that is not the canonical one), an unreadable or environment-dependent route, a git ref, a URL or tarball, a v5/v6 `pnpm-lock.yaml` entry keyed by another registry's host, a PyPI file off PyPI's file host, a mirror entry without comparable pins, a release the PR moves from the public registry or a mirror onto a declared private registry. | Never diffed; unreviewed (`remote-source`). No publish time, so no age fallback. |
 
    - Routing comes from the committed `.npmrc` and `.yarnrc.yml` in the npm
-     lockfile's directory and each directory above it, at the head (up to 10
-     levels; deeper, every name routes somewhere unknown). A file there that
-     doesn't parse routes every name somewhere unknown and is listed as unread.
+     lockfile's directory and each one above it, at the head. In a lockfile
+     over 10 directories deep, or where such a file doesn't parse (then listed
+     as unread), every name routes somewhere unknown.
    - Prefixes match only plain, canonical https URLs without credentials,
      query, or fragment, at a path boundary.
-   - Private and remote identities include their pin, so a re-pin at the same
-     URL is a change.
+   - Private and remote identities include their pin: a re-pin at the same URL
+     is a change.
    - A name in a declared `privateScopes` scope is never sent to a public
      registry, whatever routing outside the repository it relies on. Other
      config set outside the repository (environment variables, CI
@@ -161,20 +158,20 @@ make it required.
      options, malformed, or copies that disagree) must be proven and cannot
      be, however old the version. A requirements line that has, or drops, a
      `--hash` is held to the same rule.
-   - A failed or unverifiable proof (no usable pin, no public egress, a
-     missing release or digest, a failed read) makes the bump unreviewed
-     `unverified-pin`, handled like a remote source.
-   - Only Yarn Berry and unhashed requirements have no comparable pin by
+   - A failed or impossible proof (no usable pin, no public egress, a missing
+     release or digest, a failed read) is `unverified-pin`, handled like a
+     remote source. Only Yarn Berry and unhashed requirements have no pin by
      design; their public bumps rely on the registry route alone.
-   - A lockfile that keeps a public version and changes its pin reports a bump
-     with no previous version, listed as **Same version, new pin**. Its pin is
-     proven like any other, and it is then decided as a new package.
-   - A mirror candidate (`verifyMirrorBump`) needs every pinned hash on both
-     sides of a version change to match the public registry; a new package, a
-     version moved onto the mirror, or a re-pin proves the target alone. A
-     proven mirror bump is diffed, linked, and approved under its public
-     identity. An unproven one is `unverified-pin`, keyed by its pinned
-     hashes.
+   - A lockfile that keeps a public version and pins a copy with a pin no base
+     copy had reports a bump with no previous version (**Same version, new
+     pin**). Only the introduced pins are proven; kept, removed, or duplicated
+     base pins owe nothing, and an introduced copy without a usable strong pin
+     holds even beside pinned siblings. A proven re-pin is decided as a new
+     package.
+   - A mirror candidate (`verifyMirrorBump`) proves both sides of a version
+     change, or the target alone for a new package, a move onto the mirror, or
+     a re-pin. Proven, it is diffed, linked, and approved as public; unproven,
+     it is `unverified-pin`, keyed by its pinned hashes.
 
 7. **Review in passes.** Each public version change (proven pins and mirror
    bumps included) runs through `loadPublicPackageDiff`, the same pipeline,
@@ -285,9 +282,10 @@ make it required.
    - An age hold says what nothing vouched for and either when it passes (a
      UTC time on the check, local time in the dashboard) or why it holds until
      approved: an unknown publish time, a git, URL, or tarball source, a bump
-     past the review limit, or an unverified pin. The unverified-pin text says
-     that Re-run checks again if the registry was unreachable and that an npm
-     package the organization hosts itself belongs under private npm scopes.
+     past the review limit, or an unverified pin. An entry with no checkable
+     hash reads "the lockfile pins no hash Drydock can check for this update"
+     and no Re-run clears it; a failed lookup adds that Re-run checks again,
+     and for npm that a self-hosted package belongs under private npm scopes.
    - A coverage-only hold says what Approve accepts (the unread files) or, when
      the check can't list everything, that the PR must be split. An Approve
      over per-update holds also names the unread files it accepts. Past the
@@ -481,20 +479,20 @@ as its source. Auto-merge (Dependabot `auto-merge`, Renovate `automerge` with
 
 `pnpm run eval:dependency-review-replay` on 2026-11-10: 180 Dependabot and
 Renovate PRs from 12 public repositories, 146 of them with an npm or PyPI bump
-(2,094 bumps). It is a sample of public repositories on one date, not a target
+(2,092 bumps). It is a sample of public repositories on one date, not a target
 or a guarantee: a repository's own rate will differ, and lockfile-maintenance
 PRs carry far more bumps than single-package ones.
 
-| Policy | PRs with bumps held | PRs passing with an unvouched bump | Holds per held PR (median / p90 / max) |
+| Policy | PRs with bumps held | All PRs passing with an unvouched bump | Holds per held PR (median / p90 / max) |
 | --- | --- | --- | --- |
 | Defaults with the age fallback off | 40.4% | 8.9% | 1 / 6 / 23 |
 | Defaults (3-day age fallback, unread coverage holds) | 45.2% | 5.6% | 1 / 17 / 73 |
 | Every hold switch on | 52.1% | 0% | 2 / 38 / 125 |
 
 - Default policy, held PRs per reason: release risk 41, dependency added 40,
-  too new 19, unread coverage 14, native binary added 7. Ten held on coverage
-  alone (uncovered manifests, an unparsed `bun.lock`); four on age alone, three
-  of which would have passed within 70 hours.
+  too new 17, unread coverage 14, native binary added 7. Ten held on coverage
+  alone (uncovered manifests, an unparsed `bun.lock`); four on age alone (one an
+  unverified pin held until approved, three passed within 70 hours).
 - Pin proofs: 1,751 of 1,753 strong pins matched the public registry (both
   misses PyPI); 330 Yarn Berry bumps had no comparable pin.
 - Bumps per PR: median 2, p90 41, max 292; one PR with bumps in five needs
@@ -524,8 +522,7 @@ PRs carry far more bumps than single-package ones.
   pin proven or a publish time read, so its bumps hold until approved. A uv
   proof needs every pinned file still on PyPI, so a release that later deletes
   a file holds from then on.
-- npm lockfile entries left without `integrity` (or `resolved`) have no
-  usable pin, so their bumps hold while the age fallback or
+- npm lockfile entries left without `integrity` have no usable pin, so their bumps hold while the age fallback or
   `holdOnUnreviewed` is on.
 - The age fallback uses the registry's publish time. A version published under
   a non-default dist-tag and promoted later has already aged by then; every
