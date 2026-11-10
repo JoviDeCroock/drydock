@@ -5,6 +5,7 @@ import type { DependencyReview } from "../../models/dependency-review";
 export {
   HOLD_REASON_TEXT,
   holdReasonPhrases,
+  newDependencyText,
   REPINNED_TEXT,
   unreadContentText,
   unreviewedText,
@@ -19,7 +20,11 @@ type PolicySwitch = {
 export const POLICY_SWITCHES: ReadonlyArray<{ key: PolicySwitch; label: string; hint?: string }> = [
   { key: "holdOnInstallScripts", label: "adds or changes an install script" },
   { key: "holdOnNativeBinaries", label: "adds a native binary" },
-  { key: "holdOnNewDependencies", label: "adds a dependency" },
+  {
+    key: "holdOnNewDependencies",
+    label: "adds a dependency on a young package",
+    hint: "A package new to the lockfile that was first published under 90 days ago, whose installed version is under 7 days old, or whose age is unknown. A requirements file without hashes holds on any added dependency.",
+  },
   { key: "holdOnNewBinCommands", label: "adds a bin command" },
   {
     key: "holdOnUninspectedFiles",

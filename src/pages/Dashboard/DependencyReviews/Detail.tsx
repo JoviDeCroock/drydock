@@ -24,6 +24,7 @@ import {
   checkRunUrl,
   hasUnreadContent,
   holdReasonPhrases,
+  newDependencyText,
   REPINNED_TEXT,
   unreadContentText,
   unreviewedText,
@@ -670,6 +671,9 @@ function verdictReason(
     if (reason === "new-package" && bump.repinned) return REPINNED_TEXT;
     if (reason === "unreviewed" && verdict.unreviewed) {
       return `${HOLD_REASON_TEXT.unreviewed} (${unreviewedText(verdict.unreviewed, bump)})`;
+    }
+    if (reason === "dependency-added" && verdict.newDependency) {
+      return newDependencyText(verdict.newDependency, { formatTime: formatDateTime });
     }
     if (reason === "release-risk" && evidence) {
       return `release risk ${evidence.releaseRisk}, at or above the hold threshold`;

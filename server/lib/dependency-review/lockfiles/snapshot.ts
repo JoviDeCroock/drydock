@@ -67,6 +67,10 @@ export interface LockfileSnapshot {
   // requirements files only: for each pinned name, its lines' extras,
   // markers, and install options (see `unpinnedRequirementsChanged`).
   qualifiers?: ReadonlyMap<string, string>;
+  // requirements files only: pip's hash-checking mode, every pin carrying a
+  // `--hash`. pip then refuses any requirement, transitive ones included, that
+  // the requirement set does not pin with one, so the file pins the whole tree.
+  hashChecked?: boolean;
   // Directories, relative to the lockfile's (`""` for its own, no trailing
   // slash), that the lockfile resolves as projects of its own: npm and pnpm
   // importers, Berry `workspace:` resolutions, uv workspace members and local
@@ -132,6 +136,14 @@ const CANONICAL_NAME: Record<DependencyEcosystem, (name: string) => string | nul
   npm: (name) => (validNpmName(name) ? name : null),
   pypi: normalizePyPiName,
 };
+
+/**
+ * A package name as this layer keys it (npm as written, PyPI by PEP 503), or
+ * null when it is not a valid name for the ecosystem.
+ */
+export function canonicalPackageName(ecosystem: DependencyEcosystem, name: string): string | null {
+  return CANONICAL_NAME[ecosystem](name);
+}
 
 interface RegistryEntry {
   // Resolved from a registry other than the public one (see `LockfileSource`).

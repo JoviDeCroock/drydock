@@ -124,6 +124,13 @@ export function fixtureIntegrity(name: string, version: string): string {
 // Releases the registry double publishes, by name: every one a fixture
 // lockfile names.
 const publishedReleases = new Map<string, Set<string>>();
+// The packument's `time` per name, when a test sets one (`setPublishTimes`).
+const publishTimes = new Map<string, Record<string, string>>();
+
+// Publish times the registry double reports for `name` (version → ISO time).
+export function setPublishTimes(name: string, times: Record<string, string>): void {
+  publishTimes.set(name, times);
+}
 
 // package-lock.json v3 whose root declares every entry, so each is direct.
 // Every entry pins its fixture sha512, as npm writes one for every release.
@@ -204,6 +211,7 @@ function packument(name: string): Response | null {
   return Response.json({
     name,
     "dist-tags": {},
+    ...(publishTimes.has(name) ? { time: publishTimes.get(name) } : {}),
     versions: Object.fromEntries(
       [...versions].map((version) => [
         version,

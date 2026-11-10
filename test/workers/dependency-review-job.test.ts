@@ -21,6 +21,7 @@ import {
   runDependencyReviewJob,
   seedDependencyReviewOrg,
   seedNpmDiff,
+  setPublishTimes,
   sha,
   stubGithubApi,
   uniquePackageName,
@@ -221,6 +222,79 @@ describe("dependency review job", () => {
       reasons: ["install-script-added"],
     });
     expectTokenStaysOnGithub(api);
+  });
+
+  test("a release adding a dependency on a package created yesterday holds, naming it", async () => {
+    const dependency = uniquePackageName("fresh-dep");
+    const host = uniquePackageName("host");
+    const { api, review, input } = await scenario({
+      before: { [host]: "1.0.0" },
+      after: { [host]: "1.0.1", [dependency]: "2.0.0" },
+    });
+    await seedNpmDiff({
+      name: host,
+      from: "1.0.0",
+      to: "1.0.1",
+      fromPackageJson: { name: host, version: "1.0.0" },
+      toPackageJson: { name: host, version: "1.0.1", dependencies: { [dependency]: "^2.0.0" } },
+    });
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    setPublishTimes(dependency, { "2.0.0": yesterday });
+
+    await runDependencyReviewJob(input);
+
+    const row = await readReview(review.id);
+    expect(row.conclusion).toBe("held");
+    expect(row.bumps.find((b) => b.bump.name === host)).toMatchObject({
+      bump: { lockfilePinsTree: true },
+      verdict: {
+        status: "hold",
+        reasons: ["dependency-added"],
+        newDependency: {
+          cause: "young-package",
+          name: dependency,
+          why: "first-published",
+          at: yesterday,
+        },
+      },
+    });
+    expect(api.lastCheckRunState()).toMatchObject({ conclusion: "action_required" });
+    expect(JSON.stringify(api.lastCheckRunState())).toContain(
+      `adds a dependency on \`${dependency}\`, a package new to the lockfile and first published`,
+    );
+    expectTokenStaysOnGithub(api);
+  });
+
+  test("a release adding a dependency on a long-published package passes", async () => {
+    const dependency = uniquePackageName("old-dep");
+    const host = uniquePackageName("host");
+    const { api, review, input } = await scenario({
+      before: { [host]: "1.0.0" },
+      after: { [host]: "1.0.1", [dependency]: "2.0.0" },
+    });
+    await seedNpmDiff({
+      name: host,
+      from: "1.0.0",
+      to: "1.0.1",
+      fromPackageJson: { name: host, version: "1.0.0" },
+      toPackageJson: { name: host, version: "1.0.1", dependencies: { [dependency]: "^2.0.0" } },
+    });
+    setPublishTimes(dependency, {
+      "2.0.0": new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+
+    await runDependencyReviewJob(input);
+
+    const row = await readReview(review.id);
+    expect(row).toMatchObject({ status: "completed", conclusion: "clear", heldCount: 0 });
+    expect(row.bumps.find((b) => b.bump.name === host)?.verdict).toMatchObject({
+      status: "clear",
+      evidence: {
+        dependenciesAdded: 1,
+        addedDependencies: { names: [dependency], complete: true },
+      },
+    });
+    expect(api.lastCheckRunState()).toMatchObject({ conclusion: "success" });
   });
 
   test("a native binary matched by extension holds as a native binary only", async () => {

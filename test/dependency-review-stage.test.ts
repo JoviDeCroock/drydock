@@ -17,7 +17,7 @@ import {
   type DependencyBump,
   type DependencyReviewPolicy,
 } from "../server/lib/dependency-review/types";
-import { decideBump } from "../server/lib/dependency-review/policy";
+import { decideBump, newDependencyScopes } from "../server/lib/dependency-review/policy";
 import { PublicDiffError } from "../server/lib/public-diff/error";
 import type { PublicPackageDiff } from "../server/lib/public-diff";
 
@@ -256,6 +256,7 @@ describe("publish-time lookups", () => {
     expect(result.outcomes[0]).toEqual({
       kind: "new-package",
       publishedAt: new Date(NOW - DAY).toISOString(),
+      firstPublishedAt: new Date(NOW - 30 * DAY).toISOString(),
     });
     // A fully read diff needs no publish time.
     expect(result.outcomes[2]).toMatchObject({ kind: "diffed" });
@@ -273,19 +274,31 @@ describe("publish-time lookups", () => {
     const result = await stage([
       bump("Requests", { ecosystem: "pypi", fromVersion: null, toVersion: "2.0.0" }),
     ]);
-    expect(result.outcomes[0]).toEqual({ kind: "new-package", publishedAt: uploaded });
+    expect(result.outcomes[0]).toEqual({
+      kind: "new-package",
+      publishedAt: uploaded,
+      firstPublishedAt: uploaded,
+    });
   });
 
   test("a failed lookup is stored as unknown, and nothing is fetched with egress off", async () => {
     const failed = await stage([bump("lost", { fromVersion: null })]);
-    expect(failed.outcomes[0]).toEqual({ kind: "new-package", publishedAt: null });
+    expect(failed.outcomes[0]).toEqual({
+      kind: "new-package",
+      publishedAt: null,
+      firstPublishedAt: null,
+    });
 
     listVersions.mockClear();
     const offline = await stage([bump("private-install", { fromVersion: null })], {
       env: { NPM_REGISTRY: "https://npm.internal.example" },
     });
     expect(listVersions).not.toHaveBeenCalled();
-    expect(offline.outcomes[0]).toEqual({ kind: "new-package", publishedAt: null });
+    expect(offline.outcomes[0]).toEqual({
+      kind: "new-package",
+      publishedAt: null,
+      firstPublishedAt: null,
+    });
   });
 
   test("private and remote sources are never looked up", async () => {
@@ -493,6 +506,7 @@ describe("public pins", () => {
     expect(result.outcomes[0]).toEqual({
       kind: "new-package",
       publishedAt: new Date(NOW - DAY).toISOString(),
+      firstPublishedAt: new Date(NOW - DAY).toISOString(),
     });
   });
 
@@ -679,5 +693,144 @@ describe("an entry that should pin and doesn't", () => {
     ]);
     expect(verifyMirrorBump).not.toHaveBeenCalled();
     expect(result.outcomes[0]).toEqual({ kind: "unreviewed", reason: "unverified-pin" });
+  });
+});
+
+describe("new packages an added dependency brings in", () => {
+  const NO_AGE: DependencyReviewPolicy = {
+    ...DEFAULT_DEPENDENCY_REVIEW_POLICY,
+    unreadMinimumAgeDays: null,
+  };
+  const ago = (days: number) => new Date(NOW - days * DAY).toISOString();
+  const host = (name = "host") => bump(name, { lockfilePinsTree: true });
+  const fresh = (name: string) => bump(name, { fromVersion: null, lockfilePinsTree: true });
+  const adding = (names: readonly string[]): PublicPackageDiff => {
+    const payload = diffPayload([{ path: "index.js", status: "modified", flags: [] }]);
+    payload.packageJsonDiff.dependencies = names.map((key) => ({
+      key,
+      status: "added",
+      staged: "^1.0.0",
+      section: "dependencies",
+    }));
+    return payload;
+  };
+  const decideAll = (result: Awaited<ReturnType<typeof stage>>, policy = NO_AGE) => {
+    const scopes = newDependencyScopes(result.bumps, result.outcomes, NOW);
+    return result.outcomes.map((outcome, i) => decideBump(outcome, policy, NOW, scopes[i]));
+  };
+
+  test("are dated even with the age fallback off; new packages nothing names are not", async () => {
+    readCached.mockImplementation(async (_env, _ctx, input: { packageName: string }) =>
+      input.packageName === "host" ? adding(["fresh"]) : null,
+    );
+    listVersions.mockResolvedValue({
+      packageName: "fresh",
+      versions: [
+        { version: "1.0.1", publishedAt: ago(2) },
+        { version: "0.1.0", publishedAt: ago(400) },
+      ],
+      suggested: null,
+    });
+    const result = await stage([host(), fresh("fresh"), fresh("unnamed")], { policy: NO_AGE });
+
+    expect(listVersions).toHaveBeenCalledTimes(1);
+    expect(listVersions.mock.calls[0][2]).toBe("fresh");
+    expect(result.outcomes[1]).toEqual({
+      kind: "new-package",
+      publishedAt: ago(2),
+      firstPublishedAt: ago(400),
+    });
+    expect(result.outcomes[2]).toEqual({ kind: "new-package" });
+    expect(result.complete).toBe(true);
+    expect(decideAll(result)[0]).toMatchObject({
+      status: "hold",
+      newDependency: { cause: "young-package", name: "fresh", why: "version-published" },
+    });
+  });
+
+  test("a failed lookup is stored as unknown, holds, and is never retried", async () => {
+    readCached.mockResolvedValue(adding(["fresh"]));
+    const first = await stage([host(), fresh("fresh")], { policy: NO_AGE });
+    expect(listVersions).toHaveBeenCalledTimes(1);
+    expect(first.outcomes[1]).toEqual({
+      kind: "new-package",
+      publishedAt: null,
+      firstPublishedAt: null,
+    });
+    expect(decideAll(first)[0]).toMatchObject({
+      newDependency: { cause: "young-package", why: "age-unknown" },
+    });
+
+    listVersions.mockClear();
+    await stage([host(), fresh("fresh")], { policy: NO_AGE, progress: first.progress });
+    expect(listVersions).not.toHaveBeenCalled();
+  });
+
+  test("a name a later pass's diff adds is dated in that pass", async () => {
+    // Twelve cold diffs fill the first pass; the host's lands in the second.
+    const cold = Array.from({ length: MAX_COLD_DIFFS_PER_PASS }, (_, i) => host(`cold-${i}`));
+    loadDiff.mockImplementation(async (_env, _ctx, input: { packageName: string }) =>
+      input.packageName === "host" ? adding(["fresh"]) : diffPayload(),
+    );
+    listVersions.mockResolvedValue({
+      packageName: "fresh",
+      versions: [{ version: "1.0.1", publishedAt: ago(400) }],
+      suggested: null,
+    });
+    const bumps = [...cold, host(), fresh("fresh")];
+    const first = await stage(bumps, { policy: NO_AGE });
+    expect(listVersions).not.toHaveBeenCalled();
+    expect(first.complete).toBe(false);
+
+    const second = await stage(bumps, { policy: NO_AGE, progress: first.progress });
+    expect(listVersions).toHaveBeenCalledTimes(1);
+    expect(second.complete).toBe(true);
+    expect(decideAll(second).at(-2)).toEqual({ status: "clear", evidence: expect.anything() });
+  });
+
+  test("their lookups share the per-pass registry budget", async () => {
+    const names = (h: number) => Array.from({ length: 50 }, (_, i) => `dep-${h}-${i}`);
+    const hosts = [0, 1, 2, 3].map((h) => host(`host-${h}`));
+    readCached.mockImplementation(async (_env, _ctx, input: { packageName: string }) =>
+      adding(names(Number(input.packageName.slice(5)))),
+    );
+    listVersions.mockResolvedValue({ packageName: "x", versions: [], suggested: null });
+    const bumps = [...hosts, ...[0, 1, 2, 3].flatMap((h) => names(h).map(fresh))];
+
+    const first = await stage(bumps, { policy: NO_AGE });
+    expect(listVersions).toHaveBeenCalledTimes(150);
+    expect(first.complete).toBe(false);
+    // Unreached in this pass, it reads as unchecked if no pass followed.
+    expect(first.outcomes.at(-1)).toEqual({ kind: "new-package", pastReviewLimit: true });
+
+    listVersions.mockClear();
+    const second = await stage(bumps, { policy: NO_AGE, progress: first.progress });
+    expect(listVersions).toHaveBeenCalledTimes(50);
+    expect(second.complete).toBe(true);
+  });
+
+  test("a new package past the review limit gets no lookup and counts as young", async () => {
+    readCached.mockResolvedValue(adding(["late"]));
+    const filler = Array.from({ length: 499 }, (_, i) => fresh(`filler-${i}`));
+    const result = await stage([host(), ...filler, fresh("late")], { policy: NO_AGE });
+    expect(listVersions).not.toHaveBeenCalled();
+    expect(result.outcomes.at(-1)).toEqual({ kind: "new-package", pastReviewLimit: true });
+    expect(decideAll(result)[0]).toMatchObject({
+      status: "hold",
+      newDependency: { cause: "young-package", name: "late", why: "age-unknown" },
+    });
+  });
+
+  test("the pins-the-tree fact survives the pin and mirror proofs", async () => {
+    verifyPublicPin.mockResolvedValue(true);
+    verifyMirrorBump.mockResolvedValue(true);
+    readCached.mockResolvedValue(diffPayload());
+    const result = await stage([
+      pinnedPublic("pinned", "sha512-x", { lockfilePinsTree: true }),
+      { ...mirrorBump("mirrored"), lockfilePinsTree: true },
+    ]);
+    expect(result.bumps[0]).not.toHaveProperty("pinnedHashes");
+    expect(result.bumps[0].lockfilePinsTree).toBe(true);
+    expect(result.bumps[1]).toMatchObject({ viaMirror: true, lockfilePinsTree: true });
   });
 });

@@ -12,7 +12,7 @@ import type { PublicDiffVersionListing } from "../public-diff/types";
 import type { ReviewContext } from "./context";
 import { hasCheckablePin } from "./evidence";
 import { verifyMirrorBump, verifyPublicPin } from "./mirror-identity";
-import { extractBumpEvidence, needsReleaseAge } from "./policy";
+import { dependencyNameKey, extractBumpEvidence, needsReleaseAge } from "./policy";
 import {
   bumpProgressKey,
   DependencyReviewStalePassError,
@@ -20,7 +20,12 @@ import {
   type StoredBumpProgress,
 } from "./progress";
 import { MAX_STORED_BUMPS } from "./render";
-import type { BumpOutcome, DependencyBump, DependencyReviewPolicy } from "./types";
+import type {
+  BumpOutcome,
+  DependencyBump,
+  DependencyEcosystem,
+  DependencyReviewPolicy,
+} from "./types";
 
 // Per pass, against the queue consumer's 30 s CPU limit, which the Worker
 // can't observe. A cold diff parses two tarballs in a sandbox isolate but runs
@@ -195,41 +200,59 @@ export async function runReviewStage(
     diffOne,
   );
 
-  // Publish times, only for outcomes the policy would wait out, one registry
-  // read per package within a pass.
+  // Publish times, only for outcomes the policy would wait out and for new
+  // packages a diffed release adds a dependency on (`dependency-added` reads
+  // their age), one registry read per package within a pass. The second set
+  // grows as diffs land, so a later pass may look up what this one could not
+  // know it needed.
   const listings = new Map<string, Promise<PublicDiffVersionListing | null>>();
   const outcomeOf = (entry: Entry) =>
     settledOutcome(entry, resolved[entry.index], stored(entry.key));
-  const toDate = entries.filter((entry) => {
-    if (!entry.inReview || stored(entry.key).publishedAt !== undefined) return false;
-    const outcome = outcomeOf(entry);
-    return outcome !== null && needsReleaseAge(outcome, policy);
-  });
+  const named = policy.holdOnNewDependencies ? namesAddedByDiffs(entries, stored) : null;
+  const needsTimes = (entry: Entry, outcome: BumpOutcome | null): outcome is BumpOutcome => {
+    if (outcome === null || !entry.inReview) return false;
+    const progress = stored(entry.key);
+    if (progress.publishedAt === undefined && needsReleaseAge(outcome, policy)) return true;
+    if (outcome.kind !== "new-package" || !named) return false;
+    const bump = entry.original;
+    const name = dependencyNameKey(bump.ecosystem, bump.name);
+    return (
+      name !== null &&
+      named[bump.ecosystem].has(name) &&
+      (progress.publishedAt === undefined || progress.firstPublishedAt === undefined)
+    );
+  };
+  const toDate = entries.filter((entry) => needsTimes(entry, outcomeOf(entry)));
   await mapWithConcurrency(toDate, DIFF_CONCURRENCY, async (entry) => {
     const bump = resolved[entry.index] as DependencyBump;
     const adapter = getPublicDiffAdapter(bump.ecosystem);
     const listingKey = `${bump.ecosystem}\u0000${adapter?.normalizePackageName(bump.name) ?? bump.name}`;
+    const newPackage = outcomeOf(entry)?.kind === "new-package";
     let listing = listings.get(listingKey);
     if (!listing) {
-      if (!egress) return writer.record(entry.key, { publishedAt: null });
+      if (!egress) {
+        return writer.record(entry.key, {
+          publishedAt: null,
+          ...(newPackage ? { firstPublishedAt: null } : {}),
+        });
+      }
       if (!lookupAllowed()) return;
       lookups += 1;
       listing = listVersions(context, bump);
       listings.set(listingKey, listing);
     }
-    await writer.record(entry.key, { publishedAt: publishedAtOf(bump, await listing) });
+    const versions = await listing;
+    await writer.record(entry.key, {
+      publishedAt: publishedAtOf(bump, versions),
+      ...(newPackage ? { firstPublishedAt: firstPublishedAtOf(versions) } : {}),
+    });
   });
 
   let pending = 0;
   const outcomes = entries.map((entry) => {
     const progress = stored(entry.key);
     const outcome = outcomeOf(entry);
-    const needsDate =
-      outcome !== null &&
-      entry.inReview &&
-      progress.publishedAt === undefined &&
-      needsReleaseAge(outcome, policy);
-    if (outcome === null || needsDate) {
+    if (outcome === null || needsTimes(entry, outcome)) {
       pending += 1;
       return pastReviewLimit(outcome ?? { kind: "unreviewed", reason: "over-cap" });
     }
@@ -312,9 +335,29 @@ function pastReviewLimit(outcome: BumpOutcome): BumpOutcome {
 }
 
 function withPublishedAt(outcome: BumpOutcome, progress: StoredBumpProgress): BumpOutcome {
-  return progress.publishedAt === undefined
-    ? outcome
-    : { ...outcome, publishedAt: progress.publishedAt };
+  const dated =
+    progress.publishedAt === undefined
+      ? outcome
+      : { ...outcome, publishedAt: progress.publishedAt };
+  return dated.kind === "new-package" && progress.firstPublishedAt !== undefined
+    ? { ...dated, firstPublishedAt: progress.firstPublishedAt }
+    : dated;
+}
+
+// The dependency names the diffs so far add, per ecosystem, normalized.
+function namesAddedByDiffs(
+  entries: readonly Entry[],
+  stored: (key: string) => StoredBumpProgress,
+): Record<DependencyEcosystem, Set<string>> {
+  const named: Record<DependencyEcosystem, Set<string>> = { npm: new Set(), pypi: new Set() };
+  for (const entry of entries) {
+    const names = stored(entry.key).evidence?.addedDependencies?.names ?? [];
+    for (const raw of names) {
+      const name = dependencyNameKey(entry.original.ecosystem, raw);
+      if (name !== null) named[entry.original.ecosystem].add(name);
+    }
+  }
+  return named;
 }
 
 function diffInput(bump: DependencyBump): PublicDiffInput | null {
@@ -376,6 +419,24 @@ async function listVersions(
   } catch {
     return null;
   }
+}
+
+/**
+ * The package's earliest publish time among the versions the listing reports;
+ * null when it reports none. A version since unpublished only makes the
+ * package look younger, the safe side.
+ */
+function firstPublishedAtOf(listing: PublicDiffVersionListing | null): string | null {
+  let first: string | null = null;
+  let firstMs = Number.POSITIVE_INFINITY;
+  for (const { publishedAt } of listing?.versions ?? []) {
+    const ms = publishedAt ? Date.parse(publishedAt) : Number.NaN;
+    if (Number.isFinite(ms) && ms < firstMs) {
+      firstMs = ms;
+      first = publishedAt!;
+    }
+  }
+  return first;
 }
 
 /**

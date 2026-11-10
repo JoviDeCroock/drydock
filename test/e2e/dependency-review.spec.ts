@@ -127,6 +127,12 @@ test("dependency review settings save the hold policy", async ({ page }) => {
   // App permissions are named only where they are the next step (no App).
   await expect(section.getByText(/Checks \(write\)/)).toHaveCount(0);
   await expect(section.getByRole("checkbox", { name: "adds a native binary" })).toBeChecked();
+  await expect(
+    section.getByRole("checkbox", { name: "adds a dependency on a young package" }),
+  ).toBeChecked();
+  await expect(
+    section.getByText(/first published under 90 days ago, whose installed version is under 7 days/),
+  ).toBeVisible();
   await expect(section.getByLabel("Or reaches release risk")).toHaveValue("high");
 
   await section.getByRole("checkbox", { name: "Review dependency update pull requests" }).check();
@@ -204,6 +210,55 @@ test("dependency review detail lists each bump's verdict as text", async ({ page
     "https://github.com/acme/web/pull/128",
   );
   await page.screenshot({ path: `${SCREENSHOTS}/detail.png`, fullPage: true });
+  expect(errors).toEqual([]);
+});
+
+test("a dependency hold names the young package it brings in, or why it can't tell", async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  const held = (name: string, newDependency: unknown): ReviewedBump =>
+    ({
+      bump: { ...BUMPS[1].bump, name },
+      verdict: {
+        status: "hold",
+        reasons: ["dependency-added"],
+        evidence: { ...EVIDENCE, installScriptsAdded: 0, releaseRisk: "low", findings: [] },
+        newDependency,
+      },
+      approved: false,
+    }) as ReviewedBump;
+  await installMocks(page, [], {
+    review: () => ({ ...REVIEW, heldCount: 2, bumpCount: 2 }),
+    bumps: () => [
+      held("adds-fresh", {
+        cause: "young-package",
+        name: "<b>fresh</b>",
+        why: "first-published",
+        at: "2026-11-04T09:30:00.000Z",
+      }),
+      held("from-requirements", { cause: "lockfile-unpinned" }),
+    ],
+  });
+  await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+
+  await expect(
+    page
+      .getByRole("listitem")
+      .filter({ hasText: "adds-fresh" })
+      .getByText(
+        /^Adds a dependency on <b>fresh<\/b>, a package new to the lockfile and first published .+\.$/,
+      ),
+  ).toBeVisible();
+  await expect(page.locator("main b")).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("listitem")
+      .filter({ hasText: "from-requirements" })
+      .getByText(
+        "Adds a dependency; this lockfile does not pin transitive dependencies, so Drydock cannot see what it installs.",
+      ),
+  ).toBeVisible();
   expect(errors).toEqual([]);
 });
 

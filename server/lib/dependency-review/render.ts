@@ -193,7 +193,10 @@ function isPassedUnread(bump: ReviewedBump): boolean {
 function renderHeld(reviewed: ReviewedBump, input: RenderDependencyReviewInput): string[] {
   const { verdict } = reviewed;
   if (verdict.status !== "hold") return [];
-  const reasons = holdReasonPhrases(verdict, { bump: reviewed.bump });
+  const reasons = holdReasonPhrases(verdict, {
+    bump: reviewed.bump,
+    formatName: (name) => code(name, 214),
+  });
   const lines = [`- ${link(reviewed.bump, input)}: ${reasons.join("; ")}`];
   if (verdict.evidence) lines.push(...renderEvidence(verdict.evidence));
   return lines;

@@ -4,6 +4,7 @@ import type {
   BumpVerdict,
   DependencyBump,
   HoldReason,
+  NewDependencyCause,
   UnreviewedReason,
 } from "./types";
 
@@ -105,7 +106,7 @@ function formatUtcMinute(iso: string): string {
  */
 export function holdReasonPhrases(
   verdict: Extract<BumpVerdict, { status: "hold" }>,
-  options: { bump: WordedBump; formatTime?: (iso: string) => string },
+  options: { bump: WordedBump } & PhraseFormat,
 ): string[] {
   const { bump } = options;
   const formatTime = options.formatTime ?? formatUtcMinute;
@@ -115,6 +116,7 @@ export function holdReasonPhrases(
       return `${HOLD_REASON_TEXT.unreviewed} (${unreviewedText(verdict.unreviewed, bump)})`;
     }
     if (reason === "new-package") return added;
+    if (reason === "dependency-added") return newDependencyText(verdict.newDependency, options);
     if (reason !== "too-new") return HOLD_REASON_TEXT[reason];
     const what = verdict.unreviewed
       ? `${HOLD_REASON_TEXT.unreviewed} (${unreviewedText(verdict.unreviewed, bump)})`
@@ -126,6 +128,42 @@ export function holdReasonPhrases(
     const age = ageHoldText(verdict, bump, formatTime);
     return what ? `${what}; ${age}` : age;
   });
+}
+
+interface PhraseFormat {
+  // The check run fences names as code; the dashboard renders text as is.
+  formatName?: (name: string) => string;
+  formatTime?: (iso: string) => string;
+}
+
+/**
+ * The `dependency-added` phrase: which added dependency holds and why. A
+ * verdict decided before the cause was recorded reads as before.
+ */
+export function newDependencyText(
+  cause: NewDependencyCause | undefined,
+  format: PhraseFormat = {},
+): string {
+  if (!cause) return HOLD_REASON_TEXT["dependency-added"];
+  if (cause.cause === "lockfile-unpinned") {
+    return "adds a dependency; this lockfile does not pin transitive dependencies, so Drydock cannot see what it installs";
+  }
+  if (cause.cause === "unmatched") {
+    return "adds a dependency Drydock could not match against the lockfile";
+  }
+  const name = (format.formatName ?? ((text: string) => text))(cause.name);
+  const formatTime = format.formatTime ?? formatUtcMinute;
+  const on = `adds a dependency on ${name}, a package new to the lockfile`;
+  switch (cause.why) {
+    case "first-published":
+      return `${on} and first published ${formatTime(cause.at)}`;
+    case "version-published":
+      return `${on} whose installed version was published ${formatTime(cause.at)}`;
+    case "age-unknown":
+      return `${on} whose age Drydock could not establish`;
+    case "no-verdict":
+      return `${on} with no Drydock verdict`;
+  }
 }
 
 function ageHoldText(

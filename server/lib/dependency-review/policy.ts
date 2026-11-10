@@ -4,6 +4,7 @@ import { combineRisk } from "../review";
 import { CONSUMER_INSTALL_LIFECYCLE_SCRIPTS } from "../review/rules/patterns";
 import type { FindingSeverity, RiskLevel } from "../review/types";
 import { hasUnreadContent } from "./evidence";
+import { canonicalPackageName } from "./lockfiles";
 import {
   DEFAULT_DEPENDENCY_REVIEW_POLICY,
   MAX_PRIVATE_REGISTRIES,
@@ -14,11 +15,15 @@ import {
   type BumpFinding,
   type BumpOutcome,
   type BumpVerdict,
+  type DependencyBump,
+  type DependencyEcosystem,
   type DependencyReviewConclusion,
   type DependencyReviewPolicy,
   type HoldReason,
+  type NewDependencyCause,
   type ReviewedBump,
   type UnreviewedReason,
+  type YoungPackage,
 } from "./types";
 
 export { hasUnreadContent };
@@ -28,6 +33,19 @@ const MAX_EVIDENCE_FINDINGS = 5;
 // is cut well past what the check run or dashboard shows.
 const MAX_EVIDENCE_TEXT = 300;
 const DAY_MS = 24 * 60 * 60 * 1000;
+// Added dependency names kept per bump, by count and total length: they are
+// stored with the evidence for every reviewed bump.
+export const MAX_ADDED_DEPENDENCY_NAMES = 50;
+const MAX_ADDED_DEPENDENCY_CHARS = 2_000;
+// A package new to the lockfiles counts as young, for `dependency-added`, when
+// it was first published fewer than this many days before the decision, or
+// its installed version fewer than `YOUNG_VERSION_DAYS`. Measured on the
+// replay (`pnpm run eval:dependency-review-replay`): of 52 npm packages that
+// entered a lockfile through an added dependency, 8 were under 30 days old
+// and 15 under 90; the worm pattern adds a dependency on a package created
+// hours earlier, or on a fresh release of a dormant one.
+export const YOUNG_PACKAGE_DAYS = 90;
+export const YOUNG_VERSION_DAYS = 7;
 const RISK_LEVELS: readonly RiskLevel[] = ["low", "medium", "high", "critical"];
 const SEVERITY_RANK: Record<FindingSeverity, number> = {
   info: 0,
@@ -52,6 +70,9 @@ export function extractBumpEvidence(diff: PublicPackageDiff): BumpEvidence {
     (entry) => entry.status === "added" || entry.status === "modified",
   );
   const hooks = diff.packageJsonDiff.scripts.filter((entry) => INSTALL_HOOKS.has(entry.key));
+  const added = diff.packageJsonDiff.dependencies.filter(
+    (entry) => entry.status === "added" && !entry.previouslyDeclared,
+  );
   const findings: BumpFinding[] = diff.findings
     .filter((finding) => finding.releaseDelta)
     .map((finding) => ({
@@ -72,15 +93,46 @@ export function extractBumpEvidence(diff: PublicPackageDiff): BumpEvidence {
       .length,
     nativeBinariesChanged: changed.filter((entry) => entry.status === "modified" && isNative(entry))
       .length,
-    dependenciesAdded: diff.packageJsonDiff.dependencies.filter(
-      (entry) => entry.status === "added" && !entry.previouslyDeclared,
-    ).length,
+    dependenciesAdded: added.length,
+    addedDependencies: addedDependencyNames(diff.ecosystem, added),
     binCommandsAdded: diff.packageJsonDiff.bin.filter((entry) => entry.status === "added").length,
     uninspectedFiles: changed.filter(isUninspected).length,
     coverageNotices: diff.notices?.length ?? 0,
     findings: findings.slice(0, MAX_EVIDENCE_FINDINGS),
     findingCount: findings.length,
   };
+}
+
+/**
+ * A dependency name as the lockfiles key packages (PyPI: PEP 503; npm: as
+ * written, case included), or null when it is not a valid package name for
+ * the ecosystem. Names come from package.json or Requires-Dist, so they are
+ * untrusted text.
+ */
+export function dependencyNameKey(ecosystem: string, name: string): string | null {
+  return ecosystem === "npm" || ecosystem === "pypi" ? canonicalPackageName(ecosystem, name) : null;
+}
+
+function addedDependencyNames(
+  ecosystem: string,
+  added: ReadonlyArray<{ key: string }>,
+): NonNullable<BumpEvidence["addedDependencies"]> {
+  const names = new Set<string>();
+  let chars = 0;
+  let complete = true;
+  for (const { key } of added) {
+    const name = dependencyNameKey(ecosystem, key);
+    if (name === null) complete = false;
+    else if (names.has(name)) continue;
+    else if (
+      names.size < MAX_ADDED_DEPENDENCY_NAMES &&
+      chars + name.length <= MAX_ADDED_DEPENDENCY_CHARS
+    ) {
+      names.add(name);
+      chars += name.length;
+    } else complete = false;
+  }
+  return { names: [...names].sort(), complete };
 }
 
 function isNative(entry: { path: string; flags: string[] }): boolean {
@@ -107,8 +159,10 @@ function isUninspected(entry: { path: string; flags: string[] }): boolean {
 export function evaluateBumpEvidence(
   evidence: BumpEvidence,
   policy: DependencyReviewPolicy,
+  scope?: NewDependencyScope,
 ): BumpVerdict {
   const reasons: HoldReason[] = [];
+  let newDependency: NewDependencyCause | undefined;
   if (policy.holdOnInstallScripts) {
     if (evidence.installScriptsAdded > 0) reasons.push("install-script-added");
     if (evidence.installScriptsChanged > 0) reasons.push("install-script-changed");
@@ -117,7 +171,9 @@ export function evaluateBumpEvidence(
     reasons.push("native-binary-added");
   }
   if (policy.holdOnNewDependencies && evidence.dependenciesAdded > 0) {
-    reasons.push("dependency-added");
+    const held = newDependencyHold(evidence, scope);
+    if (held) reasons.push("dependency-added");
+    if (held && held !== "unscoped") newDependency = held;
   }
   if (policy.holdOnNewBinCommands && evidence.binCommandsAdded > 0) {
     reasons.push("bin-command-added");
@@ -131,7 +187,108 @@ export function evaluateBumpEvidence(
   if (policy.holdOnUninspectedFiles && hasUnreadContent(evidence, unreadOptions(policy))) {
     reasons.push("uninspected-files");
   }
-  return reasons.length > 0 ? { status: "hold", reasons, evidence } : { status: "clear", evidence };
+  if (reasons.length === 0) return { status: "clear", evidence };
+  return newDependency
+    ? { status: "hold", reasons, evidence, newDependency }
+    : { status: "hold", reasons, evidence };
+}
+
+/**
+ * What `dependency-added` reads beyond the bump's own evidence: its ecosystem,
+ * whether its lockfile pins the whole tree, and the review's young new
+ * packages in that ecosystem. Built for every bump by `newDependencyScopes`.
+ */
+export interface NewDependencyScope {
+  ecosystem: DependencyEcosystem;
+  lockfilePinsTree: boolean;
+  // By `dependencyNameKey`.
+  youngNewPackages: ReadonlyMap<string, YoungPackage>;
+}
+
+/**
+ * Whether an added dependency holds, and why. The lockfile shows exactly what
+ * enters the tree: an added dependency that resolves to a package already
+ * there, or to a new version of one (its own diffed bump), or that is not
+ * installed at all (an optional peer, a PyPI extra) brings nothing unread.
+ * Only a package new to the lockfiles arrives with no diff, and the dangerous
+ * one is also young. Without a scope, names, or a lockfile that pins the
+ * whole tree, nothing can be matched, so any added dependency holds. A young
+ * version's hold is not an age hold: no recheck lifts it once the version
+ * ages; it holds until approved or re-run.
+ */
+function newDependencyHold(
+  evidence: BumpEvidence,
+  scope: NewDependencyScope | undefined,
+): NewDependencyCause | "unscoped" | null {
+  // A caller without the review's context: every added dependency holds.
+  if (!scope) return "unscoped";
+  if (!scope.lockfilePinsTree) return { cause: "lockfile-unpinned" };
+  const added = evidence.addedDependencies;
+  if (!added || !added.complete) return { cause: "unmatched" };
+  for (const raw of added.names) {
+    const name = dependencyNameKey(scope.ecosystem, raw);
+    if (name === null) return { cause: "unmatched" };
+    const young = scope.youngNewPackages.get(name);
+    if (young) return { cause: "young-package", name, ...young };
+  }
+  return null;
+}
+
+/**
+ * Why a new package counts as young at `nowMs`, or null when its age vouches
+ * for it: first published at least `YOUNG_PACKAGE_DAYS` and its installed
+ * version at least `YOUNG_VERSION_DAYS` before. Anything other than a plain
+ * `new-package` outcome with both times known is young.
+ */
+function youngNewPackage(outcome: BumpOutcome, nowMs: number): YoungPackage | null {
+  if (outcome.kind !== "new-package") return { why: "no-verdict" };
+  if (outcome.pastReviewLimit) return { why: "age-unknown" };
+  const first = outcome.firstPublishedAt;
+  const version = outcome.publishedAt;
+  const firstMs = first ? Date.parse(first) : Number.NaN;
+  const versionMs = version ? Date.parse(version) : Number.NaN;
+  if (!first || !version || !Number.isFinite(firstMs) || !Number.isFinite(versionMs)) {
+    return { why: "age-unknown" };
+  }
+  if (nowMs - firstMs < YOUNG_PACKAGE_DAYS * DAY_MS) return { why: "first-published", at: first };
+  if (nowMs - versionMs < YOUNG_VERSION_DAYS * DAY_MS) {
+    return { why: "version-published", at: version };
+  }
+  return null;
+}
+
+/** Whether a bump is a package new to its lockfile (not a re-pin of one it had). */
+function isNewPackageBump(bump: Pick<DependencyBump, "fromVersion" | "repinned">): boolean {
+  return bump.fromVersion === null && !bump.repinned;
+}
+
+/**
+ * One `NewDependencyScope` per bump, from the whole review: every package
+ * new to any of the PR's lockfiles that `youngNewPackage` counts as young,
+ * per ecosystem by normalized name. Pure, so a replay builds the same.
+ */
+export function newDependencyScopes(
+  bumps: readonly DependencyBump[],
+  outcomes: readonly BumpOutcome[],
+  nowMs: number,
+): NewDependencyScope[] {
+  const young: Record<DependencyEcosystem, Map<string, YoungPackage>> = {
+    npm: new Map(),
+    pypi: new Map(),
+  };
+  bumps.forEach((bump, index) => {
+    if (!isNewPackageBump(bump)) return;
+    const name = dependencyNameKey(bump.ecosystem, bump.name);
+    const why = youngNewPackage(outcomes[index], nowMs);
+    if (name !== null && why && !young[bump.ecosystem].has(name)) {
+      young[bump.ecosystem].set(name, why);
+    }
+  });
+  return bumps.map((bump) => ({
+    ecosystem: bump.ecosystem,
+    lockfilePinsTree: bump.lockfilePinsTree === true,
+    youngNewPackages: young[bump.ecosystem],
+  }));
 }
 
 // An added native binary the policy holds as a capability is not also unread.
@@ -175,9 +332,12 @@ export function needsReleaseAge(outcome: BumpOutcome, policy: DependencyReviewPo
   if (policy.unreadMinimumAgeDays === null) return false;
   switch (outcome.kind) {
     case "diffed":
+      // `dependency-added` may not hold once the whole review is known, so
+      // it never stands in for the age lookup here.
       return (
         hasUnreadContent(outcome.evidence, unreadOptions(policy)) &&
-        evaluateBumpEvidence(outcome.evidence, policy).status === "clear"
+        evaluateBumpEvidence(outcome.evidence, { ...policy, holdOnNewDependencies: false })
+          .status === "clear"
       );
     case "unreviewed":
       return (
@@ -197,16 +357,19 @@ export function needsReleaseAge(outcome: BumpOutcome, policy: DependencyReviewPo
  * `holdOnUninspectedFiles`) take precedence over the fallback, and a bump
  * the diff already holds gets no age reason on top. A bump past the review
  * limit (`pastReviewLimit`) had no publish time looked up, so it holds as
- * unknown and says why. Pure: `nowMs` is the clock.
+ * unknown and says why. `scope` is this bump's entry from
+ * `newDependencyScopes`; without it any added dependency holds. Pure: `nowMs`
+ * is the clock.
  */
 export function decideBump(
   outcome: BumpOutcome,
   policy: DependencyReviewPolicy,
   nowMs: number,
+  scope?: NewDependencyScope,
 ): BumpVerdict {
   switch (outcome.kind) {
     case "diffed": {
-      const verdict = evaluateBumpEvidence(outcome.evidence, policy);
+      const verdict = evaluateBumpEvidence(outcome.evidence, policy, scope);
       if (
         verdict.status !== "clear" ||
         !hasUnreadContent(outcome.evidence, unreadOptions(policy))

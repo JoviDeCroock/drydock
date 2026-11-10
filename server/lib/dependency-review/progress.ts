@@ -43,6 +43,9 @@ export interface StoredBumpProgress {
   unreviewed?: "not-found" | "unsupported" | "failed";
   // The target version's public publish time; null when the lookup found none.
   publishedAt?: string | null;
+  // A new package's earliest public release time, from the same lookup; null
+  // when it found none.
+  firstPublishedAt?: string | null;
   // `verifyMirrorBump`'s answer for a mirror-resolved bump.
   mirrorVerified?: boolean;
   // `verifyPublicPin`'s answer for a public bump with `pinnedHashes`.
@@ -53,8 +56,9 @@ export interface StoredBumpProgress {
   coldStarts?: number;
 }
 
-// Above this the stored findings are trimmed (counts stay): the row also
-// carries `bumps_json`, and D1 caps a row near 2 MB.
+// Above this the stored findings and added dependency names are trimmed
+// (counts stay): the row also carries `bumps_json`, and D1 caps a row near
+// 2 MB.
 const MAX_PROGRESS_CHARS = 700_000;
 // A collection past this is not kept; each pass collects again instead.
 const MAX_COLLECTION_CHARS = 300_000;
@@ -171,8 +175,18 @@ function serializeProgress(progress: DependencyReviewProgress): string {
   if (text.length <= MAX_PROGRESS_CHARS) return text;
   const trimmed: Record<string, StoredBumpProgress> = {};
   for (const [key, entry] of Object.entries(progress.bumps)) {
+    // Dropped names read as unmatched, so an added dependency holds.
     trimmed[key] = entry.evidence
-      ? { ...entry, evidence: { ...entry.evidence, findings: entry.evidence.findings.slice(0, 1) } }
+      ? {
+          ...entry,
+          evidence: {
+            ...entry.evidence,
+            findings: entry.evidence.findings.slice(0, 1),
+            ...(entry.evidence.addedDependencies
+              ? { addedDependencies: { names: [], complete: false } }
+              : {}),
+          },
+        }
       : entry;
   }
   return JSON.stringify({ ...progress, bumps: trimmed });

@@ -534,6 +534,7 @@ export function parseRequirements(text: string): LockfileSnapshot {
     pins.set(key, pin);
   }
   const qualifiers = new Map<string, string>();
+  const hashChecked = pins.size > 0 && [...pins.values()].every((pin) => !pin.unhashed);
   for (const [name, { version, hashes, unhashed, qualifiers: lines }] of pins) {
     qualifiers.set(name, [...lines].sort().join("\n"));
     const all = [...hashes].sort();
@@ -549,7 +550,7 @@ export function parseRequirements(text: string): LockfileSnapshot {
     });
     builder.markDirect(name);
   }
-  return { ...builder.finish(unpinned.sort()), qualifiers };
+  return { ...builder.finish(unpinned.sort()), qualifiers, hashChecked };
 }
 
 function normalizedName(name: string): string {

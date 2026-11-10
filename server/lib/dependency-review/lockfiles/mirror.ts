@@ -275,6 +275,9 @@ export function mergeBump(existing: DependencyBump, bump: DependencyBump): void 
   existing.direct ||= bump.direct;
   if (bump.remoteSource) existing.remoteSource = true;
   if (bump.repinned) existing.repinned = true;
+  // Fail closed: the change counts as pinning the whole tree only when every
+  // lockfile it came from does.
+  if (!bump.lockfilePinsTree) delete existing.lockfilePinsTree;
   const union = (a: readonly string[] | null, b: readonly string[] | null) =>
     a === null || b === null ? null : [...new Set([...a, ...b])].sort();
   if (existing.mirror && bump.mirror && !existing.remoteSource) {

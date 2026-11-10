@@ -180,12 +180,17 @@ export async function collectBumps(
         if (!unreadLockfiles.includes(path)) unreadLockfiles.push(path);
       }
     }
+    // A requirements file outside pip's hash-checking mode leaves transitive
+    // dependencies to be resolved at install time, so "nothing new entered
+    // the file" proves nothing about what a release's new dependency installs.
+    const pinsTree = kind !== "requirements" || headSnapshot.hashChecked === true;
     for (const change of diffLockfileChanges(baseSnapshot, headSnapshot, file.filename)) {
       // A name the repository routes to another registry is kept, never
       // diffed (unless proven a mirror copy): dropping it would let its
       // change pass unseen.
       const route = custom ? npmNameRoute(custom, change.bump.name) : PUBLIC_ROUTE;
       const bump = routedBump(change, route, collectionPolicy(policy));
+      if (pinsTree) bump.lockfilePinsTree = true;
       const key = dependencyChangeKey(bump);
       const existing = byChange.get(key);
       if (existing) mergeBump(existing, bump);

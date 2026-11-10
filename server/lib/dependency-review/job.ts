@@ -30,6 +30,7 @@ import {
   collectionPolicyKey,
   concludeDependencyReview,
   decideBump,
+  newDependencyScopes,
 } from "./policy";
 import {
   bumpProgressKey,
@@ -312,8 +313,11 @@ async function runReview(
     stage.bumps,
   );
   const decidedAtMs = Date.now();
+  // `dependency-added` reads the whole review: which packages are new to the
+  // PR's lockfiles and how young they are.
+  const scopes = newDependencyScopes(stage.bumps, stage.outcomes, decidedAtMs);
   const reviewed: ReviewedBump[] = stage.bumps.map((bump, index) => {
-    const verdict = decideBump(stage.outcomes[index], settings.policy, decidedAtMs);
+    const verdict = decideBump(stage.outcomes[index], settings.policy, decidedAtMs, scopes[index]);
     return {
       bump,
       verdict,

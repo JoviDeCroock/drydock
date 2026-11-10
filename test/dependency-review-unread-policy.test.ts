@@ -18,6 +18,7 @@ import {
   type BumpVerdict,
   type DependencyBump,
   type DependencyReviewPolicy,
+  type NewDependencyCause,
   type ReviewedBump,
   type UnreviewedReason,
 } from "../server/lib/dependency-review/types";
@@ -665,6 +666,60 @@ describe("pins, re-pins, and the review limit in the summary", () => {
       "new package with no previous version to compare; past the per-PR review limit, so Drydock did not look up its age",
     );
     expect(summary).not.toContain("publish time is unknown");
+  });
+});
+
+describe("an added dependency's hold says which and why", () => {
+  const render = (verdict: Extract<BumpVerdict, { status: "hold" }>) =>
+    renderDependencyReviewCheck({
+      bumps: [{ bump: bump(), verdict, approved: false }],
+      conclusion: "held",
+      diffUrl: () => null,
+      approvedBy: null,
+      unreadLockfiles: [],
+    }).summary;
+  const held = (newDependency?: NewDependencyCause) => ({
+    status: "hold" as const,
+    reasons: ["dependency-added" as const],
+    evidence: CLEAN,
+    ...(newDependency ? { newDependency } : {}),
+  });
+  const at = "2026-11-04T09:30:00.000Z";
+
+  test.each<[string, NewDependencyCause | undefined, string]>([
+    [
+      "a young package",
+      { cause: "young-package", name: "fresh", why: "first-published", at },
+      "adds a dependency on `fresh`, a package new to the lockfile and first published 2026-11-04 09:30 UTC",
+    ],
+    [
+      "a young version",
+      { cause: "young-package", name: "@acme/util", why: "version-published", at },
+      "adds a dependency on `@acme/util`, a package new to the lockfile whose installed version was published 2026-11-04 09:30 UTC",
+    ],
+    [
+      "an unknown age",
+      { cause: "young-package", name: "fresh", why: "age-unknown" },
+      "adds a dependency on `fresh`, a package new to the lockfile whose age Drydock could not establish",
+    ],
+    [
+      "no verdict",
+      { cause: "young-package", name: "fresh", why: "no-verdict" },
+      "adds a dependency on `fresh`, a package new to the lockfile with no Drydock verdict",
+    ],
+    [
+      "a lockfile that does not pin the tree",
+      { cause: "lockfile-unpinned" },
+      "adds a dependency; this lockfile does not pin transitive dependencies, so Drydock cannot see what it installs",
+    ],
+    [
+      "names it could not match",
+      { cause: "unmatched" },
+      "adds a dependency Drydock could not match against the lockfile",
+    ],
+    ["a verdict stored before the cause was recorded", undefined, ": adds a dependency"],
+  ])("%s", (_, cause, phrase) => {
+    expect(render(held(cause))).toContain(phrase);
   });
 });
 
