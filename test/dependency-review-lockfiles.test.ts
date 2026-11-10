@@ -69,6 +69,7 @@ function snapshotOf(
       urls: [],
       hashes: null,
       pins: [""],
+      usablePins: [],
       mixed: false,
       ...given,
     };

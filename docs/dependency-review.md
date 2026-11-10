@@ -68,8 +68,8 @@ make it required.
    | --- | --- |
    | Who can claim | A queued, failed, or superseded review; a completed one only for Re-run or an age recheck (step 10); a running one only past its 15-minute lease. The next pass of a running review (a continuation) takes only a queued row or an expired lease. |
    | Fencing | The claim is compare-and-set and increments the row's `attempt`. Every progress, completion, cancellation, release, and failure write names that attempt (and the owning check run), so a pass that lost its claim stops at its next write and cannot overwrite its replacement. Each progress write renews the lease. |
-   | Duplicates | A redelivery during a running claim sends a fresh delayed message before acknowledging the delivery, so waiting for the lease does not exhaust the queue's retry budget. A completed duplicate exits without posting a second run. A retryable failure gives the claim back before the queue retries. |
-   | Stale heads | Webhook deliveries can arrive out of order, so only the head comparison decides which commit is stale. Each pass checks the head before it spends anything, and the last pass checks again before publishing. A commit that is no longer the open PR's head is superseded and its check ends `cancelled`, not `neutral`, which GitHub counts as passing. Reopening the PR or pressing Re-run reviews it again. |
+   | Duplicates | A redelivery during a running claim sends a fresh delayed message before acknowledging, so waiting out the lease doesn't spend the queue's retries. A completed duplicate posts no second run. A retryable failure gives the claim back before the queue retries. |
+   | Stale heads | Deliveries arrive out of order, so only the head comparison decides staleness. Each pass checks the head before spending anything, and the last pass again before publishing. A commit no longer the open PR's head is superseded and its check ends `cancelled` (not `neutral`, which GitHub counts as passing); reopening or Re-run reviews it again. |
    | Takeover | Taking over an expired claim creates a fresh check run and cancels its predecessor. |
 
 4. **Collect.** The first pass lists the PR's files, reads each supported
@@ -86,52 +86,54 @@ make it required.
 
    | Changed file | Unread when |
    | --- | --- |
-   | Supported lockfile (`package-lock.json` / `npm-shrinkwrap.json` v2–v3, `pnpm-lock.yaml` v5–v9, `yarn.lock` classic and Berry, `uv.lock`) | Past the 20-per-review cap, over 8 MiB, deleted by the PR, or not finished by the parser: malformed, outside the canonical shape, over its entry caps, or holding an entry it can't classify (an unplaceable entry makes the snapshot incomplete; it is never dropped). |
-   | Requirements (`requirements*.txt`, `constraints*.txt`, `requirements/*.txt`, and any other changed `.txt`, since pip follows `-r`/`-c` into files of any name) | As above, plus: an index or find-links option other than an explicit pypi.org `--index-url`, any option pip doesn't accept exactly as written, a name pinned to two versions, or a change to its unpinned lines (ranges such as `foo>=1.3`, URLs, VCS and `-e` lines, includes). A `.txt` that isn't requirements holds on its text change. |
+   | Supported lockfile (`package-lock.json` / `npm-shrinkwrap.json` v2–v3, `pnpm-lock.yaml` v5–v9, `yarn.lock` classic and Berry, `uv.lock`) | Past the 20-per-review cap, over 8 MiB, deleted by the PR, or not finished by the parser: malformed, outside the canonical shape, over its entry caps, or holding an entry it can't classify (an unplaceable entry makes the snapshot incomplete; it is never dropped). Peer variants of one release in `pnpm-lock.yaml` are one entry; variants with different resolutions make the file unread. |
+   | Requirements (`requirements*.txt`, `constraints*.txt`, `requirements/*.txt`, and any other changed `.txt`, since pip follows `-r`/`-c` into files of any name) | As above, plus: an index or find-links option other than an explicit pypi.org `--index-url`, any option pip doesn't accept exactly as written, a name pinned to two versions, a change to its unpinned lines (ranges such as `foo>=1.3`, URLs, VCS and `-e` lines, includes), or a change to a pin's extras, environment marker, or per-requirement install options. A `.txt` that isn't requirements holds on its text change. |
    | Unparsed npm or PyPI lockfile (`bun.lock`, `poetry.lock`, `Pipfile.lock`, `pdm.lock`, `pylock*.toml`) | Always. |
-   | Dependency manifest (`package.json`, `pyproject.toml`, `setup.cfg`, `setup.py`, `Pipfile`, pip-tools `*.in`) | Unless the PR changes a parsed lockfile of its ecosystem that covers it: one in the same directory, or one above it that records the directory as a workspace (npm `packages`, pnpm `importers`, Yarn `workspace:` entries or the root `workspaces` globs, a uv source path). A requirements file covers only its own pip-tools input (`X.in` for `X.txt`) or a manifest its `pip-compile` or `uv pip compile` header line names. |
-   | `.npmrc`, `.yarnrc.yml` (anywhere in the PR) | Added, removed, renamed, or changed, unless both sides parse and route every name identically. Over 64 KiB a file is not read. |
+   | Dependency manifest (`package.json`, `pyproject.toml`, `setup.cfg`, `setup.py`, `Pipfile`, pip-tools `*.in`) | Unless the PR changes a parsed lockfile of its ecosystem that covers it: one in the same directory, or one above it whose parsed snapshot records the directory as a project: npm importer keys, pnpm `importers` from every YAML document, Berry `workspace:` resolutions, uv editable, virtual, and directory sources, or the Yarn root manifest's `workspaces` globs. A requirements file covers only its own pip-tools input (`X.in` for `X.txt`) or a manifest its `pip-compile` or `uv pip compile` header line names. |
+   | `.npmrc`, `.yarnrc.yml` (anywhere in the PR) | Any change other than to comments and blank lines (an added or removed file counts unless it holds only those), any rename, and any side that does not read in the strict shape. Over 64 KiB a file does not read. |
    | Yarn classic `.yarnrc`, `uv.toml`, `pip.conf`, `pip.ini` | Any change. |
    | `pyproject.toml` `[tool]` and `[tool.uv…]` tables | Any change to their text (whitespace-normalized). |
+   | Committed Yarn install files: anything under `.yarn/cache`, `.yarn/unplugged`, `.yarn/releases`, or `.yarn/plugins`, the PnP loader (`.pnp.cjs`, `.pnp.js`, `.pnp.loader.mjs`, `.pnp.data.json`), and Berry cache archives (`*-npm-*.zip`) anywhere | Added, removed, changed, or renamed; reported once per directory (per file for the loader). Yarn installs or runs these with nothing the lockfile diff binds. |
 
    Up to 20 changed `.npmrc`, `.yarnrc.yml`, and `pyproject.toml` files are
-   compared per review; past that, a changed one is unread. Up to 20 uncovered `package.json` files are compared at the merge base and
-   head (`server/lib/dependency-review/manifests.ts`, data only, never
-   executed). A change limited to known package metadata, such as name,
-   version, description, scripts, or exports, needs no changed lockfile when
-   all dependency and resolver inputs remain equal; formatting and object-key
-   order do not count. A newly added or renamed manifest is compared with an
-   empty object, because moving dependency declarations can change their
-   workspace or registry resolution. Changed dependency declarations,
-   overrides, workspaces, package-manager settings, unknown fields, and
-   malformed, missing, over-8-MiB, or over-cap manifest data stay unread.
-   Python manifests always need the lockfile.
+   compared per review; past that, a changed one is unread. Up to 20 uncovered
+   `package.json` files are compared as data at the merge base and head
+   (`server/lib/dependency-review/manifests.ts`): a change limited to known
+   metadata (name, version, description, scripts, exports, formatting, key
+   order) needs no lockfile. A new or renamed manifest is compared with an
+   empty object, since moving declarations can change their resolution. Any
+   other change, and malformed, missing, over-8-MiB, or over-cap data, stays
+   unread. Python manifests always need the lockfile.
 
 5. **Place each source.** Every recorded version is placed by where its bytes
    come from, per side of the bump, and the bump takes the worse side
    (public, mirror, private, remote, in that order). Sources whose code is in
    the PR itself (`file:`, `link:`, `workspace:`, `portal:`, `exec:`, paths)
-   are left out.
+   are left out. An npm entry marked `inBundle` is left out only when npm would
+   ship it inside the bundling package's tarball (no `resolved` of its own, and
+   reached from that package's `bundleDependencies` within its own
+   `node_modules`); every other copy is reviewed.
 
    | Place | When | Review |
    | --- | --- | --- |
    | Public | npm: an entry with no URL whose name the repository's config routes to the public registry, or a URL that is exactly the canonical https tarball URL on `registry.npmjs.org` or `registry.yarnpkg.com` for that entry's own name and version (Yarn classic's 40-hex `#` fragment allowed). PyPI: a uv entry on `https://pypi.org/simple` with every file on `files.pythonhosted.org`, or a requirements pin. | Diffed after its pin is proven (step 6). |
-   | Mirror candidate | The URL or the name's route is under a `publicMirrors` prefix, no side is private or remote, and every side pins strong hashes (step 6). | Diffed as public once the pins are proven; otherwise unreviewed (`private-source`). |
-   | Private registry (`privateSource`) | The URL or route is under a `privateRegistries` prefix, or the npm name is in a `privateScopes` scope. | Never diffed; unreviewed (`private-source`). |
-   | Remote (`remoteSource`) | Everything else: any other host or route (including a public-host URL that is not the canonical one), an unreadable or environment-dependent route, a git ref, a URL or tarball, a v5/v6 `pnpm-lock.yaml` entry keyed by another registry's host, a PyPI file off PyPI's file host, a mirror entry without comparable pins. | Never diffed; unreviewed (`remote-source`). No publish time, so no age fallback. |
+   | Mirror candidate | The URL or the name's route is under a `publicMirrors` prefix, no side is private or remote, and every side pins strong hashes (step 6). | Diffed as public once the pins are proven; otherwise unreviewed `unverified-pin`, handled like a remote source. |
+   | Private registry (`privateSource`) | The URL or route is under a `privateRegistries` prefix and the package was already there at the base or is new to the lockfile, or the npm name is in a `privateScopes` scope. | Never diffed; unreviewed (`private-source`). |
+   | Remote (`remoteSource`) | Everything else: any other host or route (including a public-host URL that is not the canonical one), an unreadable or environment-dependent route, a git ref, a URL or tarball, a v5/v6 `pnpm-lock.yaml` entry keyed by another registry's host, a PyPI file off PyPI's file host, a mirror entry without comparable pins, a release the PR moves from the public registry or a mirror onto a declared private registry. | Never diffed; unreviewed (`remote-source`). No publish time, so no age fallback. |
 
    - Routing comes from the committed `.npmrc` and `.yarnrc.yml` in the npm
      lockfile's directory and each directory above it, at the head (up to 10
      levels; deeper, every name routes somewhere unknown). A file there that
      doesn't parse routes every name somewhere unknown and is listed as unread.
-   - Prefix matching takes only plain, canonical https URLs with no
-     credentials, query, or fragment; a prefix ends at a path boundary.
+   - Prefixes match only plain, canonical https URLs without credentials,
+     query, or fragment, at a path boundary.
    - Private and remote identities include their pin, so a re-pin at the same
      URL is a change.
    - A name in a declared `privateScopes` scope is never sent to a public
      registry, whatever routing outside the repository it relies on. Other
-     config set outside the repository (environment, user-level files,
-     Dependabot `registries:`) is invisible here.
+     config set outside the repository (environment variables, CI
+     configuration, user-level files, Dependabot `registries:`) is invisible
+     here, including registries and proxies set that way.
 
 6. **Prove pins.** A public bump whose lockfile records a strong pin for the
    target version carries it (`pinnedHashes`) and is diffed only after
@@ -146,17 +148,24 @@ make it required.
    | `package-lock.json` / `npm-shrinkwrap.json` | `sha512-…` integrity | Yes, by `resolved` URL or the name's route |
    | `pnpm-lock.yaml` | `sha512-…` integrity | Yes, by the name's route (the lockfile records no URL) or a `tarball` URL; never a host-keyed v5/v6 entry |
    | `yarn.lock` classic | `sha512-…` integrity | Yes, by `resolved` URL |
-   | `yarn.lock` Berry | None: its checksum is of Yarn's repacked archive | Never |
+   | `yarn.lock` Berry | None: its checksum is of Yarn's repacked archive, so a checksum-only change at an unchanged version is not a change | Never |
    | `uv.lock` | Every `sha256:` file hash of the release | Yes, by index and file URLs |
    | Requirements | `--hash=sha256:` values, when present | No |
 
    - A `sha512` counts only when every other component of the integrity string
      is a known weaker digest; gaining or losing a weaker digest beside an
      unchanged `sha512` is not a change.
-   - A failed or unverifiable proof (no public egress, a missing release or
-     digest, a failed read) makes the bump unreviewed `unverified-pin`, handled
-     like a remote source.
-   - A public bump without a comparable pin relies on the registry route alone.
+   - npm v2/v3, pnpm, Yarn classic, and uv always write a strong pin. In
+     those formats a public bump or re-pin whose target has no clean, usable
+     pin (missing, sha1-only, beside an unknown algorithm, carrying `?`
+     options, malformed, or copies that disagree) must be proven and cannot
+     be, however old the version. A requirements line that has, or drops, a
+     `--hash` is held to the same rule.
+   - A failed or unverifiable proof (no usable pin, no public egress, a
+     missing release or digest, a failed read) makes the bump unreviewed
+     `unverified-pin`, handled like a remote source.
+   - Only Yarn Berry and unhashed requirements have no comparable pin by
+     design; their public bumps rely on the registry route alone.
    - A lockfile that keeps a public version and changes its pin reports a bump
      with no previous version, listed as **Same version, new pin**. Its pin is
      proven like any other, and it is then decided as a new package.
@@ -164,8 +173,8 @@ make it required.
      sides of a version change to match the public registry; a new package, a
      version moved onto the mirror, or a re-pin proves the target alone. A
      proven mirror bump is diffed, linked, and approved under its public
-     identity. An unproven one stays unreviewed (`private-source`) and is keyed
-     by its pinned hashes.
+     identity. An unproven one is `unverified-pin`, keyed by its pinned
+     hashes.
 
 7. **Review in passes.** Each public version change (proven pins and mirror
    bumps included) runs through `loadPublicPackageDiff`, the same pipeline,
@@ -184,21 +193,19 @@ make it required.
    | Wall clock per pass | 8 minutes (`PASS_BUDGET_MS`) |
    | Passes per review | 50 (`MAX_REVIEW_PASSES`) |
 
-   - The queue consumer has a 30-second CPU limit the Worker can't observe. On
-     1,483 real pairs replayed by `pnpm run eval:dependency-review-replay`
-     (local Node CPU, not Workers CPU), a cold diff took a median of 238 ms and
-     a p90 of 1.7 s, with a tail far above 30 s; 12 cold diffs leave room for
-     one outlier.
+   - The cold-diff bound keeps a typical pass under the queue consumer's
+     30-second CPU limit, which the Worker can't observe (see Measured).
    - Outcomes are stored on the review row (`progress_json`) as they land, a
      cold diff's start before it runs. Passes after the first reuse the stored
-     collection (they collect again only when the organization's mirror list
-     changed or the collection was too large to store) and skip settled bumps.
+     collection and skip settled bumps. They collect again when the
+     collection was too large to store, or when any setting collection reads
+     (`publicMirrors`, `privateRegistries`, `privateScopes`) changed, dropping
+     stored outcomes for bumps the new collection no longer has.
    - While work remains, the pass sets the in-progress check's summary to
      "Reviewed X of Y updates so far", queues the next pass, and gives its
      claim back. There is no Approve until the last pass.
-   - `not-found`, `unsupported`, and `failed` outcomes, which the public diff
-     does not cache, are kept and not retried within the review; a Re-run
-     starts over and retries them.
+   - `not-found`, `unsupported`, and `failed` (uncached by the public diff)
+     are not retried within the review; a Re-run retries them.
    - A cold diff that started without recording an outcome may have taken its
      pass down; it runs alone at the start of the next pass, and after two
      starts it is recorded `failed`.
@@ -209,7 +216,8 @@ make it required.
      asks for a Re-run or a smaller PR.
    - A deployment with a custom `NPM_REGISTRY` (`publicDiffEgressAllowed`, the
      same killswitch as the anonymous `/diff` surface) diffs nothing, proves no
-     pin, and looks up no publish time.
+     pin, and looks up no publish time, so every pinned bump is
+     `unverified-pin`.
 
 8. **Decide.** `server/lib/dependency-review/policy.ts` reads the release delta
    only. Context findings describe code the previous version already shipped,
@@ -228,16 +236,13 @@ make it required.
    | `holdOnNewPackages`      | off     | is a package with no previous version in the lockfile, or a re-pin                  |
    | `unreadMinimumAgeDays`   | 3       | is younger than this many days when nothing vouched for it (`null` turns it off)    |
 
-   _Unread content_ is what a diff left unread: changed native binaries,
-   uninspected files, coverage notices, and an added native binary when
-   `holdOnNativeBinaries` is off. A changed native binary is never a
-   `holdOnNativeBinaries` hold. Images, fonts, and media are binary but inert
-   and are not counted; source maps aren't either. Archives and compressed
-   bodies always count, by name or by leading magic, as does any file ending in
-   a zip directory: the rules never unpack them. A coverage notice on the diff
-   counts too. For PyPI that includes the wheels the diff did not read: it
-   compares one wheel per side, so a package that ships compiled wheels for
-   other platforms has unread content.
+   _Unread content_ is what a diff left unread: changed native binaries (never
+   a `holdOnNativeBinaries` hold), uninspected files, coverage notices, and an
+   added native binary when `holdOnNativeBinaries` is off. Images, fonts,
+   media, and source maps are not counted. Archives and compressed bodies
+   always count, by name or leading magic, as does any file ending in a zip
+   directory: the rules never unpack them. A PyPI diff compares one wheel per
+   side, so compiled wheels for other platforms are coverage notices.
 
    The age fallback (`unreadMinimumAgeDays`) covers what nothing vouched for.
    A switch that holds the bump outright takes precedence, and a bump the diff
@@ -249,37 +254,26 @@ make it required.
    | Unreviewed public bump (`not-found`, `unsupported`, `failed`) | `holdOnUnreviewed` | `too-new` until old enough; then it passes as unreviewed |
    | Past the review limit (`over-cap`, or a new package past it) | `holdOnUnreviewed` or `holdOnNewPackages` | Held until approved: Drydock did not look up its publish time |
    | New package, or a proven re-pin | `holdOnNewPackages` | `too-new` until old enough; then it passes as a new package |
-   | Remote source, unverified pin | `holdOnUnreviewed` | Held until approved: there is no publish time to wait out |
-   | Declared private registry, unproven mirror bump (`private-source`) | `holdOnUnreviewed` | Exempt; passes as unreviewed |
-   | Unread coverage: an unread lockfile, manifest, or registry config, or a file listing GitHub cut short (over 3,000 files, or fewer listed than the PR's `changed_files`) | `holdOnUnreviewed` | Holds the review until approved; Approve accepts those changes unread |
+   | Remote source, unverified pin (including an unproven mirror bump and an entry with no usable pin) | `holdOnUnreviewed` | Held until approved, however old the version: there is no publish time to wait out |
+   | Declared private registry (`private-source`) | `holdOnUnreviewed` | Exempt; passes as unreviewed |
+   | Unread coverage: an unread lockfile, manifest, registry config, or committed Yarn install file, or a file listing GitHub cut short (over 3,000 files, or fewer listed than the PR's `changed_files`) | `holdOnUnreviewed` | Holds the review until approved; Approve accepts those changes unread |
 
-   - Age runs from the public registry's publish time of the target version:
-     npm's `time` entry, or for PyPI the newest non-yanked upload of the
-     release, since files can be added after a release is published. The hold
-     records `passesAt` (publish time plus the minimum age).
-   - An unknown publish time (the lookup failed, the registry doesn't list the
-     version, no public egress, or the bump was past the review limit) holds
-     until approved.
+   - Age runs from the target's public publish time (npm's `time` entry; for
+     PyPI the release's newest non-yanked upload) and the hold records
+     `passesAt`. An unknown time (failed lookup, unlisted version, no public
+     egress, past the review limit) holds until approved.
    - With the fallback off, those bumps pass unless a switch holds them, and
      unread coverage holds only under `holdOnUnreviewed`.
-   - A `success` is what auto-merge acts on, and GitHub treats a `neutral`
-     check as passing, so whatever this table lets pass merges.
+   - Auto-merge acts on `success`, and GitHub counts `neutral` as passing, so
+     whatever this table lets pass merges.
 
 9. **Publish.** The check completes `success` (nothing held, or every hold
    already approved) or `action_required` with an **Approve held updates**
-   action. `details_url` opens the review in the dashboard. The summary lists,
-   in order:
-
-   | Part | Contents |
-   | --- | --- |
-   | Held for review | Each held bump with its reasons, release risk, file counts, and top findings |
-   | Unread files | The lockfiles, manifests, and config files Drydock couldn't review |
-   | Approved | Holds already approved, naming the approver when the approval was on this run |
-   | Not reviewed | Unreviewed bumps with their reason |
-   | New packages | Packages the PR adds |
-   | Same version, new pin | Re-pins whose new hashes match the public release |
-   | Passed with unread changes | Diffed bumps that passed under policy, with what went unread |
-   | Clear | Bumps whose diff was read in full and held nothing |
+   action. `details_url` opens the review in the dashboard. The summary lists
+   held bumps (reasons, release risk, file counts, top findings), the unread
+   files, approved holds, then **Not reviewed**, **New packages**, **Same
+   version, new pin** (re-pins proven to be the public release), **Passed with
+   unread changes** (with what went unread), and **Clear**.
 
    - Version changes link to their public `/diff` page; new packages, re-pins,
      and private-registry, remote, and unproven bumps get no link.
@@ -290,8 +284,10 @@ make it required.
      nothing.
    - An age hold says what nothing vouched for and either when it passes (a
      UTC time on the check, local time in the dashboard) or why it holds until
-     approved: an unknown publish time, a git, URL, or tarball source, a pin
-     with no matching public release, or a bump past the review limit.
+     approved: an unknown publish time, a git, URL, or tarball source, a bump
+     past the review limit, or an unverified pin. The unverified-pin text says
+     that Re-run checks again if the registry was unreachable and that an npm
+     package the organization hosts itself belongs under private npm scopes.
    - A coverage-only hold says what Approve accepts (the unread files) or, when
      the check can't list everything, that the PR must be split. An Approve
      over per-update holds also names the unread files it accepts. Past the
@@ -301,18 +297,17 @@ make it required.
     `passesAt` (no other reason, no unread coverage) re-runs on its own
     (`server/lib/dependency-review/recheck.ts`).
 
-    - When the review completes, it queues a recheck for the earliest
-      `passesAt` plus one minute. Cloudflare Queues cap a delay at 12 hours,
-      so a later recheck hops: a message that arrives early queues the next
-      hop without touching GitHub.
-    - When due, the recheck acts only if the PR is still open at the reviewed
-      head and the review is still the completed, held result on the run it was
-      scheduled for. An approval, a Re-run, a push, or a closed PR makes it do
-      nothing.
-    - It then reviews the commit again from the start on a new check run,
-      against the current policy and approvals.
-    - A recheck message redelivered after its pass was released for a retry or
-      killed resumes that pass like any redelivery.
+    - On completion it queues a recheck for the earliest `passesAt` plus one
+      minute, in hops of at most 12 hours (the Cloudflare Queues delay cap);
+      an early arrival queues the next hop without touching GitHub.
+    - When due, it acts only if the PR is still open at the reviewed head and
+      the review is still the held result on the run it was scheduled for (an
+      approval, Re-run, push, or close makes it do nothing), then reviews the
+      commit from the start on a new check run under the current policy and
+      approvals.
+    - A redelivered recheck resumes only the attempt it started (its stored
+      progress names the run it rechecks), while that attempt is queued or
+      past its lease; it never restarts a review anything else touched since.
     - A failed send is logged (`dependency_review.recheck_not_scheduled`). A
       lost recheck only means the hold stays until someone presses Re-run or
       pushes; nothing passes because of it.
@@ -322,19 +317,16 @@ make it required.
 The Approve button sends `check_run` `requested_action` to the App. GitHub
 signs the webhook and names who clicked (`sender`). The app id on the run must
 be this deployment's, and the review is looked up through the installation, so
-one account can't reach another's review. The job then checks that the clicker
-has `write`, `maintain`, or `admin` on the repository. That is the same bar as
-merging, and a person who can merge could already bypass a non-required check.
-It also checks that the PR's head is still the reviewed commit, so nobody
-approves bumps they weren't shown. For the same reason Approve is offered only
-when the review has finished its passes and the check shows every open hold in
-full (at most 100, inside the summary limit), names every unread file, and
-GitHub listed all of the PR's files. A PR holding more says so and asks for
-smaller PRs, and a click on it is refused. The approval message names the
-clicked run, so a click on a run a Re-run has since replaced approves nothing.
-A refused click changes nothing and is logged
-(`dependency_review.approval_refused`). GitHub gives the clicker no feedback
-channel, so the check simply stays held.
+one account can't reach another's review. The clicker needs `write`,
+`maintain`, or `admin` on the repository, the same bar as merging, and the PR's
+head must still be the reviewed commit, so nobody approves bumps they weren't
+shown. For the same reason Approve is offered only when the review finished its
+passes, the check shows every open hold in full (at most 100, inside the
+summary limit), names every unread file, and GitHub listed all of the PR's
+files; a PR holding more asks for smaller PRs, and a click on it is refused. A
+click on a run a Re-run has since replaced approves nothing. A refused click
+changes nothing and is logged (`dependency_review.approval_refused`); GitHub
+gives the clicker no feedback, so the check stays held.
 
 An approval is stored per repository per exact change
 (`dependency_review_approvals`: ecosystem, name, from, to, and source). The
@@ -343,21 +335,20 @@ source keeps approvals from crossing between different bytes:
 | Source | Change |
 | --- | --- |
 | `public` | A public bump, including a proven pin or a proven mirror bump |
-| `private` | A bump from a declared private registry or a private scope |
+| `private` | A bump from a declared private registry (already there at the base, or new) or a private scope |
 | `remote` | A git, URL, tarball, or other remote source |
 | `mirror:<digest>` | An unproven mirror bump; the digest is a sha256 of its pinned hashes |
-| `pin:<digest>` | A public bump whose pin did not match the public release |
+| `pin:<digest>` | A public bump whose pin did not match the public release, or that has no usable pin where its format always writes one |
 
-Approving `@corp/x` from a private registry therefore doesn't approve the same
-versions resolved from npm, and approving an unproven pin covers those hashes
-only. Approvals recorded as `private` for a change now placed as remote don't
-match it; it needs one new approval. A rebase, a regroup, or a new commit that
-merges the same change keeps the approval without another click. A different
-version is a different change. Approving a coverage-only hold stores no change,
-so the next commit with the same unread file holds again. Each approval writes
-the `dependency_review.approved` audit event together with the stored
-approvals, before the check is updated. A retried approval whose check update
-failed republishes it. The event carries the GitHub login, not a Drydock user.
+Approving `@corp/x` from a private registry doesn't approve the same versions
+from npm, and approving an unproven pin covers those hashes only; an approval
+recorded as `private` doesn't match a change now placed as remote. A rebase,
+regroup, or new commit merging the same change keeps the approval; another
+version is another change. A coverage-only approval stores no change, so the
+next commit with the same unread file holds again. Each approval writes the
+`dependency_review.approved` audit event (with the GitHub login, not a Drydock
+user) together with the stored approvals, before the check is updated; a
+retried approval whose check update failed republishes it.
 Re-running an individual check (`check_run.rerequested`) or using GitHub's
 **Re-run all checks** (`check_suite.rerequested`) reviews the recorded head
 again from the start against the current policy and approvals. A suite re-run
@@ -371,14 +362,12 @@ and head.
 The `dependency-review` Flagship flag (default off) decides which organizations
 are offered dependency review (`server/lib/dependency-review/flag.ts`). Outside
 it, `/api/v1/dependency-reviews` answers 404, the dashboard hides the
-Dependencies link and the settings section (`GET /api/v1/organizations` carries
-`dependencyReview` per organization), and a `pull_request` delivery is ignored
-before anything is posted, not even a skipped check. A failed flag lookup reads
-as off. Check-run actions on reviews posted earlier still work, so turning the
-flag off leaves existing holds approvable; a repository that made the check
-required stops getting it on new PRs. A deployment without a `FLAGS` binding
-(self-hosting) offers it to every organization, which still has to turn it on in
-settings.
+Dependencies link and settings (`GET /api/v1/organizations` carries
+`dependencyReview`), and a `pull_request` delivery posts nothing, not even a
+skip. A failed lookup reads as off. Existing holds stay approvable; a
+repository that required the check stops getting it on new PRs. Without a
+`FLAGS` binding (self-hosting) every organization is offered it and still turns
+it on in settings.
 
 ### Settings
 
@@ -400,16 +389,21 @@ The settings API refuses, with a message, an age out of range, a list over its
 limit, a URL that isn't plain https (a user name, password, query, or fragment),
 a malformed scope, and a URL that is both a mirror and a private registry or
 sits under one listed as the other. Each prefix is stored ending in `/`, so
-`…/npm` cannot also match `…/npm-private`. The form folds the three registry
-fields under **Registries other than public npm and PyPI**, open when one is
-set.
+`…/npm` cannot also match `…/npm-private`.
 
 Naming a mirror sends the names and versions resolved from it to the public
 npm registry or PyPI, to prove their hashes. For pnpm, whose lockfile records
-no URL, that is every name the repository routes to the mirror, so list a scope
-whose registry is set outside the repository under `privateScopes`. A declared
-private registry is never contacted and its names never leave the
-organization.
+no URL, that is every name the repository routes to the mirror, so list scopes
+the organization hosts itself behind the mirror, or whose registry is set
+outside the repository, under `privateScopes`. A mirror entry whose hashes
+don't match, and every Yarn Berry entry from a mirror, is treated like a git
+or URL source. A declared private registry is never contacted and its names
+never leave the organization.
+
+A registry that also proxies the public registry must be declared a mirror,
+not a private registry: bumps from a private registry are not reviewed. A
+release the PR moves onto a declared private registry from the public registry
+or a mirror is a remote source, not exempt.
 
 A registry or proxy that is neither declared is a remote source, so under the
 default policy every bump resolved through it holds until approved. Declare a
@@ -422,15 +416,15 @@ repository writers need no allowlist entry. List only trusted automation: these
 logins bypass the human author and sender permission checks.
 
 The GitHub App needs **Checks: read and write**, **Pull requests: read**, and
-**Contents: read**, and must subscribe to the **Pull request**, **Check run**,
-and **Check suite** events (`self-hosting.md`). Adding permissions to an
-existing App makes GitHub ask every installation's owner to accept them. Until
-they do, check runs can't be created and reviews fail with the check-create
-error in the logs.
+**Contents: read**, and the **Pull request**, **Check run**, and **Check
+suite** events (`self-hosting.md`). Until each installation's owner accepts
+added permissions, reviews there fail with the check-create error in the
+logs.
 
 A deployment with a custom `NPM_REGISTRY` has no public egress: nothing is
-diffed, no pin is proven, and no publish time is known, so under the default
-policy every public bump holds until approved. Its operator either approves
+diffed, no pin is proven, and no publish time is known. Every pinned bump is an
+unverified pin, and under the default policy every public bump holds until
+approved. Its operator either approves
 each update or turns the minimum age off (leave the field empty), which lets
 unreviewed bumps and new packages pass unless `holdOnUnreviewed` or
 `holdOnNewPackages` holds them.
@@ -443,12 +437,9 @@ as its source. Auto-merge (Dependabot `auto-merge`, Renovate `automerge` with
 ## Data and limits
 
 - Review detail responses include `coverage.unreadLockfiles` and
-  `coverage.listingComplete`. The dashboard names unread files and incomplete
-  listings even when the review recognizes no version changes. Only complete
-  coverage with every update read in full and clear is described as clear;
-  updates allowed by policy remain labeled unreviewed, new packages, re-pins,
-  or passed with unread changes. Private and remote sources and unproven pins
-  have no public diff link.
+  `coverage.listingComplete`; the dashboard names unread files and incomplete
+  listings even when the review recognizes no version changes, and labels
+  updates the way the check does.
 - At most 500 bumps are stored per review, open holds first; `bump_count` and
   `held_count` keep the review's real totals, so the detail page says when it
   shows only part. The detail response also returns `approvable`, computed by
@@ -461,12 +452,12 @@ as its source. Auto-merge (Dependabot `auto-merge`, Renovate `automerge` with
   `dependency_review_approvals`: one per approved change per repository.
 - `dependency_reviews.attempt` counts claims and fences each pass's writes.
   `dependency_reviews.progress_json` holds a running review's
-  policy-independent outcomes per bump (diff evidence, uncached diff outcomes,
-  publish times, proof results, cold-diff starts) and the collected bumps when
-  they fit in 300,000 characters; past 700,000 characters stored findings are
-  cut to one per bump. It is kept between passes and across a lease takeover,
-  and cleared on completion, failure, or supersession and when a Re-run, an age
-  recheck, or a claim of a failed or superseded review starts over.
+  policy-independent per-bump outcomes (evidence, uncached diff outcomes,
+  publish times, proofs, cold-diff starts) and its collection when that fits
+  in 300,000 characters. It is kept between passes and across a lease takeover,
+  cleared on completion, failure, or supersession and when a Re-run or a claim
+  of a failed or superseded review starts over, and reset by an age recheck to
+  fresh progress naming the run it rechecks.
 - The check summary is capped below GitHub's 65,535-character field limit, at
   100 entries per section. Every package name, version, path, rule id, and
   reason renders inside a code span with control, bidi, and zero-width
@@ -479,12 +470,36 @@ as its source. Auto-merge (Dependabot `auto-merge`, Renovate `automerge` with
   mirror or private registry host is contacted. The shared result cache means a
   public pair one organization diffed is cached for `/diff` visitors, the same
   as a browser visit to that pair.
-- The installation token only goes to `api.github.com`. Listing pagination
-  refuses a `Link` to any other host, and no request follows a redirect: a 3xx
-  (a renamed or transferred repository) fails the review without a retry.
+- The installation token only goes to `api.github.com`; pagination refuses a
+  `Link` to any other host, and a 3xx (a renamed or transferred repository)
+  fails the review without a retry.
 - Analytics: `dependency_review.completed` (conclusion, duration across every
   pass of the attempt, bump and held counts) and `dependency_review.approved`
   (approved count). See `product-analytics.md`.
+
+## Measured
+
+`pnpm run eval:dependency-review-replay` on 2026-11-10: 180 Dependabot and
+Renovate PRs from 12 public repositories, 146 of them with an npm or PyPI bump
+(2,094 bumps). It is a sample of public repositories on one date, not a target
+or a guarantee: a repository's own rate will differ, and lockfile-maintenance
+PRs carry far more bumps than single-package ones.
+
+| Policy | PRs with bumps held | PRs passing with an unvouched bump | Holds per held PR (median / p90 / max) |
+| --- | --- | --- | --- |
+| Defaults with the age fallback off | 40.4% | 8.9% | 1 / 6 / 23 |
+| Defaults (3-day age fallback, unread coverage holds) | 45.2% | 5.6% | 1 / 17 / 73 |
+| Every hold switch on | 52.1% | 0% | 2 / 38 / 125 |
+
+- Default policy, held PRs per reason: release risk 41, dependency added 40,
+  too new 19, unread coverage 14, native binary added 7. Ten held on coverage
+  alone (uncovered manifests, an unparsed `bun.lock`); four on age alone, three
+  of which would have passed within 70 hours.
+- Pin proofs: 1,751 of 1,753 strong pins matched the public registry (both
+  misses PyPI); 330 Yarn Berry bumps had no comparable pin.
+- Bumps per PR: median 2, p90 41, max 292; one PR with bumps in five needs
+  more than one pass on a cold cache. Cold-diff CPU (local Node, not Workers):
+  median 211 ms, p90 1.6 s, max 115 s; PyPI pairs median 1.2 s, npm 194 ms.
 
 ## Not covered
 
@@ -499,13 +514,28 @@ as its source. Auto-merge (Dependabot `auto-merge`, Renovate `automerge` with
   registry route alone, and its entries under a mirror are never proven: they
   are remote sources and, while the age fallback is on, hold until approved.
   Requirements without `--hash` likewise rely on the route.
+- A requirements file pulled in by `-r`/`-c` under a name Drydock doesn't
+  treat as requirements (such as `-r deps.prod` in an unchanged
+  `requirements.txt`) is not read when only that file changes.
+- A release Drydock cannot diff (too large, or a diff that ended its pass
+  twice) passes once it reaches the minimum age; `holdOnUnreviewed` holds it
+  instead.
+- A PyPI project whose project-wide JSON metadata exceeds 16 MiB can't have a
+  pin proven or a publish time read, so its bumps hold until approved. A uv
+  proof needs every pinned file still on PyPI, so a release that later deletes
+  a file holds from then on.
+- npm lockfile entries left without `integrity` (or `resolved`) have no
+  usable pin, so their bumps hold while the age fallback or
+  `holdOnUnreviewed` is on.
 - The age fallback uses the registry's publish time. A version published under
   a non-default dist-tag and promoted later has already aged by then; every
   release-age cooldown shares this limit.
 - Up to 500 reviewable bumps per review. The rest are `over-cap` and, while
   the age fallback is on, hold until approved.
-- Registry routing set outside the repository is invisible except through
-  `privateScopes`.
+- Resolution settings outside the files Drydock reads (environment
+  variables, CI configuration, user-level config) are invisible, including
+  registries and proxies set there; `privateScopes` is the only way to keep
+  such names from being treated as public.
 - Renovate branch automerge (`automergeType: branch`) opens no PR, so no
   review runs and the required check doesn't pass on the branch, unless
   someone with write access opens a PR from it, which runs dependency review.

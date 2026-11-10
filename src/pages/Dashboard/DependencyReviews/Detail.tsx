@@ -21,12 +21,12 @@ import { usePinnedOrganization } from "../../../features/account/usePinnedOrgani
 import {
   DEPENDENCY_REVIEWS_PATH,
   HOLD_REASON_TEXT,
-  UNREVIEWED_TEXT,
   checkRunUrl,
   hasUnreadContent,
   holdReasonPhrases,
   REPINNED_TEXT,
   unreadContentText,
+  unreviewedText,
   dependencyReviewPath,
   pullRequestUrl,
   reviewState,
@@ -654,7 +654,7 @@ function verdictReason(
   evidence: BumpEvidence | null,
   bump: DependencyBump,
 ): string | null {
-  if (verdict.status === "unreviewed") return sentence(UNREVIEWED_TEXT[verdict.unreviewed]);
+  if (verdict.status === "unreviewed") return sentence(unreviewedText(verdict.unreviewed, bump));
   if (verdict.status === "clear") {
     const unread = unreadContentText(verdict.evidence);
     return unread ? sentence(unread) : null;
@@ -663,17 +663,13 @@ function verdictReason(
   // The age hold's phrase names what went unread and when it passes.
   const ageHold = holdReasonPhrases(
     { ...verdict, reasons: ["too-new"] },
-    {
-      newPackage: bump.fromVersion === null,
-      repinned: bump.repinned === true,
-      formatTime: formatDateTime,
-    },
+    { bump, formatTime: formatDateTime },
   )[0];
   const reasons = verdict.reasons.map((reason) => {
     if (reason === "too-new") return ageHold;
     if (reason === "new-package" && bump.repinned) return REPINNED_TEXT;
     if (reason === "unreviewed" && verdict.unreviewed) {
-      return `${HOLD_REASON_TEXT.unreviewed} (${UNREVIEWED_TEXT[verdict.unreviewed]})`;
+      return `${HOLD_REASON_TEXT.unreviewed} (${unreviewedText(verdict.unreviewed, bump)})`;
     }
     if (reason === "release-risk" && evidence) {
       return `release risk ${evidence.releaseRisk}, at or above the hold threshold`;

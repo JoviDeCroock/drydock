@@ -31,10 +31,12 @@ export interface LockfileChange {
 // tree does not make it private. It is remote when either side is a remote
 // source.
 //
-// A public release both sides keep (or spell equivalently) whose recorded pins
-// differ is a re-pin: `fromVersion` null, `toVersion` the release, `repinned`.
-// The installer accepts whatever bytes match the new pin, so it is reviewed
-// like a new release of its own.
+// A public release both sides keep (or spell equivalently) whose head pins a
+// copy with a pin no base copy had is a re-pin: `fromVersion` null,
+// `toVersion` the release, `repinned`, and as its hashes only those of the
+// introduced pins (null when any of them is not usable). The installer
+// accepts whatever bytes match the new pin, so it is reviewed like a new
+// release of its own.
 export function diffLockfileChanges(
   base: LockfileSnapshot | null,
   head: LockfileSnapshot,
@@ -70,7 +72,15 @@ export function diffLockfileChanges(
       const fromSource = baseSources.get(fromId)!;
       const to = pkg.sources.get(toId)!;
       if (fromSource.kind !== "public" || to.kind !== "public") continue;
-      if (samePins(fromSource.pins, to.pins)) continue;
+      // What the PR must prove is what it changed: the pins no base copy
+      // had. A copy kept as it was proves nothing and owes nothing; a copy
+      // the PR only removed installs nothing new.
+      const introduced = to.pins.filter((pin) => !fromSource.pins.includes(pin));
+      if (introduced.length === 0) continue;
+      const usable = introduced.every((pin) => to.usablePins.includes(pin));
+      const hashes = usable
+        ? [...new Set(introduced.flatMap((pin) => pin.split(" ")))].sort()
+        : null;
       const pinExpected = head.strongPins || hadPin(fromSource) || hadPin(to);
       changes.push({
         bump: {
@@ -83,7 +93,7 @@ export function diffLockfileChanges(
           repinned: true,
         },
         from: fromSource,
-        to,
+        to: { ...to, hashes },
         pinExpected,
       });
     }
@@ -151,10 +161,6 @@ type Compare = (a: string, b: string) => number;
 
 function hadPin(source: LockfileSource): boolean {
   return source.pins.some((pin) => pin !== "");
-}
-
-function samePins(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((pin, i) => pin === b[i]);
 }
 
 function take(pool: string[], version: string): string {

@@ -448,6 +448,9 @@ interface Pin {
   hashes: Set<string>;
   // Some line pins the name with no hash.
   unhashed: boolean;
+  // Each pinning line's extras, marker, and install options (see
+  // `pinQualifier`), "" for a line with none.
+  qualifiers: Set<string>;
 }
 
 // requirements*.txt exact `==` pins, all of them direct, read the way pip
@@ -515,21 +518,24 @@ export function parseRequirements(text: string): LockfileSnapshot {
     const pinned = pins.get(key);
     if (pinned !== undefined && pinned.version !== m[3]) return incompleteSnapshot();
     if (pinned === undefined && !builder.reserve()) break;
-    // Extras, a marker, and install options change what installing the pin
-    // does (the extra's dependencies, whether it installs at all, how it
-    // builds) without changing its version, so they are compared as text like
-    // an unpinned line; a pin with none of them adds nothing there.
-    const qualifier = pinQualifier(key, m[2], m[4], installOptions);
-    if (qualifier !== null) {
+    const pin = pinned ?? {
+      version: m[3],
+      hashes: new Set<string>(),
+      unhashed: false,
+      qualifiers: new Set<string>(),
+    };
+    const qualifier = pinQualifier(m[2], m[4], installOptions);
+    if (!pin.qualifiers.has(qualifier)) {
       if (!builder.reserve()) break;
-      unpinned.push(qualifier);
+      pin.qualifiers.add(qualifier);
     }
-    const pin = pinned ?? { version: m[3], hashes: new Set(), unhashed: false };
     for (const hash of hashes) pin.hashes.add(hash);
     if (hashes.length === 0) pin.unhashed = true;
     pins.set(key, pin);
   }
-  for (const [name, { version, hashes, unhashed }] of pins) {
+  const qualifiers = new Map<string, string>();
+  for (const [name, { version, hashes, unhashed, qualifiers: lines }] of pins) {
+    qualifiers.set(name, [...lines].sort().join("\n"));
     const all = [...hashes].sort();
     // pip accepts a file matching any hash given; only when all of them are
     // sha256 (PyPI's digest) can a comparison cover every one.
@@ -543,31 +549,28 @@ export function parseRequirements(text: string): LockfileSnapshot {
     });
     builder.markDirect(name);
   }
-  return builder.finish(unpinned.sort());
+  return { ...builder.finish(unpinned.sort()), qualifiers };
 }
 
 function normalizedName(name: string): string {
   return name.toLowerCase().replace(/[-_.]+/g, "-");
 }
 
-// `name[a,b] ; marker --option=value` with extras normalized and sorted,
-// the marker as written (a marker string may hold spaces), and options
-// sorted; null when there is
-// none of them. The leading tab keeps it apart from every unpinned line, whose
-// whitespace `pipLines` has collapsed to single spaces.
+// `[a,b] ; marker --option=value` with extras normalized and sorted, the
+// marker as written (a marker string may hold spaces), and options sorted;
+// "" when there is none of them.
 function pinQualifier(
-  name: string,
   extras: string | undefined,
   marker: string | undefined,
   options: string[],
-): string | null {
+): string {
   const names = (extras ?? "")
     .split(",")
     .map((extra) => normalizedName(extra.trim()))
     .filter(Boolean);
   const condition = (marker ?? "").trim();
-  if (names.length === 0 && !condition && options.length === 0) return null;
-  const parts = [`\t${name}[${[...new Set(names)].sort().join(",")}]`];
+  if (names.length === 0 && !condition && options.length === 0) return "";
+  const parts = [`[${[...new Set(names)].sort().join(",")}]`];
   if (condition) parts.push(`; ${condition}`);
   parts.push(...options.sort());
   return parts.join(" ");

@@ -5,7 +5,7 @@ import type {
   ReviewedBump,
 } from "./types";
 import { hasUnreadContent } from "./evidence";
-import { holdReasonPhrases, unreadContentText, UNREVIEWED_TEXT } from "./wording";
+import { holdReasonPhrases, unreadContentText, unreviewedText } from "./wording";
 
 export const DEPENDENCY_REVIEW_CHECK_NAME = "Drydock dependency review";
 export const APPROVE_ACTION_IDENTIFIER = "approve-holds";
@@ -122,7 +122,9 @@ export function renderDependencyReviewCheck(input: RenderDependencyReviewInput):
     lines.push(`### Not reviewed (${unreviewed.length})`, "");
     for (const bump of unreviewed.slice(0, MAX_LISTED_BUMPS)) {
       const reason =
-        bump.verdict.status === "unreviewed" ? UNREVIEWED_TEXT[bump.verdict.unreviewed] : "";
+        bump.verdict.status === "unreviewed"
+          ? unreviewedText(bump.verdict.unreviewed, bump.bump)
+          : "";
       lines.push(`- ${link(bump.bump, input)}: ${reason}`);
     }
     lines.push("");
@@ -191,10 +193,7 @@ function isPassedUnread(bump: ReviewedBump): boolean {
 function renderHeld(reviewed: ReviewedBump, input: RenderDependencyReviewInput): string[] {
   const { verdict } = reviewed;
   if (verdict.status !== "hold") return [];
-  const reasons = holdReasonPhrases(verdict, {
-    newPackage: reviewed.bump.fromVersion === null,
-    repinned: reviewed.bump.repinned === true,
-  });
+  const reasons = holdReasonPhrases(verdict, { bump: reviewed.bump });
   const lines = [`- ${link(reviewed.bump, input)}: ${reasons.join("; ")}`];
   if (verdict.evidence) lines.push(...renderEvidence(verdict.evidence));
   return lines;

@@ -35,11 +35,13 @@ import {
   verifyPublicPin,
 } from "../../server/lib/dependency-review/mirror-identity";
 import {
+  collectionPolicy,
   concludeDependencyReview,
   decideBump,
   extractBumpEvidence,
 } from "../../server/lib/dependency-review/policy";
 import {
+  committedInstallInput,
   resolutionConfigChanged,
   resolutionConfigKind,
 } from "../../server/lib/dependency-review/registry-config";
@@ -88,7 +90,7 @@ const NPM_MANIFEST = /(?:^|\/)package\.json$/;
 const PYPI_MANIFEST = /(?:^|\/)(?:pyproject\.toml|setup\.cfg|setup\.py|Pipfile|[^/]+\.in)$/;
 // GitHub's compare lists at most 300 files.
 const COMPARE_FILE_LIMIT = 300;
-const REPLAY_POLICY = DEFAULT_DEPENDENCY_REVIEW_POLICY;
+const REPLAY_POLICY = collectionPolicy(DEFAULT_DEPENDENCY_REVIEW_POLICY);
 
 export function loadReplayRepositories() {
   return JSON.parse(readFileSync(join(__dirname, "dependency-review-replay-repos.json"), "utf8"));
@@ -464,6 +466,12 @@ async function collectPull(pr) {
 async function explainUnread(pr, mergeBase, files, path) {
   const file = files.find((entry) => entry.filename === path);
   if (UNPARSED_LOCKFILE.test(path)) return { reason: "unparsed-format" };
+  const installInput = files.some((entry) =>
+    [entry.filename, entry.previous_filename].some(
+      (at) => at && committedInstallInput(at) === path,
+    ),
+  );
+  if (installInput) return { reason: "committed-install-input" };
   const configKind = resolutionConfigKind(path);
   if (configKind === "routing" || configKind === "opaque") {
     return { reason: file ? "resolution-config-changed" : "resolution-config-unreadable" };
@@ -626,6 +634,9 @@ function proofKey(bump) {
 }
 
 function runProof(bump) {
+  // An empty pin (the format always writes one, this entry has none usable)
+  // proves nothing and is never looked up, as in production.
+  if (!hasPins(bump)) return Promise.resolve(false);
   const key = proofKey(bump);
   if (!proofs.has(key)) {
     const env = { LOADER: loader };
@@ -641,18 +652,30 @@ function runProof(bump) {
 
 function proofPending(bump) {
   if (bump.mirror) return true;
-  return Boolean(bump.pinnedHashes) && !bump.privateSource;
+  return needsPinProof(bump);
+}
+
+// A defined `pinnedHashes`, empty included, must be proven.
+function needsPinProof(bump) {
+  return bump.pinnedHashes !== undefined && !bump.privateSource;
+}
+
+function hasPins(bump) {
+  const hashes = bump.mirror ? bump.mirror.toHashes : bump.pinnedHashes;
+  return (
+    (hashes?.length ?? 0) > 0 && (!bump.mirror?.fromHashes || bump.mirror.fromHashes.length > 0)
+  );
 }
 
 // null: a proof not yet made either way.
 function resolveBump(bump, verified) {
   if (bump.mirror) {
     if (verified === undefined) return null;
-    if (!verified) return bump;
+    if (!verified) return { ...bump, remoteSource: true };
     const { privateSource: _private, mirror: _mirror, remoteSource: _remote, ...rest } = bump;
     return { ...rest, viaMirror: true };
   }
-  if (bump.pinnedHashes && !bump.privateSource) {
+  if (needsPinProof(bump)) {
     if (verified === undefined) return null;
     if (verified) {
       const { pinnedHashes: _pinned, ...rest } = bump;
@@ -674,12 +697,12 @@ function settledOutcome(entry, bump, diff) {
     };
   }
   if (!entry.inReview) {
-    return original.fromVersion === null && !original.mirror && !original.pinnedHashes
+    return original.fromVersion === null && !original.mirror && original.pinnedHashes === undefined
       ? { kind: "new-package", pastReviewLimit: true }
       : { kind: "unreviewed", reason: "over-cap", pastReviewLimit: true };
   }
   if (bump.privateSource) {
-    return { kind: "unreviewed", reason: bump.mirror ? "private-source" : "unverified-pin" };
+    return { kind: "unreviewed", reason: "unverified-pin" };
   }
   if (bump.fromVersion === null) return { kind: "new-package" };
   if (diff.status === "served") return { kind: "diffed", evidence: diff.evidence };
@@ -759,10 +782,11 @@ function recordBump(entry, result) {
     reason: "not-replayed",
   };
   const { pinnedHashes, mirror, ...fields } = original;
-  const proof = mirror ? "mirror" : pinnedHashes && !original.privateSource ? "pin" : null;
+  const proof = mirror ? "mirror" : needsPinProof(original) ? "pin" : null;
   return {
     ...fields,
     pin: {
+      expected: pinnedHashes !== undefined || Boolean(mirror),
       hashes: (pinnedHashes ?? mirror?.toHashes ?? []).length,
       proof,
       proven: proof && entry.inReview ? entry.verified === true : null,
@@ -1009,6 +1033,10 @@ function evaluateVariant(prs, policy, clock) {
       bumpTriggers: holds.flatMap(({ verdict }) => holdTriggers(verdict)),
       heldOnCoverage,
       coverageOnly: heldOnCoverage && holds.length === 0,
+      pinOnly:
+        holds.length > 0 &&
+        !heldOnCoverage &&
+        [...triggers].every((trigger) => trigger.endsWith(":unverified-pin")),
       unvouched,
       ageOnly,
       passesInHours,
@@ -1039,6 +1067,9 @@ function evaluateVariant(prs, policy, clock) {
     triggerCounts,
     bumpTriggers,
     coverageOnly: rows.filter((row) => row.conclusion === "held" && row.coverageOnly).length,
+    pinOnly: rows
+      .filter((row) => row.conclusion === "held" && row.pinOnly)
+      .map((row) => `${row.pr.repo}#${row.pr.number}`),
     heldOnCoverage: rows.filter((row) => row.heldOnCoverage).length,
     ageOnly: {
       prs: ageWaits.length,
@@ -1161,6 +1192,17 @@ function summarizeReplay(dataset) {
     unreadReasons: countBy(complete.flatMap((pr) => pr.unreadReasons.map((entry) => entry.reason))),
     incompleteListings: complete.filter((pr) => !pr.listingComplete).length,
     pins: pinCounts(bumps.map(({ bump }) => bump)),
+    failedProofs: bumps
+      .filter(({ bump }) => bump.pin?.proven === false)
+      .map(({ pr, bump }) => ({
+        pr: `${pr.repo}#${pr.number}`,
+        format: bump.format,
+        name: bump.name,
+        from: bump.fromVersion,
+        to: bump.toVersion,
+        hashes: bump.pin.hashes,
+        proof: bump.pin.proof,
+      })),
     repinned: bumps.filter(({ bump }) => bump.repinned).length,
     unverifiedPins: bumps.filter(({ bump }) => bump.outcome?.reason === "unverified-pin").length,
     coverageOnly: Object.fromEntries(
@@ -1193,6 +1235,7 @@ function pinCounts(bumps) {
       bumps: 0,
       noPin: 0,
       pinned: 0,
+      unusable: 0,
       proven: 0,
       failed: 0,
       pastLimit: 0,
@@ -1202,7 +1245,9 @@ function pinCounts(bumps) {
     });
     row.bumps += 1;
     const pin = bump.pin ?? { hashes: 0, proof: null, proven: null };
-    if (pin.proof === "pin") {
+    if (pin.proof === "pin" && pin.hashes === 0) {
+      row.unusable += 1;
+    } else if (pin.proof === "pin") {
       row.pinned += 1;
       if (pin.proven === true) row.proven += 1;
       else if (pin.proven === false) row.failed += 1;
@@ -1295,14 +1340,26 @@ function renderReport(dataset, summary) {
   lines.push(
     `A public bump that pins hashes is diffed only after \`verifyPublicPin\` proves a pinned hash is the public release's; a failed proof is \`unverified-pin\`. Re-pins (same version, new hash): ${summary.repinned}. Bumps settled as \`unverified-pin\`: ${summary.unverifiedPins}.`,
     ``,
-    `| Format | bumps | no pin | public pin | proven | failed | past review limit | mirror | mirror proven | pinned, private source |`,
-    `| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |`,
+    `| Format | bumps | no pin by design | pin expected but unusable | public pin | proven | failed | past review limit | mirror | mirror proven | pinned, private source |`,
+    `| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |`,
   );
   for (const [format, c] of Object.entries(summary.pins).sort()) {
     lines.push(
-      `| ${format} | ${c.bumps} | ${c.noPin} | ${c.pinned} | ${c.proven} | ${c.failed} | ${c.pastLimit} | ${c.mirror} | ${c.mirrorProven} | ${c.privatePinned} |`,
+      `| ${format} | ${c.bumps} | ${c.noPin} | ${c.unusable} | ${c.pinned} | ${c.proven} | ${c.failed} | ${c.pastLimit} | ${c.mirror} | ${c.mirrorProven} | ${c.privatePinned} |`,
     );
   }
+  if (summary.failedProofs.length > 0) {
+    lines.push(``, `Failed proofs (an empty pin fails without a lookup):`, ``);
+    for (const entry of summary.failedProofs) {
+      lines.push(
+        `- ${entry.pr} ${entry.format} ${entry.name} ${entry.from ?? "(new)"} → ${entry.to}: ${entry.hashes} pinned hash${entry.hashes === 1 ? "" : "es"} (${entry.proof})`,
+      );
+    }
+  }
+  lines.push(
+    ``,
+    `PRs held only on an unverified pin under \`proposed\`: ${summary.variants.proposed.pinOnly.join(", ") || "none"}`,
+  );
   lines.push(``, `## PRs held only by unread coverage under \`proposed\``, ``);
   const coverageOnly = summary.coverageOnly.proposed;
   if (coverageOnly.length === 0) lines.push(`None.`);

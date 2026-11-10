@@ -920,6 +920,28 @@ describe("dependency review job", () => {
   });
 
   test.each([
+    // Yarn's built-in typescript patch, in a cache the config moved.
+    ["deps/typescript-patch-5f2b0a3b9f-1234567890.zip", "cacheFolder: deps\n", ["deps/"]],
+    ["deps/foo-https-abcdef-1234.zip", "cacheFolder: deps\n", ["deps/"]],
+    // A zip outside any configured cache is a file like any other.
+    ["docs/release-npm-notes.zip", "cacheFolder: deps\n", []],
+    ["docs/release-npm-notes.zip", null, []],
+    // A config the strict reader refuses may set the cache anywhere.
+    ["docs/release.zip", "cacheFolder: &a deps\n", ["docs/"]],
+  ])("a changed %s with .yarnrc.yml %j reports %j", async (path, yarnrc, unread) => {
+    const { pr, review, input } = await scenario({
+      pr: { files: [{ filename: path, status: "modified" }] },
+    });
+    if (yarnrc !== null) pr.contents.set(`${pr.headSha}:.yarnrc.yml`, yarnrc);
+
+    await runDependencyReviewJob(input);
+
+    const row = await readReview(review.id);
+    expect(JSON.parse(row.unreadLockfilesJson)).toEqual(unread);
+    expect(row.conclusion).toBe(unread.length > 0 ? "held" : "clear");
+  });
+
+  test.each([
     [
       "pnpm importers",
       "pnpm-lock.yaml",

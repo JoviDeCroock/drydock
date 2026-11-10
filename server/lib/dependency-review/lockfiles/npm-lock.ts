@@ -86,17 +86,29 @@ function installedPackage(
   return { name: name === undefined ? path.slice(at + NODE_MODULES.length) : name };
 }
 
-const BUNDLE_EDGES = ["dependencies", "optionalDependencies"] as const;
+// The edges arborist loads for an installed (non-root) package; it loads no
+// dev edges for one.
+const BUNDLE_EDGES = ["dependencies", "optionalDependencies", "peerDependencies"] as const;
 
 /**
  * The install paths npm takes as shipped inside a bundling package's tarball,
- * the way arborist derives bundles: for each installed package that declares
- * `bundleDependencies` (or `true`, every dependency), the entries in its own
- * `node_modules` it names, then whatever those require that node resolution
- * finds inside that same `node_modules`, transitively. A dependency that
- * resolves anywhere outside it is fetched, not bundled.
+ * following arborist's `getBundler`: a package is bundled by `X` when its
+ * install path is in `X`'s own `node_modules` and `X` names it in
+ * `bundleDependencies` (`true`, as npm normalizes it, names every
+ * dependency), or a package bundled by `X` depends on it (any edge it loads:
+ * dependency, optional, or peer); and everything installed inside a bundled
+ * package is bundled with it. A dependency that resolves anywhere outside
+ * `X`'s `node_modules` is fetched, not bundled.
  */
 function bundledPaths(packages: Record<string, unknown>): Set<string> {
+  const children = new Map<string, string[]>();
+  for (const path of Object.keys(packages)) {
+    if (!path.includes(NODE_MODULES)) continue;
+    const parent = physicalParent(path);
+    const list = children.get(parent);
+    if (list) list.push(path);
+    else children.set(parent, [path]);
+  }
   const bundle = new Set<string>();
   for (const [bundler, entry] of Object.entries(packages)) {
     if (!bundler.includes(NODE_MODULES)) continue;
@@ -104,10 +116,8 @@ function bundledPaths(packages: Record<string, unknown>): Set<string> {
       ownField(entry, "bundleDependencies") ?? ownField(entry, "bundledDependencies");
     let names: unknown[];
     if (declared === true) {
-      names = BUNDLE_EDGES.flatMap((field) => {
-        const deps = ownField(entry, field);
-        return typeof deps === "object" && deps !== null ? Object.keys(deps) : [];
-      });
+      const deps = ownField(entry, "dependencies");
+      names = typeof deps === "object" && deps !== null ? Object.keys(deps) : [];
     } else if (Array.isArray(declared)) names = declared;
     else continue;
     const inside = `${bundler}/${NODE_MODULES}`;
@@ -123,6 +133,7 @@ function bundledPaths(packages: Record<string, unknown>): Set<string> {
       if (seen.has(at)) continue;
       seen.add(at);
       bundle.add(at);
+      queue.push(...(children.get(at) ?? []));
       for (const field of BUNDLE_EDGES) {
         const deps = ownField(packages[at], field);
         if (typeof deps !== "object" || deps === null) continue;
@@ -134,6 +145,13 @@ function bundledPaths(packages: Record<string, unknown>): Set<string> {
     }
   }
   return bundle;
+}
+
+// `a/node_modules/b` for `a/node_modules/b/node_modules/c`; `` (the root)
+// for a top-level `node_modules/c`.
+function physicalParent(path: string): string {
+  const at = path.lastIndexOf(`/${NODE_MODULES}`);
+  return at === -1 ? "" : path.slice(0, at);
 }
 
 // Node resolution of `dep` from the package at `from`, looking only as far up

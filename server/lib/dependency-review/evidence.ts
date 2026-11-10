@@ -1,4 +1,18 @@
-import type { BumpEvidence } from "./types";
+import type { BumpEvidence, DependencyBump } from "./types";
+
+/**
+ * Whether the bump's pin (its mirror hashes, or `pinnedHashes`) names at least
+ * one hash a registry lookup can match on every side it pins. False for an
+ * entry whose format should pin and doesn't: no lookup can prove it, so the
+ * review stage fails its proof without one and the wording does not offer a
+ * Re-run.
+ */
+export function hasCheckablePin(bump: Pick<DependencyBump, "mirror" | "pinnedHashes">): boolean {
+  const hashes = bump.mirror ? bump.mirror.toHashes : bump.pinnedHashes;
+  return (
+    (hashes?.length ?? 0) > 0 && (!bump.mirror?.fromHashes || bump.mirror.fromHashes.length > 0)
+  );
+}
 
 /**
  * Whether the diff left part of the release unread: native binaries it adds

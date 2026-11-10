@@ -24,6 +24,7 @@ import {
   configAncestors,
   committedInstallInput,
   parseRoutingConfig,
+  yarnrcCacheFolder,
   resolutionConfigChanged,
   resolutionConfigKind,
   unreadableCustomRegistries,
@@ -119,7 +120,7 @@ export async function collectBumps(
   const mergeBaseRef = () =>
     (mergeBasePromise ??= fetchMergeBase(token, repo, baseSha, review.headSha));
   unreadLockfiles.push(...(await changedResolutionConfig(context, files, mergeBaseRef)));
-  unreadLockfiles.push(...changedInstallInputs(files));
+  unreadLockfiles.push(...(await changedInstallInputs(context, files)));
   if (lockfiles.length === 0) {
     unreadLockfiles.push(...(await unreadManifests(context, changed, heads, mergeBaseRef)));
     return { bumps: [], unreadLockfiles, listingComplete: complete };
@@ -289,14 +290,65 @@ async function changedResolutionConfig(
   return unread;
 }
 
-// Committed package caches and loaders the PR adds, removes, or changes
-// (see `committedInstallInput`), one entry per directory.
-function changedInstallInputs(files: readonly PullRequestFile[]): string[] {
+/**
+ * Committed package caches and loaders the PR adds, removes, renames, or
+ * changes (see `committedInstallInput`), one entry per directory. A zip
+ * anywhere else is a cache archive only under a `cacheFolder` a `.yarnrc.yml`
+ * in its directory or one above it sets, read at the head (a changed config
+ * is unread coverage already). That costs one read per distinct directory
+ * above a changed zip, and only for PRs that change a zip outside the
+ * default cache; past `MAX_CONFIG_FILES` such reads, or where a config does
+ * not read strictly, the zip's directory is reported instead.
+ */
+async function changedInstallInputs(
+  context: ReviewContext,
+  files: readonly PullRequestFile[],
+): Promise<string[]> {
   const found = new Set<string>();
+  const zips: string[] = [];
   for (const file of files) {
     for (const path of [file.filename, file.previousFilename]) {
-      const input = path ? committedInstallInput(path) : null;
+      if (!path) continue;
+      const input = committedInstallInput(path);
       if (input !== null) found.add(input);
+      else if (path.toLowerCase().endsWith(".zip")) zips.push(path);
+    }
+  }
+  if (zips.length === 0) return [...found];
+  const ancestors = new Map<string, string[] | null>();
+  for (const zip of zips) ancestors.set(zip, configAncestors(dirname(zip)));
+  const dirs = [...new Set([...ancestors.values()].flatMap((list) => list ?? []))];
+  const folders = new Map<string, string | null | undefined>();
+  if (dirs.length <= MAX_CONFIG_FILES) {
+    const texts = await Promise.all(
+      dirs.map((dir) =>
+        readRepositoryFile(
+          context.token,
+          context.repo,
+          `${dir}.yarnrc.yml`,
+          context.review.headSha,
+        ),
+      ),
+    );
+    dirs.forEach((dir, i) => {
+      const text = texts[i];
+      folders.set(
+        dir,
+        text === null ? null : text === "too-large" ? undefined : yarnrcCacheFolder(dir, text),
+      );
+    });
+  }
+  for (const zip of zips) {
+    const list = ancestors.get(zip);
+    // Unbounded, or a config that may set a folder this cannot read: the
+    // zip's own directory stands in for the cache it may be part of.
+    if (!list || list.some((dir) => !folders.has(dir) || folders.get(dir) === undefined)) {
+      found.add(dirname(zip));
+      continue;
+    }
+    for (const dir of list) {
+      const folder = folders.get(dir);
+      if (typeof folder === "string" && zip.startsWith(folder)) found.add(folder || "./");
     }
   }
   return [...found];

@@ -15,6 +15,7 @@ import {
 import {
   committedInstallInput,
   configAncestors,
+  yarnrcCacheFolder,
   npmNameRoute,
   parseNpmrc,
   parseYarnrc,
@@ -1299,7 +1300,6 @@ describe("O2-1: committed package caches and loaders are install inputs", () => 
     [".pnp.cjs", ".pnp.cjs"],
     ["app/.pnp.loader.mjs", "app/.pnp.loader.mjs"],
     [".pnp.data.json", ".pnp.data.json"],
-    ["vendor/yarn-cache/lodash-npm-4.17.21-6382451519-eb835a2e51.zip", "vendor/yarn-cache/"],
   ])("%s is reported as %s", (path, input) => {
     expect(committedInstallInput(path)).toBe(input);
   });
@@ -1311,7 +1311,176 @@ describe("O2-1: committed package caches and loaders are install inputs", () => 
     "src/.yarn-cache.ts",
     "docs/release.zip",
     "vendor/foo-1.0.0.tgz",
+    // Outside the default directories, a zip is a cache archive only under a
+    // configured `cacheFolder` (see `yarnrcCacheFolder`), never by its name.
+    "docs/release-npm-notes.zip",
+    "deps/typescript-patch-5f2b0a3b9f-1234567890.zip",
   ])("%s is not", (path) => {
     expect(committedInstallInput(path)).toBeNull();
+  });
+});
+
+describe("P2-a: a re-pin proves what the PR changed, not copies it kept", () => {
+  // github/docs PRs 46900 and 46498: an unpinned nested copy npm left as it
+  // was, and a new pinned copy of the same release.
+  const unpinned = { version: "6.0.2" };
+  const pinned = (seed: string) => ({
+    version: "6.0.2",
+    resolved: "https://registry.npmjs.org/glob-parent/-/glob-parent-6.0.2.tgz",
+    integrity: sha512(seed),
+  });
+  const base = npmLock({ "eslint/node_modules/glob-parent": unpinned });
+
+  test("a pinned copy added beside an unchanged unpinned one carries the new pin", () => {
+    const head = npmLock({
+      "eslint/node_modules/glob-parent": unpinned,
+      "@types/x/node_modules/glob-parent": pinned("a"),
+    });
+    expect(routed("npm", base, head)).toEqual([
+      expect.objectContaining({ repinned: true, pinnedHashes: [sha512("a")] }),
+    ]);
+  });
+
+  test("an unpinned copy the PR adds beside a pinned one still must be proven", () => {
+    const pinnedBase = npmLock({ "a/node_modules/glob-parent": pinned("a") });
+    const head = npmLock({
+      "a/node_modules/glob-parent": pinned("a"),
+      "b/node_modules/glob-parent": unpinned,
+    });
+    expect(routed("npm", pinnedBase, head)).toEqual([
+      expect.objectContaining({ repinned: true, pinnedHashes: [] }),
+    ]);
+  });
+
+  test("a pinned and an unpinned copy added together still must be proven", () => {
+    const head = npmLock({
+      "eslint/node_modules/glob-parent": unpinned,
+      "b/node_modules/glob-parent": pinned("b"),
+      "c/node_modules/glob-parent": { version: "6.0.2", integrity: sha1("c") },
+    });
+    expect(routed("npm", base, head)).toEqual([
+      expect.objectContaining({ repinned: true, pinnedHashes: [] }),
+    ]);
+  });
+
+  test("a copy kept, duplicated, or removed as it was is no change", () => {
+    const both = npmLock({
+      "eslint/node_modules/glob-parent": unpinned,
+      "a/node_modules/glob-parent": pinned("a"),
+    });
+    expect(routed("npm", both, both)).toEqual([]);
+    expect(routed("npm", both, npmLock({ "a/node_modules/glob-parent": pinned("a") }))).toEqual([]);
+    expect(
+      routed(
+        "npm",
+        both,
+        npmLock({
+          "eslint/node_modules/glob-parent": unpinned,
+          "a/node_modules/glob-parent": pinned("a"),
+          "b/node_modules/glob-parent": pinned("a"),
+        }),
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("P2-b: npm bundles peers and everything inside a bundled package", () => {
+  const lock = (parent: string, foo: Record<string, unknown>, extra = {}) =>
+    npmLock({
+      parent: {
+        version: parent,
+        resolved: `https://registry.npmjs.org/parent/-/parent-${parent}.tgz`,
+        integrity: sha512(parent),
+        bundleDependencies: ["other"],
+      },
+      "parent/node_modules/other": { version: "1.0.0", inBundle: true, ...foo },
+      ...extra,
+    });
+
+  test("a peer of a bundled package, inside the bundler, ships in the bundle", () => {
+    const peer = (parent: string, version: string) =>
+      lock(
+        parent,
+        { peerDependencies: { foo: "*" } },
+        { "parent/node_modules/foo": { version, inBundle: true } },
+      );
+    expect(parseLockfile("npm", peer("1.0.0", "1.0.0")).packages.has("npm:foo")).toBe(false);
+    expect(routed("npm", peer("1.0.0", "1.0.0"), peer("2.0.0", "2.0.0"))).toEqual([
+      expect.objectContaining({ name: "parent", pinnedHashes: [sha512("2.0.0")] }),
+    ]);
+  });
+
+  test("a package inside a bundled package's own node_modules ships in the bundle", () => {
+    const nested = (parent: string, version: string) =>
+      lock(
+        parent,
+        {},
+        { "parent/node_modules/other/node_modules/deep": { version, inBundle: true } },
+      );
+    expect(routed("npm", nested("1.0.0", "1.0.0"), nested("2.0.0", "2.0.0"))).toEqual([
+      expect.objectContaining({ name: "parent" }),
+    ]);
+  });
+
+  test("a dev dependency of a bundled package is not an edge npm follows", () => {
+    const text = lock(
+      "1.0.0",
+      { devDependencies: { foo: "*" } },
+      { "parent/node_modules/foo": { version: "1.0.0", inBundle: true } },
+    );
+    expect(parseLockfile("npm", text).packages.has("npm:foo")).toBe(true);
+  });
+});
+
+describe("P2-c: a conditional line a bump adds or drops is that bump, not unread", () => {
+  const changed = (before: string, after: string) =>
+    unpinnedRequirementsChanged(
+      parseLockfile("requirements", before),
+      parseLockfile("requirements", after),
+    );
+  // uv pip compile's shape: hash-pinned, with the marker on the line.
+  const pinned = (spec: string, seed: string) => `${spec} \\\n    --hash=sha256:${hex(seed)}\n`;
+  const click = (version: string) => pinned(`click==${version}`, `click-${version}`);
+  const colorama = pinned("colorama==0.4.6 ; sys_platform == 'win32'", "colorama");
+
+  test("a bump that adds a conditional dependency reads as bumps", () => {
+    const before = click("8.1.7");
+    const after = click("8.2.0") + colorama;
+    expect(changed(before, after)).toBe(false);
+    expect(routed("requirements", before, after).map((bump) => bump.name)).toEqual([
+      "click",
+      "colorama",
+    ]);
+  });
+
+  test("a bump that drops a conditional dependency reads as the bump", () => {
+    expect(changed(click("8.1.7") + colorama, click("8.2.0"))).toBe(false);
+  });
+
+  test("a qualifier that moves with a version change is that bump", () => {
+    expect(changed("requests==2.32.2\n", "requests[socks]==2.32.3\n")).toBe(false);
+  });
+
+  test("on a release pinned on both sides, a qualifier change still counts", () => {
+    expect(changed(colorama, colorama.replace("'win32'", "'linux'"))).toBe(true);
+    // An equivalent spelling of the release is the same release.
+    expect(changed("requests==2.32.0\n", "requests[socks]==2.32\n")).toBe(true);
+  });
+});
+
+describe("P2-d: a Berry cache is where `cacheFolder` puts it", () => {
+  test.each([
+    ["", "cacheFolder: deps\n", "deps/"],
+    ["", "cacheFolder: ./deps/yarn-cache/\n", "deps/yarn-cache/"],
+    ["app/", "cacheFolder: ../shared/cache\n", "shared/cache/"],
+    ["", "cacheFolder: .\n", ""],
+    ["", "nodeLinker: pnp\n", null],
+    ["", "cacheFolder: /var/cache/yarn\n", null],
+    ["", "cacheFolder: ../outside\n", null],
+    ["", "cacheFolder: ${CACHE}\n", undefined],
+    ["", "cacheFolder: {a: b}\n", undefined],
+    ["", "cacheFolder: deps\ncacheFolder: other\n", undefined],
+  ] as const)("in %j, %j is %j", (dir, text, folder) => {
+    expect(yarnrcCacheFolder(dir, text)).toBe(folder);
   });
 });

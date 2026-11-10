@@ -1,4 +1,17 @@
-import type { BumpEvidence, BumpVerdict, HoldReason, UnreviewedReason } from "./types";
+import { hasCheckablePin } from "./evidence";
+import type {
+  BumpEvidence,
+  BumpVerdict,
+  DependencyBump,
+  HoldReason,
+  UnreviewedReason,
+} from "./types";
+
+/** The stored bump fields the wording reads. */
+type WordedBump = Pick<
+  DependencyBump,
+  "ecosystem" | "fromVersion" | "repinned" | "mirror" | "pinnedHashes"
+>;
 
 // One phrase per reason, read by the check run and the dashboard alike, so a
 // reviewer sees the same words on GitHub and in Drydock. Plain text: the check
@@ -16,7 +29,7 @@ export const HOLD_REASON_TEXT: Record<HoldReason, string> = {
   "too-new": "younger than the minimum age for unread updates",
 };
 
-export const UNREVIEWED_TEXT: Record<UnreviewedReason, string> = {
+const UNREVIEWED_TEXT: Record<UnreviewedReason, string> = {
   "over-cap": "over the per-PR review limit",
   "not-found": "not found on the public registry",
   unsupported: "Drydock can't diff this version",
@@ -27,6 +40,24 @@ export const UNREVIEWED_TEXT: Record<UnreviewedReason, string> = {
   "unverified-pin":
     "Drydock could not match the hashes pinned for this update to the public registry's release",
 };
+
+// An `unverified-pin` whose entry pins nothing a lookup can match. No lookup
+// ran, so Re-run can never clear it.
+const UNPINNED_TEXT =
+  "the lockfile pins no hash Drydock can check for this update, so it cannot be tied to the public release";
+
+function isUnpinned(reason: UnreviewedReason | undefined, bump: WordedBump): boolean {
+  return (
+    reason === "unverified-pin" &&
+    (bump.mirror !== undefined || bump.pinnedHashes !== undefined) &&
+    !hasCheckablePin(bump)
+  );
+}
+
+/** Why this bump has no verdict, in the words the check run and dashboard share. */
+export function unreviewedText(reason: UnreviewedReason, bump: WordedBump): string {
+  return isUnpinned(reason, bump) ? UNPINNED_TEXT : UNREVIEWED_TEXT[reason];
+}
 
 // A lockfile that kept a version and changed what it pins for it. Read by the
 // check run and the dashboard in place of the new-package wording.
@@ -68,35 +99,38 @@ function formatUtcMinute(iso: string): string {
 /**
  * The phrases for one hold, in reason order. A `too-new` hold first says what
  * nothing vouched for (no verdict, a new package or pin, or what the diff
- * left unread), then when the age fallback lets it pass. `repinned`: the bump
+ * left unread), then when the age fallback lets it pass. A repinned bump
  * kept its version and changed its pin, which reads differently from a
  * package the PR adds.
  */
 export function holdReasonPhrases(
   verdict: Extract<BumpVerdict, { status: "hold" }>,
-  options: { newPackage: boolean; repinned?: boolean; formatTime?: (iso: string) => string },
+  options: { bump: WordedBump; formatTime?: (iso: string) => string },
 ): string[] {
+  const { bump } = options;
   const formatTime = options.formatTime ?? formatUtcMinute;
-  const added = options.repinned ? REPINNED_TEXT : HOLD_REASON_TEXT["new-package"];
+  const added = bump.repinned ? REPINNED_TEXT : HOLD_REASON_TEXT["new-package"];
   return verdict.reasons.map((reason) => {
     if (reason === "unreviewed" && verdict.unreviewed) {
-      return `${HOLD_REASON_TEXT.unreviewed} (${UNREVIEWED_TEXT[verdict.unreviewed]})`;
+      return `${HOLD_REASON_TEXT.unreviewed} (${unreviewedText(verdict.unreviewed, bump)})`;
     }
     if (reason === "new-package") return added;
     if (reason !== "too-new") return HOLD_REASON_TEXT[reason];
     const what = verdict.unreviewed
-      ? `${HOLD_REASON_TEXT.unreviewed} (${UNREVIEWED_TEXT[verdict.unreviewed]})`
+      ? `${HOLD_REASON_TEXT.unreviewed} (${unreviewedText(verdict.unreviewed, bump)})`
       : verdict.evidence
         ? unreadContentText(verdict.evidence)
-        : options.newPackage
+        : bump.fromVersion === null
           ? added
           : null;
-    return what ? `${what}; ${ageHoldText(verdict, formatTime)}` : ageHoldText(verdict, formatTime);
+    const age = ageHoldText(verdict, bump, formatTime);
+    return what ? `${what}; ${age}` : age;
   });
 }
 
 function ageHoldText(
   verdict: Extract<BumpVerdict, { status: "hold" }>,
+  bump: WordedBump,
   formatTime: (iso: string) => string,
 ): string {
   if (verdict.passesAt)
@@ -105,7 +139,12 @@ function ageHoldText(
     return "a git, URL, or tarball source has no publish time, so it holds until approved";
   }
   if (verdict.unreviewed === "unverified-pin") {
-    return "it holds until approved; Re-run checks again if the registry was unreachable, and an npm package your organization hosts itself belongs under private npm scopes";
+    if (isUnpinned(verdict.unreviewed, bump)) return "it holds until approved";
+    const rerun = "it holds until approved; Re-run checks again if the registry was unreachable";
+    // Private scopes are an npm setting; there is no PyPI counterpart to name.
+    return bump.ecosystem === "npm"
+      ? `${rerun}, and an npm package your organization hosts itself belongs under private npm scopes`
+      : rerun;
   }
   if (verdict.pastReviewLimit) {
     // An over-cap verdict already names the limit.

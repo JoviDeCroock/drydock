@@ -310,6 +310,37 @@ test("an aged release that adds an unheld native binary is listed as unread, nev
   await expect(page.getByText("The update is clear.")).toHaveCount(0);
 });
 
+test("a pin that failed its lookup offers Re-run; an entry that pins nothing checkable does not", async ({
+  page,
+}) => {
+  const unverified = (name: string, pinnedHashes: string[]): ReviewedBump => ({
+    bump: { ...BUMPS[1].bump, name, pinnedHashes, privateSource: true, remoteSource: true },
+    verdict: { status: "hold", reasons: ["too-new"], evidence: null, unreviewed: "unverified-pin" },
+    approved: false,
+  });
+  await installMocks(page, [], {
+    review: () => ({ ...REVIEW, heldCount: 2, bumpCount: 2 }),
+    bumps: () => [unverified("looked-up", ["sha512-a"]), unverified("unpinned", [])],
+  });
+  await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+
+  await expect(
+    page
+      .getByRole("listitem")
+      .filter({ hasText: "looked-up" })
+      .getByText(
+        "No Drydock verdict (Drydock could not match the hashes pinned for this update to the public registry's release); it holds until approved; Re-run checks again if the registry was unreachable, and an npm package your organization hosts itself belongs under private npm scopes.",
+      ),
+  ).toBeVisible();
+  const unpinned = page.getByRole("listitem").filter({ hasText: "unpinned" });
+  await expect(
+    unpinned.getByText(
+      "No Drydock verdict (the lockfile pins no hash Drydock can check for this update, so it cannot be tied to the public release); it holds until approved.",
+    ),
+  ).toBeVisible();
+  await expect(unpinned.getByText(/Re-run|private npm scopes/)).toHaveCount(0);
+});
+
 test("a fully reviewed update can be described as clear", async ({ page }) => {
   await installMocks(page, [], {
     review: () => ({ ...REVIEW, conclusion: "clear", heldCount: 0, bumpCount: 1 }),

@@ -1,4 +1,5 @@
 import type { LockfileKind } from "../types";
+import { sameRelease } from "./diff";
 import { parseNpmLock } from "./npm-lock";
 import { parsePnpmLock } from "./pnpm-lock";
 import { parseRequirements, parseUvLock } from "./python";
@@ -21,16 +22,36 @@ export { diffLockfileChanges, diffLockfileSnapshots } from "./diff";
 export { mergeBump, PUBLIC_ROUTE, routedBump, type NameRoute } from "./mirror";
 export { readStrictYaml } from "./lines";
 
-// Whether the requirement lines that name no version changed. A new file
-// with any such line counts as changed.
+// Whether a requirements file changed what it installs in a way no bump
+// shows: a requirement line that names no version changed (a new file with
+// any such line counts), or a name pinned to the same release on both sides
+// changed its extras, environment marker, or install options (the extra's
+// dependencies, whether it installs at all, how it builds). A pin the PR
+// adds, removes, or moves to another version is a bump, qualifier and all.
 export function unpinnedRequirementsChanged(
   base: LockfileSnapshot | null,
   head: LockfileSnapshot,
 ): boolean {
   const before = base?.unpinned ?? [];
-  return (
-    before.length !== head.unpinned.length || before.some((line, i) => line !== head.unpinned[i])
-  );
+  if (
+    before.length !== head.unpinned.length ||
+    before.some((line, i) => line !== head.unpinned[i])
+  ) {
+    return true;
+  }
+  if (!base?.qualifiers || !head.qualifiers) return false;
+  const release = (snapshot: LockfileSnapshot, name: string) => {
+    const versions = [...(snapshot.packages.get(`pypi:${name}`)?.versions ?? [])];
+    return versions.length === 1 ? versions[0] : null;
+  };
+  for (const [name, qualifiers] of head.qualifiers) {
+    const was = base.qualifiers.get(name);
+    if (was === undefined || was === qualifiers) continue;
+    const from = release(base, name);
+    const to = release(head, name);
+    if (from !== null && to !== null && sameRelease("pypi", from, to)) return true;
+  }
+  return false;
 }
 export {
   MAX_LOCKFILE_CHARS,

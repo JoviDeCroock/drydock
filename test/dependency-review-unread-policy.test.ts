@@ -15,6 +15,7 @@ import {
   DEFAULT_DEPENDENCY_REVIEW_POLICY,
   type BumpEvidence,
   type BumpOutcome,
+  type BumpVerdict,
   type DependencyBump,
   type DependencyReviewPolicy,
   type ReviewedBump,
@@ -513,7 +514,7 @@ describe("pins, re-pins, and the review limit in the summary", () => {
       unreadLockfiles: [],
     });
 
-  test("an unverified pin holds until approved and says why", () => {
+  test("an unverified pin holds until approved, with no publish time to wait out", () => {
     const verdict = decideBump({ kind: "unreviewed", reason: "unverified-pin" }, POLICY, NOW);
     expect(verdict).toEqual({
       status: "hold",
@@ -522,10 +523,86 @@ describe("pins, re-pins, and the review limit in the summary", () => {
       unreviewed: "unverified-pin",
     });
     expect(needsReleaseAge({ kind: "unreviewed", reason: "unverified-pin" }, POLICY)).toBe(false);
-    const { summary } = render([{ bump: bump(), verdict, approved: false }], "held");
-    expect(summary).toContain(
-      "no Drydock verdict (Drydock could not match the hashes pinned for this update to the public registry's release); it holds until approved; Re-run checks again if the registry was unreachable, and an npm package your organization hosts itself belongs under private npm scopes",
+  });
+
+  const AGE_HOLD: Extract<BumpVerdict, { status: "hold" }> = {
+    status: "hold",
+    reasons: ["too-new"],
+    evidence: null,
+    unreviewed: "unverified-pin",
+  };
+  const LOOKED_UP =
+    "no Drydock verdict (Drydock could not match the hashes pinned for this update to the public registry's release); it holds until approved; Re-run checks again if the registry was unreachable";
+  const SCOPE_ADVICE =
+    ", and an npm package your organization hosts itself belongs under private npm scopes";
+  // A phrase ends its line: nothing more is said after it.
+  const lines = (summary: string) => summary.split("\n");
+  const endsWith = (text: string) => new RegExp(`${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+  const UNPINNED =
+    "the lockfile pins no hash Drydock can check for this update, so it cannot be tied to the public release";
+
+  test.each<[string, Partial<DependencyBump>, string]>([
+    ["an npm public pin", { pinnedHashes: ["sha512-a"] }, `${LOOKED_UP}${SCOPE_ADVICE}`],
+    [
+      "an npm mirror pin",
+      { privateSource: true, mirror: { fromHashes: ["sha512-a"], toHashes: ["sha512-b"] } },
+      `${LOOKED_UP}${SCOPE_ADVICE}`,
+    ],
+    [
+      "a PyPI pin",
+      { ecosystem: "pypi", lockfilePath: "uv.lock", pinnedHashes: ["sha256:a"] },
+      LOOKED_UP,
+    ],
+  ])("%s that failed its lookup offers Re-run", (_, overrides, expected) => {
+    const { summary } = render(
+      [{ bump: bump(overrides), verdict: AGE_HOLD, approved: false }],
+      "held",
     );
+    expect(lines(summary)).toContainEqual(expect.stringMatching(endsWith(expected)));
+  });
+
+  test.each<[string, Partial<DependencyBump>]>([
+    ["a public entry", { pinnedHashes: [] }],
+    ["a re-pin", { fromVersion: null, repinned: true, pinnedHashes: [] }],
+    [
+      "a mirror entry with an unpinned side",
+      { privateSource: true, mirror: { fromHashes: [], toHashes: ["sha512-b"] } },
+    ],
+  ])("%s that pins nothing checkable says so and never offers Re-run", (_, overrides) => {
+    const unpinned = bump(overrides);
+    const held = render([{ bump: unpinned, verdict: AGE_HOLD, approved: false }], "held");
+    expect(lines(held.summary)).toContainEqual(
+      expect.stringMatching(endsWith(`no Drydock verdict (${UNPINNED}); it holds until approved`)),
+    );
+    const holdOnUnreviewed = render(
+      [
+        {
+          bump: unpinned,
+          verdict: { ...AGE_HOLD, reasons: ["unreviewed"] },
+          approved: false,
+        },
+      ],
+      "held",
+    );
+    expect(holdOnUnreviewed.summary).toContain(`no Drydock verdict (${UNPINNED})`);
+    const noFallback = render(
+      [
+        {
+          bump: unpinned,
+          verdict: { status: "unreviewed", unreviewed: "unverified-pin" },
+          approved: false,
+        },
+      ],
+      "clear",
+    );
+    expect(lines(noFallback.summary)).toContainEqual(
+      expect.stringMatching(endsWith(`: ${UNPINNED}`)),
+    );
+    for (const { summary } of [held, holdOnUnreviewed, noFallback]) {
+      expect(summary).not.toContain("Re-run checks again");
+      expect(summary).not.toContain("private npm scopes");
+      expect(summary).not.toContain("could not match");
+    }
   });
 
   test("a re-pin reads as the same version with a new pin, not a new package", () => {

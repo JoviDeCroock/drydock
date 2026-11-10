@@ -301,28 +301,60 @@ function settingLines(text: string, ini: boolean): string {
   return out.join("\n");
 }
 // Yarn Berry directories whose committed contents Yarn installs or runs
-// with nothing a lockfile diff binds: the zip cache (zero-install; Yarn checks
-// only its own checksum, which matches no registry digest), unplugged package
-// copies, the Plug'n'Play loader, and the Yarn release and plugins it runs.
+// with nothing a lockfile diff binds: the default zip cache (zero-install;
+// Yarn checks only its own checksum, which matches no registry digest),
+// unplugged package copies, the Plug'n'Play loader, and the Yarn release and
+// plugins it runs. A cache moved by `cacheFolder` is found from the config
+// (`yarnrcCacheFolder`).
 const BERRY_COMMITTED_DIR = /^(.*?(?:^|\/)\.yarn\/(?:cache|unplugged|releases|plugins)\/)/;
 const PNP_FILE = /(?:^|\/)\.pnp\.(?:c?js|loader\.mjs|data\.json)$/;
-// A Berry cache archive (`lodash-npm-4.17.21-6382451519-eb835a2e51.zip`)
-// under a custom `cacheFolder`.
-const BERRY_CACHE_ARCHIVE = /(?:^|\/)[^/]+-npm-[^/]+\.zip$/;
 
 /**
- * The committed install input a changed path belongs to, reported once per
- * directory (or file, for the PnP loader); null for any other path. npm,
- * pnpm, and Yarn classic stores and offline mirrors are not here: they verify
- * every tarball against the lockfile's integrity, which the review binds, and
- * pointing them elsewhere is a config change that already counts.
+ * The committed install input a changed path belongs to by its place alone,
+ * reported once per directory (or file, for the PnP loader); null for any
+ * other path. npm, pnpm, and Yarn classic stores and offline mirrors are not
+ * here: they verify every tarball against the lockfile's integrity, which the
+ * review binds, and pointing them elsewhere is a config change that already
+ * counts.
  */
 export function committedInstallInput(path: string): string | null {
   const dir = BERRY_COMMITTED_DIR.exec(path);
   if (dir) return dir[1];
   if (PNP_FILE.test(path)) return path;
-  if (BERRY_CACHE_ARCHIVE.test(path)) return path.slice(0, path.lastIndexOf("/") + 1);
   return null;
+}
+
+/**
+ * The `cacheFolder` a `.yarnrc.yml` in `dir` (a repository directory ending
+ * in `/`, or `` for the root) sets, as a repository directory ending in `/`:
+ * the setting is relative to the file's own directory. Null when it sets none
+ * or names a place outside the repository; undefined when the file does not
+ * read strictly or the value depends on the environment.
+ */
+export function yarnrcCacheFolder(dir: string, text: string): string | null | undefined {
+  if (text.length > MAX_REGISTRY_CONFIG_CHARS) return undefined;
+  let folder = null as string | null;
+  let valid = true;
+  const readable = readStrictYaml(text, (entry) => {
+    if (entry === null) valid = false;
+    else if (entry.depth === 0 && entry.key === "cacheFolder") {
+      if (entry.value.kind === "scalar") folder = entry.value.text;
+      else valid = false;
+    }
+    return valid;
+  });
+  if (!readable || !valid) return undefined;
+  const value = folder;
+  if (value === null) return null;
+  if (value.includes("${") || value.includes("\\")) return undefined;
+  if (value.startsWith("/") || value.startsWith("~")) return null;
+  const parts = dir.split("/").filter(Boolean);
+  for (const part of value.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part !== "..") parts.push(part);
+    else if (parts.pop() === undefined) return null;
+  }
+  return parts.length > 0 ? `${parts.join("/")}/` : "";
 }
 
 const TOML_HEADER = /^\s*\[/;

@@ -28,6 +28,10 @@ export interface LockfileSource {
   // there are any, else the pin as written, else "". Sorted and distinct. A
   // public identity whose pins change is a re-pin of the same version.
   pins: readonly string[];
+  // The `pins` that are usable hashes (each is `hashes` of its copies, joined
+  // with spaces), so a comparison can take the hashes of just the pins a PR
+  // introduced. Sorted and distinct.
+  usablePins: readonly string[];
   // Several entries recorded this identity and disagreed about where it came
   // from; the worst kind wins and it is never compared as a mirror copy.
   mixed: boolean;
@@ -58,6 +62,9 @@ export interface LockfileSnapshot {
   // pin (ranges, URLs, VCS and editable lines, includes), normalized and
   // sorted. A change here moves versions the snapshot cannot name.
   unpinned: readonly string[];
+  // requirements files only: for each pinned name, its lines' extras,
+  // markers, and install options (see `unpinnedRequirementsChanged`).
+  qualifiers?: ReadonlyMap<string, string>;
   // Directories, relative to the lockfile's (`""` for its own, no trailing
   // slash), that the lockfile resolves as projects of its own: npm and pnpm
   // importers, Berry `workspace:` resolutions, uv workspace members and local
@@ -183,13 +190,14 @@ function union(a: readonly string[], b: readonly string[]): string[] {
 // about the place are `mixed`, keep the worst kind, and offer no hashes.
 function mergeSources(a: LockfileSource, b: LockfileSource): LockfileSource {
   const pins = union(a.pins, b.pins);
+  const usablePins = union(a.usablePins, b.usablePins);
   const urls = union(a.urls, b.urls);
   if (a.kind === b.kind && a.version === b.version && a.location === b.location) {
     const hashes = a.hashes && b.hashes ? union(a.hashes, b.hashes) : null;
-    return { ...a, urls, pins, hashes, mixed: a.mixed || b.mixed };
+    return { ...a, urls, pins, usablePins, hashes, mixed: a.mixed || b.mixed };
   }
   const worst = KIND_RANK[b.kind] > KIND_RANK[a.kind] ? b : a;
-  return { ...worst, urls, pins, hashes: null, mixed: true };
+  return { ...worst, urls, pins, usablePins, hashes: null, mixed: true };
 }
 
 function pinKey(hashes: readonly string[] | null, pin: string | null): string {
@@ -235,7 +243,14 @@ export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotB
       }
       const hashes = entry.hashes?.length ? [...new Set(entry.hashes)].sort() : null;
       const pin = typeof entry.pin === "string" && entry.pin ? entry.pin : null;
-      const base = { version, hashes, pins: [pinKey(hashes, pin)], mixed: false };
+      const pinned = pinKey(hashes, pin);
+      const base = {
+        version,
+        hashes,
+        pins: [pinned],
+        usablePins: hashes ? [pinned] : [],
+        mixed: false,
+      };
       if (!entry.registry) {
         record(key, version, { ...base, kind: "public", location: null, urls: [] });
         return;
@@ -267,6 +282,7 @@ export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotB
         urls: [],
         hashes: null,
         pins: [pin ?? ""],
+        usablePins: [],
         mixed: false,
       });
     },

@@ -7,7 +7,7 @@ export {
   holdReasonPhrases,
   REPINNED_TEXT,
   unreadContentText,
-  UNREVIEWED_TEXT,
+  unreviewedText,
 } from "../../../server/lib/dependency-review/wording";
 export { hasUnreadContent } from "../../../server/lib/dependency-review/evidence";
 
