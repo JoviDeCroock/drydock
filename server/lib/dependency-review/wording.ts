@@ -4,7 +4,6 @@ import type {
   BumpVerdict,
   DependencyBump,
   HoldReason,
-  NewDependencyCause,
   UnreviewedReason,
 } from "./types";
 
@@ -27,8 +26,13 @@ export const HOLD_REASON_TEXT: Record<HoldReason, string> = {
   "uninspected-files": "changes files or artifacts Drydock could not read",
   unreviewed: "no Drydock verdict",
   "new-package": "new package with no previous version to compare",
+  "young-package": "a young package new to the lockfile",
   "too-new": "younger than the minimum age for unread updates",
 };
+
+// A package new to the lockfile where the base resolved the same name from a
+// private registry or another non-public source.
+export const REPLACES_PRIVATE_TEXT = "previously from a non-public source";
 
 const UNREVIEWED_TEXT: Record<UnreviewedReason, string> = {
   "over-cap": "over the per-PR review limit",
@@ -116,7 +120,8 @@ export function holdReasonPhrases(
       return `${HOLD_REASON_TEXT.unreviewed} (${unreviewedText(verdict.unreviewed, bump)})`;
     }
     if (reason === "new-package") return added;
-    if (reason === "dependency-added") return newDependencyText(verdict.newDependency, options);
+    if (reason === "dependency-added") return dependencyAddedText(verdict.dependencyUnseen);
+    if (reason === "young-package") return youngPackageText(verdict, bump, formatTime);
     if (reason !== "too-new") return HOLD_REASON_TEXT[reason];
     const what = verdict.unreviewed
       ? `${HOLD_REASON_TEXT.unreviewed} (${unreviewedText(verdict.unreviewed, bump)})`
@@ -131,38 +136,47 @@ export function holdReasonPhrases(
 }
 
 interface PhraseFormat {
-  // The check run fences names as code; the dashboard renders text as is.
-  formatName?: (name: string) => string;
   formatTime?: (iso: string) => string;
 }
 
 /**
- * The `dependency-added` phrase: which added dependency holds and why. A
- * verdict decided before the cause was recorded reads as before.
+ * The `dependency-added` phrase: why Drydock can't see what the dependency
+ * installs. A verdict decided before the cause was recorded reads as before.
  */
-export function newDependencyText(
-  cause: NewDependencyCause | undefined,
-  format: PhraseFormat = {},
+export function dependencyAddedText(
+  unseen: Extract<BumpVerdict, { status: "hold" }>["dependencyUnseen"],
 ): string {
-  if (!cause) return HOLD_REASON_TEXT["dependency-added"];
-  if (cause.cause === "lockfile-unpinned") {
+  if (unseen === "lockfile-unpinned") {
     return "adds a dependency; this lockfile does not pin transitive dependencies, so Drydock cannot see what it installs";
   }
-  if (cause.cause === "unmatched") {
-    return "adds a dependency Drydock could not match against the lockfile";
+  if (unseen === "coverage-incomplete") {
+    return "adds a dependency; part of this pull request went unread, so Drydock cannot see what it installs";
   }
-  const name = (format.formatName ?? ((text: string) => text))(cause.name);
-  const formatTime = format.formatTime ?? formatUtcMinute;
-  const on = `adds a dependency on ${name}, a package new to the lockfile`;
-  switch (cause.why) {
+  return HOLD_REASON_TEXT["dependency-added"];
+}
+
+// The `young-package` phrase: why the new package counts as young.
+function youngPackageText(
+  verdict: Extract<BumpVerdict, { status: "hold" }>,
+  bump: WordedBump,
+  formatTime: (iso: string) => string,
+): string {
+  const young = verdict.young;
+  const base = "a package new to the lockfile";
+  if (!young) return HOLD_REASON_TEXT["young-package"];
+  switch (young.why) {
     case "first-published":
-      return `${on} and first published ${formatTime(cause.at)}`;
+      return `${base}, first published ${formatTime(young.at)}`;
     case "version-published":
-      return `${on} whose installed version was published ${formatTime(cause.at)}`;
+      return `${base} whose installed version was published ${formatTime(young.at)}`;
     case "age-unknown":
-      return `${on} whose age Drydock could not establish`;
+      return verdict.pastReviewLimit
+        ? `${base} whose age Drydock could not establish (past the per-PR review limit)`
+        : `${base} whose age Drydock could not establish`;
     case "no-verdict":
-      return `${on} with no Drydock verdict`;
+      return verdict.unreviewed
+        ? `${base} with no Drydock verdict (${unreviewedText(verdict.unreviewed, bump)})`
+        : `${base} with no Drydock verdict`;
   }
 }
 

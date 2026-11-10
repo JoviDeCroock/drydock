@@ -56,6 +56,11 @@ export interface DependencyBump {
   // comes from a lockfile that does not. Absent: not known, and any dependency
   // the release adds holds (`holdOnNewDependencies`).
   lockfilePinsTree?: true;
+  // A package new to the lockfile from the public registry (or a mirror)
+  // where the base resolved the same name from a private registry or another
+  // non-public source: the base version is no predecessor of the public
+  // release, so `fromVersion` is null. Dependency confusion's shape.
+  replacesPrivate?: true;
 }
 
 export type LockfileKind = "npm" | "pnpm" | "yarn" | "uv" | "requirements";
@@ -64,9 +69,9 @@ export interface DependencyReviewPolicy {
   // Hold when the target version adds or changes an install-time hook.
   holdOnInstallScripts: boolean;
   holdOnNativeBinaries: boolean;
-  // Hold when the target version adds a dependency that brings a young
-  // package into the PR's lockfiles (`newDependencyHold` in `policy.ts`), or
-  // adds any dependency when the lockfile does not pin the whole tree.
+  // Hold a package new to the lockfile while it is young (`youngPackage` in
+  // `policy.ts`), and a release that adds a dependency where the lockfile
+  // does not show what it installs (`lockfilePinsTree`, partial coverage).
   holdOnNewDependencies: boolean;
   holdOnNewBinCommands: boolean;
   // Hold at or above this release risk; null turns the risk threshold off.
@@ -132,6 +137,9 @@ export type HoldReason =
   | "uninspected-files"
   | "unreviewed"
   | "new-package"
+  // A package new to the lockfile, first published or released too recently,
+  // or of unknown age (`holdOnNewDependencies`).
+  | "young-package"
   | "too-new";
 
 export type UnreviewedReason =
@@ -166,13 +174,9 @@ export interface BumpEvidence {
   // unread content, not as a new capability. Absent on evidence stored before
   // the field existed.
   nativeBinariesChanged?: number;
+  // Dependencies the target version newly installs: declared in no section
+  // before, or moved out of `peerDependencies` into an installing section.
   dependenciesAdded: number;
-  // The names `dependenciesAdded` counts, valid for the ecosystem and in its
-  // normalized form, at most `MAX_ADDED_DEPENDENCY_NAMES`. `complete` is false
-  // when more were added or a name was not a valid package name. Absent on
-  // evidence stored before the field existed. Either way unknown names can't
-  // be matched against the lockfile, so the dependency hold applies.
-  addedDependencies?: { names: string[]; complete: boolean };
   binCommandsAdded: number;
   uninspectedFiles: number;
   // Coverage caveats the diff itself reported (an artifact kind or platform
@@ -196,33 +200,24 @@ export type BumpVerdict =
       // With `too-new` and no `passesAt`: the bump was past the per-PR review
       // limit, so nobody looked its publish time up.
       pastReviewLimit?: true;
-      // With `dependency-added`: why the added dependency holds. Absent on
-      // verdicts decided before the field existed.
-      newDependency?: NewDependencyCause;
+      // With `young-package`: why the new package counts as young.
+      young?: YoungPackage;
+      // With `dependency-added`: why Drydock can't see what the dependency
+      // installs. Absent on verdicts decided before the field existed.
+      dependencyUnseen?: "lockfile-unpinned" | "coverage-incomplete";
     }
   | { status: "unreviewed"; unreviewed: UnreviewedReason }
   | { status: "new-package" };
 
 /**
- * Why a package new to the PR's lockfiles counts as young: first published,
- * or its installed version published, too recently (`at` is that time), an
- * age the review could not establish, or no Drydock verdict at all (a
- * private, remote, or unverified source).
+ * Why a package new to the lockfile counts as young: first published, or its
+ * installed version published, too recently (`at` is that time), an age the
+ * review could not establish, or no Drydock verdict at all (a private,
+ * remote, or unverified source).
  */
 export type YoungPackage =
   | { why: "first-published" | "version-published"; at: string }
   | { why: "age-unknown" | "no-verdict" };
-
-/**
- * Why `dependency-added` holds: an added dependency brings a young package
- * into the lockfiles (`name`, normalized), the added names could not be
- * matched (unknown, cut, or invalid), or the bump's lockfile does not pin
- * transitive dependencies.
- */
-export type NewDependencyCause =
-  | ({ cause: "young-package"; name: string } & YoungPackage)
-  | { cause: "unmatched" }
-  | { cause: "lockfile-unpinned" };
 
 /**
  * What the review stage learned about one bump, before any policy reads it.
@@ -232,12 +227,24 @@ export type NewDependencyCause =
  * the per-PR review limit, so the stage did no work on it.
  */
 export type BumpOutcome =
-  | { kind: "diffed"; evidence: BumpEvidence; publishedAt?: string | null }
+  | {
+      kind: "diffed";
+      evidence: BumpEvidence;
+      publishedAt?: string | null;
+      // The bump's `lockfilePinsTree`, as a stated fact. Absent (a caller that
+      // did not say) reads as false: any added dependency holds.
+      lockfilePinsTree?: boolean;
+      // Part of the review went unread (a lockfile, registry config, or the
+      // file listing), so a new package could hide there.
+      coverageIncomplete?: true;
+    }
   | {
       kind: "unreviewed";
       reason: UnreviewedReason;
       publishedAt?: string | null;
       pastReviewLimit?: true;
+      // A package new to its lockfile (no previous version, not a re-pin).
+      newPackage?: true;
     }
   | {
       kind: "new-package";
@@ -245,6 +252,8 @@ export type BumpOutcome =
       // The package's earliest public release time, same null/absent reading.
       firstPublishedAt?: string | null;
       pastReviewLimit?: true;
+      // A re-pin of a version the lockfile already had, not a new package.
+      repinned?: true;
     };
 
 export interface ReviewedBump {

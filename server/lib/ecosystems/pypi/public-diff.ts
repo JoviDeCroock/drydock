@@ -99,8 +99,13 @@ export const pypiPublicDiff: PublicDiffAdapter = {
 
   async listVersions(env, ctx, packageName) {
     const metadata = await fetchPublicPyPiProjectMetadata(env, ctx, packageName);
-    const { versions, suggested } = listPublicPyPiVersions(metadata);
-    return { packageName: metadata.info?.name ?? packageName, versions, suggested };
+    const { versions, suggested, firstPublishedAt } = listPublicPyPiVersions(metadata);
+    return {
+      packageName: metadata.info?.name ?? packageName,
+      versions,
+      suggested,
+      ...(firstPublishedAt ? { firstPublishedAt } : {}),
+    };
   },
 
   async publicReleaseDigests(env, ctx, packageName, versions) {
@@ -232,6 +237,7 @@ export interface PublicPyPiVersionEntry {
 export function listPublicPyPiVersions(metadata: PyPiProjectMetadata): {
   versions: PublicPyPiVersionEntry[];
   suggested: { from: string; to: string } | null;
+  firstPublishedAt?: string;
 } {
   const latest = metadata.info?.version ?? null;
   const versions = Object.entries(metadata.releases ?? {})
@@ -267,7 +273,28 @@ export function listPublicPyPiVersions(metadata: PyPiProjectMetadata): {
   );
   const to = versions[toIndex]?.version;
   const from = versions[toIndex + 1]?.version;
-  return { versions, suggested: to && from ? { from, to } : null };
+  const first = earliestUploadTimestamp(metadata);
+  return {
+    versions,
+    suggested: to && from ? { from, to } : null,
+    ...(first !== null ? { firstPublishedAt: new Date(first).toISOString() } : {}),
+  };
+}
+
+// The project's first publish: the earliest non-yanked upload of any file of
+// any release. A version's `publishedAt` is its newest upload, so a wheel
+// added to an old release later would otherwise make the project look new.
+function earliestUploadTimestamp(metadata: PyPiProjectMetadata): number | null {
+  let first = Number.POSITIVE_INFINITY;
+  for (const files of Object.values(metadata.releases ?? {})) {
+    if (!Array.isArray(files)) continue;
+    for (const file of files) {
+      if (file.yanked) continue;
+      const time = Date.parse(file.upload_time_iso_8601 ?? "");
+      if (Number.isFinite(time) && time < first) first = time;
+    }
+  }
+  return Number.isFinite(first) ? first : null;
 }
 
 // Cheap per-release predicate: no artifact-object allocation, and short-

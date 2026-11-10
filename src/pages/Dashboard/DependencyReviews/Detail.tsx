@@ -23,9 +23,10 @@ import {
   HOLD_REASON_TEXT,
   checkRunUrl,
   hasUnreadContent,
+  dependencyAddedText,
   holdReasonPhrases,
-  newDependencyText,
   REPINNED_TEXT,
+  REPLACES_PRIVATE_TEXT,
   unreadContentText,
   unreviewedText,
   dependencyReviewPath,
@@ -566,7 +567,9 @@ function BumpRow({ reviewed }: { reviewed: ReviewedBump }) {
               ? `${bump.fromVersion} → ${bump.toVersion}`
               : bump.repinned
                 ? `${bump.toVersion}, ${REPINNED_TEXT}`
-                : `new ${bump.toVersion}`}
+                : bump.replacesPrivate
+                  ? `new ${bump.toVersion}, ${REPLACES_PRIVATE_TEXT}`
+                  : `new ${bump.toVersion}`}
           </span>
         </div>
         {diffHref ? (
@@ -672,8 +675,14 @@ function verdictReason(
     if (reason === "unreviewed" && verdict.unreviewed) {
       return `${HOLD_REASON_TEXT.unreviewed} (${unreviewedText(verdict.unreviewed, bump)})`;
     }
-    if (reason === "dependency-added" && verdict.newDependency) {
-      return newDependencyText(verdict.newDependency, { formatTime: formatDateTime });
+    if (reason === "dependency-added" && verdict.dependencyUnseen) {
+      return dependencyAddedText(verdict.dependencyUnseen);
+    }
+    if (reason === "young-package") {
+      return holdReasonPhrases(
+        { ...verdict, reasons: ["young-package"] },
+        { bump, formatTime: formatDateTime },
+      )[0];
     }
     if (reason === "release-risk" && evidence) {
       return `release risk ${evidence.releaseRisk}, at or above the hold threshold`;

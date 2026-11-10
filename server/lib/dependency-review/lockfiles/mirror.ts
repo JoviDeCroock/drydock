@@ -60,6 +60,8 @@ function worse(a: Place, b: Place): Place {
  *   Otherwise the mirror copy proves nothing and the bump is remote.
  * - Some side private and none remote: private.
  * - Otherwise remote.
+ * - Except: a public or mirror head over a private or remote base is a
+ *   package new to the lockfile (`replacesPrivate`), placed by its head.
  *
  * A name in a declared private scope is never public and never a mirror
  * candidate, so it is never sent to a public registry, whatever routing
@@ -80,6 +82,25 @@ export function routedBump(
   const bump: DependencyBump = rest;
   const sides = change.from ? [change.from, change.to] : [change.to];
   const places = sides.map((source) => placeOf(bump, source, route, policy));
+  const secret = privateScope(bump, policy);
+  // A head that resolves publicly (or through a mirror) where the base was a
+  // private registry or another non-public source: the base version is no
+  // predecessor of the public release, which is what the install now fetches.
+  // It is a package new to the lockfile, never exempt as the organization's
+  // own; dependency confusion takes this shape.
+  if (
+    places.length === 2 &&
+    !secret &&
+    PLACE_RANK[places[0]] >= PLACE_RANK.private &&
+    PLACE_RANK[places[1]] <= PLACE_RANK.mirror
+  ) {
+    const { repinned: _repinned, ...head } = change.bump;
+    return routedBump(
+      { ...change, bump: { ...head, fromVersion: null, replacesPrivate: true }, from: null },
+      route,
+      policy,
+    );
+  }
   // The PR writes the head's URL, so a release it moves off the public
   // registry (or a mirror) onto a declared private registry is not the
   // organization's own package: the exemption needs the base on it already,
@@ -92,7 +113,6 @@ export function routedBump(
     places[1] = "remote";
   }
   let place = places.reduce(worse);
-  const secret = privateScope(bump, policy);
   if (secret && (place === "public" || place === "mirror")) place = "private";
   if (place === "public") {
     const hashes = change.to.hashes;
@@ -274,7 +294,9 @@ function underPrefix(url: string, prefixes: readonly string[], role: "index" | "
 export function mergeBump(existing: DependencyBump, bump: DependencyBump): void {
   existing.direct ||= bump.direct;
   if (bump.remoteSource) existing.remoteSource = true;
-  if (bump.repinned) existing.repinned = true;
+  // New in any lockfile is new: a re-pin elsewhere must not hide it.
+  if (!bump.repinned) delete existing.repinned;
+  if (bump.replacesPrivate) existing.replacesPrivate = true;
   // Fail closed: the change counts as pinning the whole tree only when every
   // lockfile it came from does.
   if (!bump.lockfilePinsTree) delete existing.lockfilePinsTree;

@@ -128,10 +128,12 @@ test("dependency review settings save the hold policy", async ({ page }) => {
   await expect(section.getByText(/Checks \(write\)/)).toHaveCount(0);
   await expect(section.getByRole("checkbox", { name: "adds a native binary" })).toBeChecked();
   await expect(
-    section.getByRole("checkbox", { name: "adds a dependency on a young package" }),
+    section.getByRole("checkbox", {
+      name: "is a young package new to the lockfile, or adds a dependency Drydock can't follow",
+    }),
   ).toBeChecked();
   await expect(
-    section.getByText(/first published under 90 days ago, whose installed version is under 7 days/),
+    section.getByText(/first published under 90 days ago, an installed version under 7 days old/),
   ).toBeVisible();
   await expect(section.getByLabel("Or reaches release risk")).toHaveValue("high");
 
@@ -213,44 +215,51 @@ test("dependency review detail lists each bump's verdict as text", async ({ page
   expect(errors).toEqual([]);
 });
 
-test("a dependency hold names the young package it brings in, or why it can't tell", async ({
+test("a young package says why it is young; an added dependency says why it can't be followed", async ({
   page,
 }) => {
   const errors = watchErrors(page);
-  const held = (name: string, newDependency: unknown): ReviewedBump =>
+  const young = (name: string, fields: Record<string, unknown>, bump = {}): ReviewedBump =>
     ({
-      bump: { ...BUMPS[1].bump, name },
-      verdict: {
-        status: "hold",
-        reasons: ["dependency-added"],
-        evidence: { ...EVIDENCE, installScriptsAdded: 0, releaseRisk: "low", findings: [] },
-        newDependency,
-      },
+      bump: { ...BUMPS[1].bump, name, fromVersion: null, direct: false, ...bump },
+      verdict: { status: "hold", reasons: ["young-package"], evidence: null, ...fields },
       approved: false,
     }) as ReviewedBump;
   await installMocks(page, [], {
-    review: () => ({ ...REVIEW, heldCount: 2, bumpCount: 2 }),
+    review: () => ({ ...REVIEW, heldCount: 3, bumpCount: 3 }),
     bumps: () => [
-      held("adds-fresh", {
-        cause: "young-package",
-        name: "<b>fresh</b>",
-        why: "first-published",
-        at: "2026-11-04T09:30:00.000Z",
-      }),
-      held("from-requirements", { cause: "lockfile-unpinned" }),
+      young(
+        "<b>fresh</b>",
+        { young: { why: "first-published", at: "2026-11-04T09:30:00.000Z" } },
+        { replacesPrivate: true },
+      ),
+      young("unknown-age", { young: { why: "age-unknown" } }),
+      {
+        bump: { ...BUMPS[1].bump, name: "from-requirements" },
+        verdict: {
+          status: "hold",
+          reasons: ["dependency-added"],
+          evidence: { ...EVIDENCE, installScriptsAdded: 0, releaseRisk: "low", findings: [] },
+          dependencyUnseen: "lockfile-unpinned",
+        },
+        approved: false,
+      } as ReviewedBump,
     ],
   });
   await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
 
+  const fresh = page.getByRole("listitem").filter({ hasText: "<b>fresh</b>" });
+  await expect(
+    fresh.getByText(/^A package new to the lockfile, first published .+\.$/),
+  ).toBeVisible();
+  await expect(fresh.getByText(/previously from a non-public source/)).toBeVisible();
+  await expect(page.locator("main b")).toHaveCount(0);
   await expect(
     page
       .getByRole("listitem")
-      .filter({ hasText: "adds-fresh" })
-      .getByText(
-        /^Adds a dependency on <b>fresh<\/b>, a package new to the lockfile and first published .+\.$/,
-      ),
+      .filter({ hasText: "unknown-age" })
+      .getByText("A package new to the lockfile whose age Drydock could not establish."),
   ).toBeVisible();
-  await expect(page.locator("main b")).toHaveCount(0);
   await expect(
     page
       .getByRole("listitem")

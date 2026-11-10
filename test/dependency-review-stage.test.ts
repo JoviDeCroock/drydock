@@ -17,7 +17,7 @@ import {
   type DependencyBump,
   type DependencyReviewPolicy,
 } from "../server/lib/dependency-review/types";
-import { decideBump, newDependencyScopes } from "../server/lib/dependency-review/policy";
+import { decideBump } from "../server/lib/dependency-review/policy";
 import { PublicDiffError } from "../server/lib/public-diff/error";
 import type { PublicPackageDiff } from "../server/lib/public-diff";
 
@@ -507,6 +507,7 @@ describe("public pins", () => {
       kind: "new-package",
       publishedAt: new Date(NOW - DAY).toISOString(),
       firstPublishedAt: new Date(NOW - DAY).toISOString(),
+      repinned: true,
     });
   });
 
@@ -551,7 +552,12 @@ describe("the review limit bounds proofs", () => {
       dependencyChangeKey(pinnedPublic("p-late", "sha512-late")),
     );
     const verdict = decideBump(result.outcomes[503], DEFAULT_DEPENDENCY_REVIEW_POLICY, NOW);
-    expect(verdict).toMatchObject({ status: "hold", reasons: ["too-new"], pastReviewLimit: true });
+    expect(verdict).toMatchObject({
+      status: "hold",
+      reasons: ["young-package"],
+      young: { why: "age-unknown" },
+      pastReviewLimit: true,
+    });
   });
 });
 
@@ -696,33 +702,18 @@ describe("an entry that should pin and doesn't", () => {
   });
 });
 
-describe("new packages an added dependency brings in", () => {
+describe("new packages are dated for the young-package rule", () => {
   const NO_AGE: DependencyReviewPolicy = {
     ...DEFAULT_DEPENDENCY_REVIEW_POLICY,
     unreadMinimumAgeDays: null,
   };
   const ago = (days: number) => new Date(NOW - days * DAY).toISOString();
-  const host = (name = "host") => bump(name, { lockfilePinsTree: true });
-  const fresh = (name: string) => bump(name, { fromVersion: null, lockfilePinsTree: true });
-  const adding = (names: readonly string[]): PublicPackageDiff => {
-    const payload = diffPayload([{ path: "index.js", status: "modified", flags: [] }]);
-    payload.packageJsonDiff.dependencies = names.map((key) => ({
-      key,
-      status: "added",
-      staged: "^1.0.0",
-      section: "dependencies",
-    }));
-    return payload;
-  };
-  const decideAll = (result: Awaited<ReturnType<typeof stage>>, policy = NO_AGE) => {
-    const scopes = newDependencyScopes(result.bumps, result.outcomes, NOW);
-    return result.outcomes.map((outcome, i) => decideBump(outcome, policy, NOW, scopes[i]));
-  };
+  const fresh = (name: string, overrides: Partial<DependencyBump> = {}) =>
+    bump(name, { fromVersion: null, lockfilePinsTree: true, ...overrides });
+  const decideAll = (result: Awaited<ReturnType<typeof stage>>, policy = NO_AGE) =>
+    result.outcomes.map((outcome) => decideBump(outcome, policy, NOW));
 
-  test("are dated even with the age fallback off; new packages nothing names are not", async () => {
-    readCached.mockImplementation(async (_env, _ctx, input: { packageName: string }) =>
-      input.packageName === "host" ? adding(["fresh"]) : null,
-    );
+  test("every new package is dated with the age fallback off; a re-pin is not", async () => {
     listVersions.mockResolvedValue({
       packageName: "fresh",
       versions: [
@@ -731,71 +722,71 @@ describe("new packages an added dependency brings in", () => {
       ],
       suggested: null,
     });
-    const result = await stage([host(), fresh("fresh"), fresh("unnamed")], { policy: NO_AGE });
+    const result = await stage(
+      [fresh("fresh"), fresh("repinned", { repinned: true }), bump("changed")],
+      { policy: NO_AGE },
+    );
 
     expect(listVersions).toHaveBeenCalledTimes(1);
     expect(listVersions.mock.calls[0][2]).toBe("fresh");
-    expect(result.outcomes[1]).toEqual({
+    expect(result.outcomes[0]).toEqual({
       kind: "new-package",
       publishedAt: ago(2),
       firstPublishedAt: ago(400),
     });
-    expect(result.outcomes[2]).toEqual({ kind: "new-package" });
     expect(result.complete).toBe(true);
     expect(decideAll(result)[0]).toMatchObject({
       status: "hold",
-      newDependency: { cause: "young-package", name: "fresh", why: "version-published" },
+      reasons: ["young-package"],
+      young: { why: "version-published", at: ago(2) },
     });
   });
 
+  test("the listing's own first publish time wins over its versions' newest uploads", async () => {
+    // PyPI: foo 1.0 first uploaded 400 days ago gained a wheel yesterday;
+    // the installed 2.0 is 10 days old. Not young.
+    listVersions.mockResolvedValue({
+      packageName: "foo",
+      versions: [
+        { version: "2.0", publishedAt: ago(10) },
+        { version: "1.0", publishedAt: ago(1) },
+      ],
+      firstPublishedAt: ago(400),
+      suggested: null,
+    });
+    const result = await stage(
+      [fresh("foo", { ecosystem: "pypi", toVersion: "2.0", lockfilePath: "uv.lock" })],
+      { policy: NO_AGE },
+    );
+    expect(result.outcomes[0]).toEqual({
+      kind: "new-package",
+      publishedAt: ago(10),
+      firstPublishedAt: ago(400),
+    });
+    expect(decideAll(result)[0]).toEqual({ status: "new-package" });
+  });
+
   test("a failed lookup is stored as unknown, holds, and is never retried", async () => {
-    readCached.mockResolvedValue(adding(["fresh"]));
-    const first = await stage([host(), fresh("fresh")], { policy: NO_AGE });
+    const first = await stage([fresh("fresh")], { policy: NO_AGE });
     expect(listVersions).toHaveBeenCalledTimes(1);
-    expect(first.outcomes[1]).toEqual({
+    expect(first.outcomes[0]).toEqual({
       kind: "new-package",
       publishedAt: null,
       firstPublishedAt: null,
     });
     expect(decideAll(first)[0]).toMatchObject({
-      newDependency: { cause: "young-package", why: "age-unknown" },
+      reasons: ["young-package"],
+      young: { why: "age-unknown" },
     });
 
     listVersions.mockClear();
-    await stage([host(), fresh("fresh")], { policy: NO_AGE, progress: first.progress });
+    await stage([fresh("fresh")], { policy: NO_AGE, progress: first.progress });
     expect(listVersions).not.toHaveBeenCalled();
-  });
-
-  test("a name a later pass's diff adds is dated in that pass", async () => {
-    // Twelve cold diffs fill the first pass; the host's lands in the second.
-    const cold = Array.from({ length: MAX_COLD_DIFFS_PER_PASS }, (_, i) => host(`cold-${i}`));
-    loadDiff.mockImplementation(async (_env, _ctx, input: { packageName: string }) =>
-      input.packageName === "host" ? adding(["fresh"]) : diffPayload(),
-    );
-    listVersions.mockResolvedValue({
-      packageName: "fresh",
-      versions: [{ version: "1.0.1", publishedAt: ago(400) }],
-      suggested: null,
-    });
-    const bumps = [...cold, host(), fresh("fresh")];
-    const first = await stage(bumps, { policy: NO_AGE });
-    expect(listVersions).not.toHaveBeenCalled();
-    expect(first.complete).toBe(false);
-
-    const second = await stage(bumps, { policy: NO_AGE, progress: first.progress });
-    expect(listVersions).toHaveBeenCalledTimes(1);
-    expect(second.complete).toBe(true);
-    expect(decideAll(second).at(-2)).toEqual({ status: "clear", evidence: expect.anything() });
   });
 
   test("their lookups share the per-pass registry budget", async () => {
-    const names = (h: number) => Array.from({ length: 50 }, (_, i) => `dep-${h}-${i}`);
-    const hosts = [0, 1, 2, 3].map((h) => host(`host-${h}`));
-    readCached.mockImplementation(async (_env, _ctx, input: { packageName: string }) =>
-      adding(names(Number(input.packageName.slice(5)))),
-    );
     listVersions.mockResolvedValue({ packageName: "x", versions: [], suggested: null });
-    const bumps = [...hosts, ...[0, 1, 2, 3].flatMap((h) => names(h).map(fresh))];
+    const bumps = Array.from({ length: 200 }, (_, i) => fresh(`dep-${i}`));
 
     const first = await stage(bumps, { policy: NO_AGE });
     expect(listVersions).toHaveBeenCalledTimes(150);
@@ -809,16 +800,47 @@ describe("new packages an added dependency brings in", () => {
     expect(second.complete).toBe(true);
   });
 
-  test("a new package past the review limit gets no lookup and counts as young", async () => {
-    readCached.mockResolvedValue(adding(["late"]));
-    const filler = Array.from({ length: 499 }, (_, i) => fresh(`filler-${i}`));
-    const result = await stage([host(), ...filler, fresh("late")], { policy: NO_AGE });
-    expect(listVersions).not.toHaveBeenCalled();
-    expect(result.outcomes.at(-1)).toEqual({ kind: "new-package", pastReviewLimit: true });
-    expect(decideAll(result)[0]).toMatchObject({
-      status: "hold",
-      newDependency: { cause: "young-package", name: "late", why: "age-unknown" },
+  test("a new package past the review limit gets no lookup and holds as young", async () => {
+    listVersions.mockResolvedValue({
+      packageName: "x",
+      versions: [{ version: "1.0.1", publishedAt: ago(400) }],
+      suggested: null,
     });
+    const filler = Array.from({ length: 500 }, (_, i) => bump(`filler-${i}`));
+    readCached.mockResolvedValue(diffPayload());
+    const result = await stage(
+      [...filler, fresh("late"), fresh("late-repin", { repinned: true })],
+      {
+        policy: NO_AGE,
+      },
+    );
+    expect(listVersions).not.toHaveBeenCalled();
+    expect(result.outcomes.at(-2)).toEqual({ kind: "new-package", pastReviewLimit: true });
+    expect(decideAll(result).at(-2)).toMatchObject({
+      reasons: ["young-package"],
+      young: { why: "age-unknown" },
+      pastReviewLimit: true,
+    });
+    // A re-pin is no new package, wherever it falls.
+    expect(result.outcomes.at(-1)).toEqual({
+      kind: "new-package",
+      pastReviewLimit: true,
+      repinned: true,
+    });
+  });
+
+  test("an unreviewed new package says so; an unreviewed version change does not", async () => {
+    const result = await stage(
+      [
+        fresh("remote", { privateSource: true, remoteSource: true }),
+        bump("changed", { privateSource: true, remoteSource: true }),
+      ],
+      { policy: NO_AGE },
+    );
+    expect(result.outcomes).toEqual([
+      { kind: "unreviewed", reason: "remote-source", newPackage: true },
+      { kind: "unreviewed", reason: "remote-source" },
+    ]);
   });
 
   test("the pins-the-tree fact survives the pin and mirror proofs", async () => {

@@ -12,7 +12,7 @@ import type { PublicDiffVersionListing } from "../public-diff/types";
 import type { ReviewContext } from "./context";
 import { hasCheckablePin } from "./evidence";
 import { verifyMirrorBump, verifyPublicPin } from "./mirror-identity";
-import { dependencyNameKey, extractBumpEvidence, needsReleaseAge } from "./policy";
+import { extractBumpEvidence, needsReleaseAge } from "./policy";
 import {
   bumpProgressKey,
   DependencyReviewStalePassError,
@@ -20,12 +20,7 @@ import {
   type StoredBumpProgress,
 } from "./progress";
 import { MAX_STORED_BUMPS } from "./render";
-import type {
-  BumpOutcome,
-  DependencyBump,
-  DependencyEcosystem,
-  DependencyReviewPolicy,
-} from "./types";
+import type { BumpOutcome, DependencyBump, DependencyReviewPolicy } from "./types";
 
 // Per pass, against the queue consumer's 30 s CPU limit, which the Worker
 // can't observe. A cold diff parses two tarballs in a sandbox isolate but runs
@@ -200,26 +195,18 @@ export async function runReviewStage(
     diffOne,
   );
 
-  // Publish times, only for outcomes the policy would wait out and for new
-  // packages a diffed release adds a dependency on (`dependency-added` reads
-  // their age), one registry read per package within a pass. The second set
-  // grows as diffs land, so a later pass may look up what this one could not
-  // know it needed.
+  // Publish times, only for outcomes the policy reads them for (the age
+  // fallback, and both times of a new package for the young-package rule),
+  // one registry read per package within a pass.
   const listings = new Map<string, Promise<PublicDiffVersionListing | null>>();
   const outcomeOf = (entry: Entry) =>
     settledOutcome(entry, resolved[entry.index], stored(entry.key));
-  const named = policy.holdOnNewDependencies ? namesAddedByDiffs(entries, stored) : null;
   const needsTimes = (entry: Entry, outcome: BumpOutcome | null): outcome is BumpOutcome => {
-    if (outcome === null || !entry.inReview) return false;
+    if (outcome === null || !entry.inReview || !needsReleaseAge(outcome, policy)) return false;
     const progress = stored(entry.key);
-    if (progress.publishedAt === undefined && needsReleaseAge(outcome, policy)) return true;
-    if (outcome.kind !== "new-package" || !named) return false;
-    const bump = entry.original;
-    const name = dependencyNameKey(bump.ecosystem, bump.name);
     return (
-      name !== null &&
-      named[bump.ecosystem].has(name) &&
-      (progress.publishedAt === undefined || progress.firstPublishedAt === undefined)
+      progress.publishedAt === undefined ||
+      (outcome.kind === "new-package" && progress.firstPublishedAt === undefined)
     );
   };
   const toDate = entries.filter((entry) => needsTimes(entry, outcomeOf(entry)));
@@ -254,9 +241,12 @@ export async function runReviewStage(
     const outcome = outcomeOf(entry);
     if (outcome === null || needsTimes(entry, outcome)) {
       pending += 1;
-      return pastReviewLimit(outcome ?? { kind: "unreviewed", reason: "over-cap" });
+      return markNewPackage(
+        pastReviewLimit(outcome ?? { kind: "unreviewed", reason: "over-cap" }),
+        entry.original,
+      );
     }
-    return withPublishedAt(outcome, progress);
+    return markNewPackage(withPublishedAt(outcome, progress), entry.original);
   });
   return {
     bumps: entries.map((entry) => resolved[entry.index] ?? entry.original),
@@ -317,21 +307,42 @@ function settledOutcome(
   if (!entry.inReview) {
     // A public package the PR adds needs no proof or diff to be what it is.
     return original.fromVersion === null && !original.mirror && original.pinnedHashes === undefined
-      ? { kind: "new-package", pastReviewLimit: true }
+      ? {
+          kind: "new-package",
+          pastReviewLimit: true,
+          ...(original.repinned ? { repinned: true as const } : {}),
+        }
       : { kind: "unreviewed", reason: "over-cap", pastReviewLimit: true };
   }
   if (bump === null) return null;
   if (bump.privateSource) {
     return { kind: "unreviewed", reason: "unverified-pin" };
   }
-  if (bump.fromVersion === null) return { kind: "new-package" };
-  if (progress.evidence) return { kind: "diffed", evidence: progress.evidence };
+  if (bump.fromVersion === null) {
+    return bump.repinned ? { kind: "new-package", repinned: true } : { kind: "new-package" };
+  }
+  if (progress.evidence) {
+    return {
+      kind: "diffed",
+      evidence: progress.evidence,
+      lockfilePinsTree: bump.lockfilePinsTree === true,
+    };
+  }
   if (progress.unreviewed) return { kind: "unreviewed", reason: progress.unreviewed };
   return null;
 }
 
 function pastReviewLimit(outcome: BumpOutcome): BumpOutcome {
   return outcome.kind === "diffed" ? outcome : { ...outcome, pastReviewLimit: true };
+}
+
+// An unreviewed outcome of a package new to its lockfile says so, so the
+// young-package rule holds it however the stage got there (a source nothing
+// vouches for, an unproven pin, the review limit, a pass that ran out).
+function markNewPackage(outcome: BumpOutcome, original: DependencyBump): BumpOutcome {
+  return outcome.kind === "unreviewed" && original.fromVersion === null && !original.repinned
+    ? { ...outcome, newPackage: true }
+    : outcome;
 }
 
 function withPublishedAt(outcome: BumpOutcome, progress: StoredBumpProgress): BumpOutcome {
@@ -342,22 +353,6 @@ function withPublishedAt(outcome: BumpOutcome, progress: StoredBumpProgress): Bu
   return dated.kind === "new-package" && progress.firstPublishedAt !== undefined
     ? { ...dated, firstPublishedAt: progress.firstPublishedAt }
     : dated;
-}
-
-// The dependency names the diffs so far add, per ecosystem, normalized.
-function namesAddedByDiffs(
-  entries: readonly Entry[],
-  stored: (key: string) => StoredBumpProgress,
-): Record<DependencyEcosystem, Set<string>> {
-  const named: Record<DependencyEcosystem, Set<string>> = { npm: new Set(), pypi: new Set() };
-  for (const entry of entries) {
-    const names = stored(entry.key).evidence?.addedDependencies?.names ?? [];
-    for (const raw of names) {
-      const name = dependencyNameKey(entry.original.ecosystem, raw);
-      if (name !== null) named[entry.original.ecosystem].add(name);
-    }
-  }
-  return named;
 }
 
 function diffInput(bump: DependencyBump): PublicDiffInput | null {
@@ -422,11 +417,14 @@ async function listVersions(
 }
 
 /**
- * The package's earliest publish time among the versions the listing reports;
- * null when it reports none. A version since unpublished only makes the
- * package look younger, the safe side.
+ * The package's first publish: the adapter's own figure where a version's
+ * time is not its first upload (PyPI), otherwise the earliest publish time
+ * among the versions the listing reports; null when it reports none. A
+ * version since unpublished only makes the package look younger, the safe
+ * side.
  */
 function firstPublishedAtOf(listing: PublicDiffVersionListing | null): string | null {
+  if (listing?.firstPublishedAt) return listing.firstPublishedAt;
   let first: string | null = null;
   let firstMs = Number.POSITIVE_INFINITY;
   for (const { publishedAt } of listing?.versions ?? []) {

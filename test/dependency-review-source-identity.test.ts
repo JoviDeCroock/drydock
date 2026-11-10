@@ -350,6 +350,142 @@ describe("D2: source is per version", () => {
   });
 });
 
+describe("a move off a non-public source onto the public registry is a new package", () => {
+  const PRIVATE = "https://private.example/npm/";
+  const declared = { privateRegistries: [PRIVATE] };
+  const npmAt = (base: string, version: string) => ({
+    version,
+    resolved: `${base}fresh/-/fresh-${version}.tgz`,
+    integrity: sha512(`${base}${version}`),
+  });
+
+  test("private fresh@1.0.0 to newly published public fresh@1.0.1", () => {
+    const [bump] = routed(
+      "npm",
+      npmLock({ fresh: npmAt(PRIVATE, "1.0.0") }),
+      npmLock({ fresh: npmAt("https://registry.npmjs.org/", "1.0.1") }),
+      declared,
+    );
+    expect(bump).toEqual({
+      ecosystem: "npm",
+      name: "fresh",
+      fromVersion: null,
+      toVersion: "1.0.1",
+      direct: false,
+      lockfilePath: "lock",
+      replacesPrivate: true,
+      pinnedHashes: [sha512("https://registry.npmjs.org/1.0.1")],
+    });
+  });
+
+  test("the same version number, a git source, or an undeclared host does the same", () => {
+    const head = npmLock({ fresh: npmAt("https://registry.npmjs.org/", "1.0.0") });
+    for (const before of [
+      npmLock({ fresh: npmAt(PRIVATE, "1.0.0") }),
+      npmLock({ fresh: { version: "1.0.0", resolved: "github:o/fresh#abc" } }),
+      npmLock({ fresh: npmAt("https://npm.corp.example/", "1.0.0") }),
+    ]) {
+      const [bump] = routed("npm", before, head, declared);
+      expect(bump).toMatchObject({ fromVersion: null, toVersion: "1.0.0", replacesPrivate: true });
+      expect(bump).not.toHaveProperty("privateSource");
+      expect(bump).not.toHaveProperty("repinned");
+    }
+  });
+
+  test("onto a declared mirror: a candidate with only its target's pins to prove", () => {
+    const [bump] = routed(
+      "npm",
+      npmLock({ fresh: npmAt(PRIVATE, "1.0.0") }),
+      npmLock({ fresh: npmAt(MIRROR, "1.0.1") }),
+      declared,
+    );
+    expect(bump).toMatchObject({
+      fromVersion: null,
+      replacesPrivate: true,
+      privateSource: true,
+      mirror: { fromHashes: null, toHashes: [sha512(`${MIRROR}1.0.1`)] },
+    });
+    expect(bump).not.toHaveProperty("repinned");
+  });
+
+  test("uv: a declared private index to PyPI", () => {
+    const uv = (source: string, version: string, file: string) =>
+      [
+        "version = 1",
+        "[[package]]",
+        'name = "fresh"',
+        `version = "${version}"`,
+        `source = { registry = "${source}" }`,
+        `sdist = { url = "${file}", hash = "${sha256(version)}", size = 1 }`,
+      ].join("\n");
+    const [bump] = routed(
+      "uv",
+      uv(
+        "https://pypi.corp.example/simple",
+        "1.0.0",
+        "https://pypi.corp.example/f/fresh-1.0.0.tar.gz",
+      ),
+      uv(
+        "https://pypi.org/simple",
+        "1.0.1",
+        "https://files.pythonhosted.org/packages/ab/fresh-1.0.1.tar.gz",
+      ),
+      { privateRegistries: ["https://pypi.corp.example/"] },
+    );
+    expect(bump).toMatchObject({
+      ecosystem: "pypi",
+      fromVersion: null,
+      toVersion: "1.0.1",
+      replacesPrivate: true,
+      pinnedHashes: [sha256("1.0.1")],
+    });
+    expect(bump).not.toHaveProperty("privateSource");
+  });
+
+  test("private to private, and a declared private scope, stay private", () => {
+    const [kept] = routed(
+      "npm",
+      npmLock({ fresh: npmAt(PRIVATE, "1.0.0") }),
+      npmLock({ fresh: npmAt(PRIVATE, "1.0.1") }),
+      declared,
+    );
+    expect(kept.fromVersion).toMatch(
+      /^https:\/\/private\.example\/npm\/fresh\/-\/fresh-1\.0\.0\.tgz /,
+    );
+    expect(kept.privateSource).toBe(true);
+    expect(kept).not.toHaveProperty("replacesPrivate");
+    expect(kept).not.toHaveProperty("remoteSource");
+
+    const scoped = (base: string, version: string) =>
+      npmLock({
+        "@corp/fresh": {
+          version,
+          resolved: `${base}@corp/fresh/-/fresh-${version}.tgz`,
+          integrity: sha512(version),
+        },
+      });
+    const [secret] = routed(
+      "npm",
+      scoped(PRIVATE, "1.0.0"),
+      scoped("https://registry.npmjs.org/", "1.0.1"),
+      { ...declared, privateScopes: ["@corp"] },
+    );
+    expect(secret.privateSource).toBe(true);
+    expect(secret).not.toHaveProperty("replacesPrivate");
+  });
+
+  test("public to private stays a remote source, not a new package", () => {
+    const [bump] = routed(
+      "npm",
+      npmLock({ fresh: npmAt("https://registry.npmjs.org/", "1.0.0") }),
+      npmLock({ fresh: npmAt(PRIVATE, "1.0.1") }),
+      declared,
+    );
+    expect(bump).toMatchObject({ fromVersion: "1.0.0", privateSource: true, remoteSource: true });
+    expect(bump).not.toHaveProperty("replacesPrivate");
+  });
+});
+
 describe("D3: a re-pin of a non-public source is a change", () => {
   test("npm and Yarn classic: same private URL, new integrity", () => {
     const url = "https://npm.corp.example/@corp/sdk/-/sdk-1.0.0.tgz";
@@ -893,6 +1029,43 @@ describe("mergeBump", () => {
       fromHashes: [sha512("a")],
       toHashes: [sha512("b"), sha512("evil")].sort(),
     });
+  });
+
+  test("a change new in one lockfile and re-pinned in another is new, in either order", () => {
+    // One workspace's lockfile re-pins fresh@1.0.0 it already had; another's
+    // installs fresh@1.0.0 for the first time.
+    const pins = [sha512("fresh")];
+    const repin: DependencyBump = {
+      ecosystem: "npm",
+      name: "fresh",
+      fromVersion: null,
+      toVersion: "1.0.0",
+      direct: false,
+      lockfilePath: "a/package-lock.json",
+      repinned: true,
+      pinnedHashes: pins,
+    };
+    const added: DependencyBump = { ...repin, lockfilePath: "b/package-lock.json" };
+    delete added.repinned;
+    for (const [first, second] of [
+      [repin, added],
+      [added, repin],
+    ]) {
+      const merged = { ...first };
+      mergeBump(merged, second);
+      expect(merged).not.toHaveProperty("repinned");
+    }
+    const both = { ...repin };
+    mergeBump(both, { ...repin, lockfilePath: "b/package-lock.json" });
+    expect(both.repinned).toBe(true);
+  });
+
+  test("a change one copy reads as replacing a non-public source keeps that note", () => {
+    const plain: DependencyBump = { ...base, fromVersion: null, privateSource: undefined };
+    delete plain.mirror;
+    const merged = { ...plain };
+    mergeBump(merged, { ...plain, replacesPrivate: true });
+    expect(merged.replacesPrivate).toBe(true);
   });
 
   test("a change only one lockfile reads as a mirror copy stays plain private", () => {

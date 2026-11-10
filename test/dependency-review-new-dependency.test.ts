@@ -1,23 +1,32 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test } from "vitest";
 import type { PublicPackageDiff } from "../server/lib/public-diff";
-import { mergeBump, parseLockfile } from "../server/lib/dependency-review/lockfiles";
+import { bumpIdentityKey } from "../server/lib/dependency-review/identity";
+import {
+  diffLockfileChanges,
+  mergeBump,
+  parseLockfile,
+  PUBLIC_ROUTE,
+  routedBump,
+} from "../server/lib/dependency-review/lockfiles";
 import {
   decideBump,
+  evaluateBumpEvidence,
   extractBumpEvidence,
-  MAX_ADDED_DEPENDENCY_NAMES,
   needsReleaseAge,
-  newDependencyScopes,
   YOUNG_PACKAGE_DAYS,
   YOUNG_VERSION_DAYS,
 } from "../server/lib/dependency-review/policy";
-import { emptyProgress, ProgressWriter } from "../server/lib/dependency-review/progress";
 import { summarizePackageJsonDiff, type PackageJsonSummary } from "../server/lib/review";
 import {
   DEFAULT_DEPENDENCY_REVIEW_POLICY,
   type BumpEvidence,
   type BumpOutcome,
+  type BumpVerdict,
   type DependencyBump,
   type DependencyEcosystem,
+  type DependencyReviewPolicy,
+  type LockfileKind,
 } from "../server/lib/dependency-review/types";
 import { POLICY_SWITCHES } from "../src/features/dependency-review/wording";
 
@@ -25,8 +34,10 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse("2026-11-10T12:00:00.000Z");
 const ago = (days: number) => new Date(NOW - days * DAY).toISOString();
 const POLICY = DEFAULT_DEPENDENCY_REVIEW_POLICY;
+const sha512 = (seed: string) => `sha512-${createHash("sha512").update(seed).digest("base64")}`;
+const sha256 = (seed: string) => createHash("sha256").update(seed).digest("hex");
 
-function releaseAdding(
+function release(
   added: Record<string, string>,
   options: {
     ecosystem?: DependencyEcosystem;
@@ -36,13 +47,12 @@ function releaseAdding(
 ): PublicPackageDiff {
   const previous = options.previous ?? { name: "host", version: "1.0.0" };
   const staged: PackageJsonSummary = {
-    name: "host",
-    version: "1.0.1",
     ...previous,
     ...options.staged,
-    dependencies: { ...previous.dependencies, ...added },
+    name: "host",
+    version: "1.0.1",
+    dependencies: { ...previous.dependencies, ...options.staged?.dependencies, ...added },
   };
-  staged.version = "1.0.1";
   return {
     ecosystem: options.ecosystem ?? "npm",
     packageName: "host",
@@ -68,384 +78,531 @@ function releaseAdding(
   };
 }
 
-const bump = (name: string, overrides: Partial<DependencyBump> = {}): DependencyBump => ({
-  ecosystem: "npm",
-  name,
-  fromVersion: "1.0.0",
-  toVersion: "1.0.1",
-  direct: true,
-  lockfilePath: "package-lock.json",
-  lockfilePinsTree: true,
-  ...overrides,
-});
+const CLEAN = extractBumpEvidence(release({}));
+const ADDS_ONE = extractBumpEvidence(release({ carrier: "^1.0.0" }));
 
-const newPackage = (name: string, overrides: Partial<DependencyBump> = {}) =>
-  bump(name, { fromVersion: null, direct: false, ...overrides });
-
-const dated = (firstDays: number, versionDays: number): BumpOutcome => ({
+const dated = (
+  firstDays: number,
+  versionDays: number,
+): Extract<BumpOutcome, { kind: "new-package" }> => ({
   kind: "new-package",
   firstPublishedAt: ago(firstDays),
   publishedAt: ago(versionDays),
 });
 
-/**
- * Decides the first bump (a release whose diff is `evidence`) inside a review
- * that also carries `others`, the way the job does.
- */
-function decideHost(
-  evidence: BumpEvidence,
-  others: Array<[DependencyBump, BumpOutcome]>,
-  host: Partial<DependencyBump> = {},
-  policy = POLICY,
-) {
-  const bumps = [bump("host", host), ...others.map(([b]) => b)];
-  const outcomes: BumpOutcome[] = [
-    { kind: "diffed", evidence },
-    ...others.map(([, outcome]) => outcome),
-  ];
-  const scopes = newDependencyScopes(bumps, outcomes, NOW);
-  return decideBump(outcomes[0], policy, NOW, scopes[0]);
+type Hold = Extract<BumpVerdict, { status: "hold" }>;
+
+// ── Lockfile to verdict, the way collection and the review stage settle it ──
+
+type NpmEntry = { name?: string; version: string; integrity?: string };
+
+/** package-lock.json v3; `root` is what the repository's own manifest declares. */
+function npmLock(
+  entries: Record<string, NpmEntry>,
+  root: Record<string, unknown> = { dependencies: { host: "^1.0.0" } },
+): string {
+  const packages: Record<string, unknown> = { "": { name: "app", version: "1.0.0", ...root } };
+  for (const [path, entry] of Object.entries(entries)) {
+    const name = entry.name ?? path.split("node_modules/").at(-1)!;
+    packages[`node_modules/${path}`] = {
+      ...(entry.name ? { name: entry.name } : {}),
+      version: entry.version,
+      resolved: `https://registry.npmjs.org/${name}/-/${name}-${entry.version}.tgz`,
+      integrity: entry.integrity ?? sha512(`${name}@${entry.version}`),
+    };
+  }
+  return JSON.stringify({ name: "app", lockfileVersion: 3, requires: true, packages });
 }
 
-const ADDS_FRESH = extractBumpEvidence(releaseAdding({ fresh: "^1.0.0" }));
+interface LockfilePair {
+  kind?: LockfileKind;
+  path?: string;
+  before: string | null;
+  after: string;
+}
 
-describe("added dependency names in the evidence", () => {
-  test("are the newly declared names, normalized for the ecosystem and sorted", () => {
-    const npm = extractBumpEvidence(
-      releaseAdding(
-        { "@acme/util": "^1", zeta: "^2", kept: "^3" },
-        { previous: { name: "host", version: "1.0.0", peerDependencies: { kept: "^3" } } },
-      ),
+interface ReviewOptions {
+  // Each new package's [days since first publish, days since its version].
+  times?: Record<string, [number, number]>;
+  // Each diffed release's evidence; CLEAN otherwise.
+  evidence?: Record<string, BumpEvidence>;
+  policy?: DependencyReviewPolicy;
+}
+
+/**
+ * Verdicts by package name for the changes these lockfiles make, collected
+ * and merged as `collect.ts` does, with every pin proven and every listed
+ * time found, then settled as the review stage settles them.
+ */
+function review(pairs: LockfilePair[], options: ReviewOptions = {}): Map<string, BumpVerdict> {
+  const merged = new Map<string, DependencyBump>();
+  for (const pair of pairs) {
+    const kind = pair.kind ?? "npm";
+    const head = parseLockfile(kind, pair.after);
+    const base = pair.before === null ? null : parseLockfile(kind, pair.before);
+    const pinsTree = kind !== "requirements" || head.hashChecked === true;
+    for (const change of diffLockfileChanges(base, head, pair.path ?? "package-lock.json")) {
+      const bump = routedBump(change, PUBLIC_ROUTE, {
+        publicMirrors: [],
+        privateRegistries: [],
+        privateScopes: [],
+      });
+      if (pinsTree) bump.lockfilePinsTree = true;
+      const key = bumpIdentityKey(bump);
+      const existing = merged.get(key);
+      if (existing) mergeBump(existing, bump);
+      else merged.set(key, bump);
+    }
+  }
+  const verdicts = new Map<string, BumpVerdict>();
+  for (const bump of merged.values()) {
+    const times = options.times?.[bump.name];
+    const outcome: BumpOutcome =
+      bump.fromVersion === null
+        ? {
+            kind: "new-package",
+            ...(times ? { firstPublishedAt: ago(times[0]), publishedAt: ago(times[1]) } : {}),
+            ...(bump.repinned ? { repinned: true as const } : {}),
+          }
+        : {
+            kind: "diffed",
+            evidence: options.evidence?.[bump.name] ?? CLEAN,
+            lockfilePinsTree: bump.lockfilePinsTree === true,
+          };
+    verdicts.set(bump.name, decideBump(outcome, options.policy ?? POLICY, NOW));
+  }
+  return verdicts;
+}
+
+const OLD: [number, number] = [400, 30];
+const HOST_BEFORE = npmLock({ host: { version: "1.0.0" } });
+
+describe("a package new to the lockfile holds while young", () => {
+  test("host → carrier → payload: the young package beneath a newly added one holds", () => {
+    const verdicts = review(
+      [
+        {
+          before: HOST_BEFORE,
+          after: npmLock({
+            host: { version: "1.0.1" },
+            carrier: { version: "1.0.0" },
+            payload: { version: "1.0.0" },
+          }),
+        },
+      ],
+      { times: { carrier: OLD, payload: [5, 5] }, evidence: { host: ADDS_ONE } },
     );
-    // `kept` was already declared in another section: not a new dependency.
-    expect(npm.addedDependencies).toEqual({ names: ["@acme/util", "zeta"], complete: true });
-    expect(npm.dependenciesAdded).toBe(2);
-
-    const pypi = extractBumpEvidence(releaseAdding({ Foo_Bar: "*" }, { ecosystem: "pypi" }));
-    expect(pypi.addedDependencies).toEqual({ names: ["foo-bar"], complete: true });
-  });
-
-  test("an invalid name or more than the bound marks the list incomplete", () => {
-    const invalid = extractBumpEvidence(releaseAdding({ "../evil": "*", fine: "*" }));
-    expect(invalid.addedDependencies).toEqual({ names: ["fine"], complete: false });
-
-    const many = Object.fromEntries(
-      Array.from({ length: MAX_ADDED_DEPENDENCY_NAMES + 1 }, (_, i) => [`dep-${i}`, "*"]),
-    );
-    const cut = extractBumpEvidence(releaseAdding(many));
-    expect(cut.addedDependencies?.complete).toBe(false);
-    expect(cut.addedDependencies?.names).toHaveLength(MAX_ADDED_DEPENDENCY_NAMES);
-    expect(cut.dependenciesAdded).toBe(MAX_ADDED_DEPENDENCY_NAMES + 1);
-
-    // Long names are bounded by their total length too.
-    const long = Object.fromEntries(
-      Array.from({ length: 10 }, (_, i) => [`${i}${"n".repeat(213)}`, "*"]),
-    );
-    const bounded = extractBumpEvidence(releaseAdding(long));
-    expect(bounded.addedDependencies?.complete).toBe(false);
-    expect(bounded.addedDependencies?.names.length).toBeLessThan(10);
-  });
-
-  test("progress past its size bound drops the names, which then read as unmatched", async () => {
-    const saves: string[] = [];
-    const writer = new ProgressWriter(emptyProgress(NOW), async (json) => {
-      saves.push(json);
-      return true;
-    });
-    const finding = {
-      severity: "low" as const,
-      ruleId: null,
-      file: "f".repeat(300),
-      reason: "r".repeat(300),
-    };
-    const evidence = { ...ADDS_FRESH, findings: Array.from({ length: 5 }, () => finding) };
-    for (let i = 0; i < 300; i++) writer.progress.bumps[`bump-${i}`] = { evidence };
-    await writer.flush();
-    const stored = JSON.parse(saves[0]).bumps["bump-0"].evidence as BumpEvidence;
-    expect(stored.addedDependencies).toEqual({ names: [], complete: false });
-    expect(decideHost(stored, [])).toMatchObject({ newDependency: { cause: "unmatched" } });
-  });
-});
-
-describe("an added dependency that brings a young package into the lockfiles holds", () => {
-  test("a package created yesterday that enters the lockfile as a new package", () => {
-    const verdict = decideHost(ADDS_FRESH, [[newPackage("fresh"), dated(1, 1)]]);
-    expect(verdict).toMatchObject({
+    expect(verdicts.get("host")).toEqual({ status: "clear", evidence: ADDS_ONE });
+    expect(verdicts.get("carrier")).toEqual({ status: "new-package" });
+    expect(verdicts.get("payload")).toEqual({
       status: "hold",
-      reasons: ["dependency-added"],
-      newDependency: { cause: "young-package", name: "fresh", why: "first-published", at: ago(1) },
+      reasons: ["young-package"],
+      evidence: null,
+      young: { why: "first-published", at: ago(5) },
     });
   });
 
-  test("an old package whose installed version was published two days ago", () => {
-    const verdict = decideHost(ADDS_FRESH, [[newPackage("fresh"), dated(200, 2)]]);
-    expect(verdict).toMatchObject({
+  test("an alias (`innocent: npm:payload@^1.0.0`) enters under the real name and holds", () => {
+    const aliased = extractBumpEvidence(release({ innocent: "npm:payload@^1.0.0" }));
+    const verdicts = review(
+      [
+        {
+          before: HOST_BEFORE,
+          after: npmLock({
+            host: { version: "1.0.1" },
+            innocent: { name: "payload", version: "1.0.0" },
+          }),
+        },
+      ],
+      { times: { payload: [2, 2] }, evidence: { host: aliased } },
+    );
+    expect([...verdicts.keys()].sort()).toEqual(["host", "payload"]);
+    expect(verdicts.get("host")?.status).toBe("clear");
+    expect(verdicts.get("payload")).toMatchObject({
       status: "hold",
-      newDependency: {
-        cause: "young-package",
-        name: "fresh",
-        why: "version-published",
-        at: ago(2),
+      reasons: ["young-package"],
+      young: { why: "first-published" },
+    });
+  });
+
+  test('a root override alias (`overrides: {shim: "npm:fresh@1.0.0"}`) holds the package it installs', () => {
+    const root = { dependencies: { host: "^1.0.0" }, overrides: { shim: "npm:fresh@1.0.0" } };
+    const verdicts = review(
+      [
+        {
+          before: npmLock({ host: { version: "1.0.0" } }, root),
+          after: npmLock(
+            {
+              host: { version: "1.0.1" },
+              // npm writes the override's target under the overridden path.
+              shim: { name: "fresh", version: "1.0.0" },
+            },
+            root,
+          ),
+        },
+      ],
+      {
+        times: { fresh: [1, 1] },
+        evidence: { host: extractBumpEvidence(release({ shim: "^1.0.0" })) },
       },
+    );
+    expect(verdicts.get("host")?.status).toBe("clear");
+    expect(verdicts.get("fresh")).toMatchObject({
+      status: "hold",
+      reasons: ["young-package"],
+      young: { why: "first-published", at: ago(1) },
     });
   });
 
-  test.each<[string, DependencyBump, BumpOutcome, string]>([
+  test("a young package no reviewed release declares", () => {
+    const verdicts = review(
+      [
+        {
+          before: HOST_BEFORE,
+          after: npmLock({ host: { version: "1.0.0" }, payload: { version: "1.0.0" } }),
+        },
+      ],
+      { times: { payload: [3, 3] } },
+    );
+    expect([...verdicts.keys()]).toEqual(["payload"]);
+    expect(verdicts.get("payload")).toMatchObject({ reasons: ["young-package"] });
+  });
+
+  test("a new package the pull request adds directly", () => {
+    const verdicts = review(
+      [
+        {
+          before: HOST_BEFORE,
+          after: npmLock(
+            { host: { version: "1.0.0" }, fresh: { version: "1.0.0" } },
+            { dependencies: { host: "^1.0.0", fresh: "^1.0.0" } },
+          ),
+        },
+      ],
+      { times: { fresh: [10, 10] } },
+    );
+    expect(verdicts.get("fresh")).toMatchObject({
+      reasons: ["young-package"],
+      young: { why: "first-published", at: ago(10) },
+    });
+  });
+
+  test("a young version of an old package", () => {
+    expect(decideBump(dated(400, 2), POLICY, NOW)).toEqual({
+      status: "hold",
+      reasons: ["young-package"],
+      evidence: null,
+      young: { why: "version-published", at: ago(2) },
+    });
+  });
+
+  test.each<[string, BumpOutcome, Partial<Hold>]>([
+    ["never looked up", { kind: "new-package" }, { young: { why: "age-unknown" } }],
     [
-      "a git or URL source",
-      newPackage("fresh", { privateSource: true, remoteSource: true }),
-      { kind: "unreviewed", reason: "remote-source" },
-      "no-verdict",
+      "a failed lookup",
+      { kind: "new-package", publishedAt: null, firstPublishedAt: null },
+      { young: { why: "age-unknown" } },
     ],
     [
-      "an unverified pin",
-      newPackage("fresh", { pinnedHashes: ["sha512-x"], privateSource: true, remoteSource: true }),
-      { kind: "unreviewed", reason: "unverified-pin" },
-      "no-verdict",
+      "a listing with no first publish time",
+      { kind: "new-package", publishedAt: ago(400), firstPublishedAt: null },
+      { young: { why: "age-unknown" } },
     ],
     [
-      "a private registry's package",
-      newPackage("fresh", { privateSource: true }),
-      { kind: "unreviewed", reason: "private-source" },
-      "no-verdict",
+      "an unparseable time",
+      { kind: "new-package", publishedAt: "soon", firstPublishedAt: ago(400) },
+      { young: { why: "age-unknown" } },
     ],
     [
       "past the review limit",
-      newPackage("fresh"),
       { kind: "new-package", pastReviewLimit: true },
-      "age-unknown",
+      { young: { why: "age-unknown" }, pastReviewLimit: true },
     ],
     [
-      "whose publish-time lookup failed",
-      newPackage("fresh"),
-      { kind: "new-package", publishedAt: null, firstPublishedAt: null },
-      "age-unknown",
+      "a git or URL source",
+      { kind: "unreviewed", reason: "remote-source", newPackage: true },
+      { young: { why: "no-verdict" }, unreviewed: "remote-source" },
     ],
     [
-      "whose listing has no times",
-      newPackage("fresh"),
-      { kind: "new-package", publishedAt: ago(400), firstPublishedAt: null },
-      "age-unknown",
+      "an unverified pin",
+      { kind: "unreviewed", reason: "unverified-pin", newPackage: true },
+      { young: { why: "no-verdict" }, unreviewed: "unverified-pin" },
     ],
     [
-      "whose times were never looked up",
-      newPackage("fresh"),
-      { kind: "new-package" },
-      "age-unknown",
+      "over the review limit with a pin to prove",
+      { kind: "unreviewed", reason: "over-cap", pastReviewLimit: true, newPackage: true },
+      { young: { why: "no-verdict" }, unreviewed: "over-cap", pastReviewLimit: true },
     ],
-  ])("a new package that is %s, however old", (_, dependency, outcome, why) => {
-    const verdict = decideHost(ADDS_FRESH, [[dependency, outcome]]);
-    expect(verdict).toMatchObject({
+  ])("%s holds, however old", (_, outcome, fields) => {
+    expect(decideBump(outcome, POLICY, NOW)).toEqual({
       status: "hold",
-      reasons: ["dependency-added"],
-      newDependency: { cause: "young-package", name: "fresh", why },
+      reasons: ["young-package"],
+      evidence: null,
+      ...fields,
     });
   });
 
-  test("a lockfile that does not pin the whole tree holds on any added dependency", () => {
-    // An unhashed requirements file: the old package below proves nothing.
-    const verdict = decideHost(ADDS_FRESH, [[newPackage("fresh"), dated(900, 900)]], {
-      lockfilePinsTree: undefined,
+  test("a new package from a declared private registry is exempt, and holds only under holdOnUnreviewed", () => {
+    const outcome = { kind: "unreviewed", reason: "private-source", newPackage: true } as const;
+    expect(decideBump(outcome, POLICY, NOW)).toEqual({
+      status: "unreviewed",
+      unreviewed: "private-source",
     });
-    expect(verdict).toMatchObject({
+    expect(decideBump(outcome, { ...POLICY, holdOnUnreviewed: true }, NOW)).toMatchObject({
       status: "hold",
-      reasons: ["dependency-added"],
-      newDependency: { cause: "lockfile-unpinned" },
+      reasons: ["unreviewed"],
     });
   });
 
-  test.each<[string, BumpEvidence]>([
-    ["evidence stored before names were recorded", { ...ADDS_FRESH, addedDependencies: undefined }],
-    [
-      "a names list cut at its bound",
-      { ...ADDS_FRESH, addedDependencies: { names: ["fresh"], complete: false } },
-    ],
-    [
-      "a stored name that is not a valid package name",
-      { ...ADDS_FRESH, addedDependencies: { names: ["no spaces"], complete: true } },
-    ],
-  ])("%s holds: nothing can be matched", (_, evidence) => {
-    const verdict = decideHost(evidence, [[newPackage("fresh"), dated(900, 900)]]);
-    expect(verdict).toMatchObject({
-      status: "hold",
-      reasons: ["dependency-added"],
-      newDependency: { cause: "unmatched" },
-    });
-  });
-
-  test("a caller without the review's scope holds on any added dependency, as before", () => {
-    const verdict = decideBump({ kind: "diffed", evidence: ADDS_FRESH }, POLICY, NOW);
-    expect(verdict).toEqual({
-      status: "hold",
-      reasons: ["dependency-added"],
-      evidence: ADDS_FRESH,
-    });
-  });
-
-  test("a bump without the stored pins-the-tree fact holds (fail closed)", () => {
-    const [scope] = newDependencyScopes(
-      [{ ...bump("host"), lockfilePinsTree: undefined }],
-      [{ kind: "diffed", evidence: ADDS_FRESH }],
-      NOW,
+  test("a change new in one lockfile and re-pinned in another holds as new", () => {
+    const repinned = sha512("new pin");
+    const verdicts = review(
+      [
+        {
+          path: "a/package-lock.json",
+          before: npmLock({ fresh: { version: "1.0.0", integrity: sha512("old pin") } }),
+          after: npmLock({ fresh: { version: "1.0.0", integrity: repinned } }),
+        },
+        {
+          path: "b/package-lock.json",
+          before: npmLock({}),
+          after: npmLock({ fresh: { version: "1.0.0", integrity: repinned } }),
+        },
+      ],
+      { times: { fresh: [1, 1] } },
     );
-    expect(scope.lockfilePinsTree).toBe(false);
+    expect(verdicts.size).toBe(1);
+    expect(verdicts.get("fresh")).toMatchObject({ reasons: ["young-package"] });
+  });
+
+  test("a move off a private source onto the public registry is new: listed, held only while young", () => {
+    expect(decideBump(dated(400, 30), POLICY, NOW)).toEqual({ status: "new-package" });
+    expect(decideBump(dated(400, 3), POLICY, NOW)).toMatchObject({ reasons: ["young-package"] });
   });
 });
 
-describe("names match where the ecosystem says they are the same", () => {
-  test("PyPI: case and separators fold (PEP 503)", () => {
-    const evidence = extractBumpEvidence(releaseAdding({ Foo_Bar: "*" }, { ecosystem: "pypi" }));
-    const verdict = decideHost(
-      evidence,
-      [[newPackage("foo.BAR", { ecosystem: "pypi", lockfilePath: "uv.lock" }), dated(1, 1)]],
-      { ecosystem: "pypi", lockfilePath: "uv.lock" },
+describe("an added dependency holds where the lockfile can't show what it installs", () => {
+  const ADDS_PYPI = extractBumpEvidence(release({ carrier: ">=1" }, { ecosystem: "pypi" }));
+  const hash = (seed: string) => ` --hash=sha256:${sha256(seed)}`;
+
+  test("an unhashed requirements file", () => {
+    const verdicts = review(
+      [{ kind: "requirements", before: "host==1.0.0\n", after: "host==1.0.1\n" }],
+      { evidence: { host: ADDS_PYPI } },
     );
-    expect(verdict).toMatchObject({
+    expect(verdicts.get("host")).toEqual({
       status: "hold",
-      newDependency: { cause: "young-package", name: "foo-bar" },
+      reasons: ["dependency-added"],
+      evidence: ADDS_PYPI,
+      dependencyUnseen: "lockfile-unpinned",
     });
   });
 
-  test("npm: a scoped name matches itself; another ecosystem's same name does not", () => {
-    const evidence = extractBumpEvidence(releaseAdding({ "@acme/util": "^1" }));
-    expect(decideHost(evidence, [[newPackage("@acme/util"), dated(1, 1)]])).toMatchObject({
-      newDependency: { cause: "young-package", name: "@acme/util" },
-    });
+  test("a requirements file in hash-checking mode pins the tree, so it passes", () => {
+    const verdicts = review(
+      [
+        {
+          kind: "requirements",
+          before: `host==1.0.0${hash("a")}\n`,
+          after: `host==1.0.1${hash("b")}\n`,
+        },
+      ],
+      { evidence: { host: ADDS_PYPI } },
+    );
+    expect(verdicts.get("host")?.status).toBe("clear");
+  });
+
+  test("any lockfile, when part of the review went unread", () => {
     expect(
-      decideHost(evidence, [[newPackage("@acme/util", { ecosystem: "pypi" }), dated(1, 1)]]),
-    ).toMatchObject({ status: "clear" });
-  });
-
-  test("npm: a name that differs by case is another package", () => {
-    const evidence = extractBumpEvidence(releaseAdding({ JSONStream: "^1" }));
-    // `jsonstream` is a different npm package; the release's `JSONStream`
-    // would enter the lockfile under its own name.
-    expect(decideHost(evidence, [[newPackage("jsonstream"), dated(1, 1)]])).toMatchObject({
-      status: "clear",
-    });
-    expect(decideHost(evidence, [[newPackage("JSONStream"), dated(1, 1)]])).toMatchObject({
-      newDependency: { cause: "young-package", name: "JSONStream" },
+      decideBump(
+        { kind: "diffed", evidence: ADDS_ONE, lockfilePinsTree: true, coverageIncomplete: true },
+        POLICY,
+        NOW,
+      ),
+    ).toEqual({
+      status: "hold",
+      reasons: ["dependency-added"],
+      evidence: ADDS_ONE,
+      dependencyUnseen: "coverage-incomplete",
     });
   });
-});
 
-describe("an added dependency that brings nothing unread does not hold", () => {
-  test("the dependency was already in the lockfile", () => {
-    // No bump names `fresh`: the lockfile kept the copy it had.
-    expect(decideHost(ADDS_FRESH, [])).toEqual({ status: "clear", evidence: ADDS_FRESH });
+  test("an optional peer moved into dependencies counts as added", () => {
+    const peer = { "optional-peer": "^1.0.0" };
+    const moved = extractBumpEvidence(
+      release(peer, {
+        previous: {
+          name: "host",
+          version: "1.0.0",
+          peerDependencies: peer,
+          peerDependenciesMeta: { "optional-peer": { optional: true } },
+        },
+      }),
+    );
+    expect(moved.dependenciesAdded).toBe(1);
+    expect(
+      decideBump({ kind: "diffed", evidence: moved, lockfilePinsTree: false }, POLICY, NOW),
+    ).toMatchObject({ reasons: ["dependency-added"], dependencyUnseen: "lockfile-unpinned" });
   });
 
-  test("it arrives only as a version change of a package the lockfile had", () => {
-    const verdict = decideHost(ADDS_FRESH, [
-      [bump("fresh", { direct: false }), { kind: "diffed", evidence: ADDS_FRESH }],
-    ]);
-    expect(verdict.status).toBe("clear");
-  });
-
-  test("a re-pin of a package the lockfile had is not new to it", () => {
-    const repin = newPackage("fresh", { repinned: true });
-    expect(decideHost(ADDS_FRESH, [[repin, dated(1, 1)]]).status).toBe("clear");
-  });
-
-  test("an optional peer or a PyPI extra that is not installed", () => {
-    const peer = extractBumpEvidence(
-      releaseAdding(
+  test("moving a dependency between installing sections, or into peers, adds nothing", () => {
+    const evidence = extractBumpEvidence(
+      release(
         {},
         {
-          staged: {
-            peerDependencies: { "optional-peer": "^1" },
-            peerDependenciesMeta: { "optional-peer": { optional: true } },
+          previous: {
+            name: "host",
+            version: "1.0.0",
+            dependencies: { a: "^1", b: "^1" },
           },
+          staged: { optionalDependencies: { a: "^1" }, peerDependencies: { b: "^1" } },
         },
       ),
     );
-    expect(peer.addedDependencies?.names).toEqual(["optional-peer"]);
-    expect(decideHost(peer, []).status).toBe("clear");
-
-    // Requires-Dist `socks-helper ; extra == "socks"`: declared, never installed.
-    const extra = extractBumpEvidence(
-      releaseAdding({ "socks-helper": '; extra == "socks"' }, { ecosystem: "pypi" }),
-    );
-    expect(decideHost(extra, [], { ecosystem: "pypi", lockfilePath: "uv.lock" }).status).toBe(
-      "clear",
-    );
+    expect(evidence.dependenciesAdded).toBe(0);
   });
 
-  test("a new package first published long ago whose installed version is past a week", () => {
-    const old = decideHost(ADDS_FRESH, [
-      [newPackage("fresh"), dated(YOUNG_PACKAGE_DAYS + 1, YOUNG_VERSION_DAYS + 1)],
-    ]);
-    expect(old.status).toBe("clear");
-    // Exactly at each bound is old enough; a minute under is young.
-    const minute = 60_000;
-    const atBound: BumpOutcome = {
-      kind: "new-package",
-      firstPublishedAt: new Date(NOW - YOUNG_PACKAGE_DAYS * DAY).toISOString(),
-      publishedAt: new Date(NOW - YOUNG_VERSION_DAYS * DAY).toISOString(),
-    };
-    expect(decideHost(ADDS_FRESH, [[newPackage("fresh"), atBound]]).status).toBe("clear");
-    expect(
-      decideHost(ADDS_FRESH, [
-        [
-          newPackage("fresh"),
-          {
-            ...atBound,
-            publishedAt: new Date(NOW - YOUNG_VERSION_DAYS * DAY + minute).toISOString(),
-          },
-        ],
-      ]),
-    ).toMatchObject({ newDependency: { why: "version-published" } });
-  });
-
-  test("other holds the release earns stay", () => {
-    const evidence = { ...ADDS_FRESH, installScriptsAdded: 1 };
-    expect(decideHost(evidence, [])).toEqual({
-      status: "hold",
-      reasons: ["install-script-added"],
-      evidence,
+  test("stored evidence or a bump without the pins-the-tree fact reads as not pinning it", () => {
+    expect(decideBump({ kind: "diffed", evidence: ADDS_ONE }, POLICY, NOW)).toMatchObject({
+      reasons: ["dependency-added"],
+      dependencyUnseen: "lockfile-unpinned",
     });
-  });
-
-  test("the switch off never holds an added dependency", () => {
-    const verdict = decideHost(
-      ADDS_FRESH,
-      [[newPackage("fresh"), dated(1, 1)]],
-      {},
-      {
-        ...POLICY,
-        holdOnNewDependencies: false,
-      },
-    );
-    expect(verdict.status).toBe("clear");
+    // A caller that does not say holds with the old wording.
+    expect(evaluateBumpEvidence(ADDS_ONE, POLICY)).toEqual({
+      status: "hold",
+      reasons: ["dependency-added"],
+      evidence: ADDS_ONE,
+    });
   });
 });
 
-describe("the review-wide context", () => {
-  test("lists every young new package once per ecosystem, from any lockfile", () => {
-    const bumps = [
-      bump("host"),
-      newPackage("fresh", { lockfilePath: "a/package-lock.json" }),
-      newPackage("fresh", { lockfilePath: "b/package-lock.json" }),
-      newPackage("Old_Pkg", { ecosystem: "pypi", lockfilePath: "uv.lock" }),
-    ];
-    const outcomes: BumpOutcome[] = [
-      { kind: "diffed", evidence: ADDS_FRESH },
-      dated(400, 400),
-      dated(1, 1),
-      dated(400, 400),
-    ];
-    const [scope, , , pypi] = newDependencyScopes(bumps, outcomes, NOW);
-    // One copy old enough does not vouch for another copy that is not.
-    expect([...scope.youngNewPackages]).toEqual([
-      ["fresh", { why: "first-published", at: ago(1) }],
-    ]);
-    expect(pypi.youngNewPackages.size).toBe(0);
+describe("nothing young entering a tree-pinning lockfile does not hold for this reason", () => {
+  test("a new package at least 90 days old whose version is at least 7 days old, at each exact bound", () => {
+    const atBound: BumpOutcome = {
+      kind: "new-package",
+      firstPublishedAt: ago(YOUNG_PACKAGE_DAYS),
+      publishedAt: ago(YOUNG_VERSION_DAYS),
+    };
+    expect(decideBump(atBound, POLICY, NOW)).toEqual({ status: "new-package" });
+    const minute = 60_000;
+    expect(
+      decideBump(
+        {
+          ...atBound,
+          firstPublishedAt: new Date(NOW - YOUNG_PACKAGE_DAYS * DAY + minute).toISOString(),
+        },
+        POLICY,
+        NOW,
+      ),
+    ).toMatchObject({ young: { why: "first-published" } });
+    expect(
+      decideBump(
+        {
+          ...atBound,
+          publishedAt: new Date(NOW - YOUNG_VERSION_DAYS * DAY + minute).toISOString(),
+        },
+        POLICY,
+        NOW,
+      ),
+    ).toMatchObject({ young: { why: "version-published" } });
   });
 
-  test("an unread diff with an unheld added dependency still asks for its publish time", () => {
-    // `dependency-added` may not hold once the review is known, so it never
+  test("a release declaring a dependency the lockfile already had, or one that entered old", () => {
+    const already = review(
+      [
+        {
+          before: npmLock({ host: { version: "1.0.0" }, carrier: { version: "1.0.0" } }),
+          after: npmLock({ host: { version: "1.0.1" }, carrier: { version: "1.0.0" } }),
+        },
+      ],
+      { evidence: { host: ADDS_ONE } },
+    );
+    expect([...already.values()]).toEqual([{ status: "clear", evidence: ADDS_ONE }]);
+
+    const entered = review(
+      [
+        {
+          before: HOST_BEFORE,
+          after: npmLock({ host: { version: "1.0.1" }, carrier: { version: "1.0.0" } }),
+        },
+      ],
+      { times: { carrier: OLD }, evidence: { host: ADDS_ONE } },
+    );
+    expect(entered.get("host")?.status).toBe("clear");
+    expect(entered.get("carrier")).toEqual({ status: "new-package" });
+  });
+
+  test("a re-pin", () => {
+    const verdicts = review(
+      [
+        {
+          before: npmLock({ host: { version: "1.0.0", integrity: sha512("old pin") } }),
+          after: npmLock({ host: { version: "1.0.0", integrity: sha512("new pin") } }),
+        },
+      ],
+      { times: { host: [1, 10] } },
+    );
+    expect(verdicts.get("host")).toEqual({ status: "new-package" });
+    expect(decideBump({ ...dated(1, 1), repinned: true }, POLICY, NOW)).toMatchObject({
+      reasons: ["too-new"],
+    });
+  });
+
+  test("a version change", () => {
+    const verdicts = review([
+      { before: HOST_BEFORE, after: npmLock({ host: { version: "1.0.1" } }) },
+    ]);
+    expect(verdicts.get("host")).toEqual({ status: "clear", evidence: CLEAN });
+  });
+});
+
+describe("switches and precedence", () => {
+  const OFF = { ...POLICY, holdOnNewDependencies: false };
+
+  test("with the switch off only the age fallback and the other switches apply", () => {
+    expect(decideBump(dated(1, 1), OFF, NOW)).toMatchObject({ reasons: ["too-new"] });
+    expect(decideBump(dated(1, 10), OFF, NOW)).toEqual({ status: "new-package" });
+    expect(
+      decideBump({ kind: "unreviewed", reason: "private-source", newPackage: true }, OFF, NOW),
+    ).toEqual({ status: "unreviewed", unreviewed: "private-source" });
+    expect(decideBump({ kind: "diffed", evidence: ADDS_ONE }, OFF, NOW)).toEqual({
+      status: "clear",
+      evidence: ADDS_ONE,
+    });
+    expect(needsReleaseAge({ kind: "new-package" }, { ...OFF, unreadMinimumAgeDays: null })).toBe(
+      false,
+    );
+  });
+
+  test("with the age fallback off the young rule and its lookups still run", () => {
+    const noAge = { ...POLICY, unreadMinimumAgeDays: null };
+    expect(needsReleaseAge({ kind: "new-package" }, noAge)).toBe(true);
+    expect(decideBump(dated(1, 1), noAge, NOW)).toMatchObject({ reasons: ["young-package"] });
+    expect(decideBump(dated(400, 30), noAge, NOW)).toEqual({ status: "new-package" });
+  });
+
+  test("young wins over the age fallback; holdOnNewPackages wins over both", () => {
+    expect(decideBump(dated(400, 1), POLICY, NOW)).toMatchObject({
+      reasons: ["young-package"],
+    });
+    expect(decideBump(dated(1, 1), { ...POLICY, holdOnNewPackages: true }, NOW)).toEqual({
+      status: "hold",
+      reasons: ["new-package"],
+      evidence: null,
+    });
+    expect(
+      decideBump(
+        { kind: "unreviewed", reason: "remote-source", newPackage: true },
+        { ...POLICY, holdOnUnreviewed: true },
+        NOW,
+      ),
+    ).toMatchObject({ reasons: ["unreviewed"] });
+  });
+
+  test("an unread diff with an added dependency still asks for its publish time", () => {
+    // Coverage is known only after the stage, so `dependency-added` never
     // spares the age fallback's lookup.
-    const evidence = { ...ADDS_FRESH, uninspectedFiles: 1 };
+    const evidence = { ...ADDS_ONE, uninspectedFiles: 1 };
     expect(needsReleaseAge({ kind: "diffed", evidence }, POLICY)).toBe(true);
   });
 });
@@ -463,11 +620,20 @@ describe("collection says which lockfiles pin the whole tree", () => {
   });
 
   test("a change merged from two lockfiles pins the tree only if both do", () => {
-    const merged = bump("left-pad");
-    mergeBump(merged, { ...bump("left-pad"), lockfilePinsTree: undefined });
+    const pinned: DependencyBump = {
+      ecosystem: "pypi",
+      name: "left-pad",
+      fromVersion: "1.0.0",
+      toVersion: "1.0.1",
+      direct: true,
+      lockfilePath: "uv.lock",
+      lockfilePinsTree: true,
+    };
+    const merged = { ...pinned };
+    mergeBump(merged, { ...pinned, lockfilePath: "requirements.txt", lockfilePinsTree: undefined });
     expect(merged.lockfilePinsTree).toBeUndefined();
-    const both = bump("left-pad");
-    mergeBump(both, bump("left-pad"));
+    const both = { ...pinned };
+    mergeBump(both, { ...pinned });
     expect(both.lockfilePinsTree).toBe(true);
   });
 });

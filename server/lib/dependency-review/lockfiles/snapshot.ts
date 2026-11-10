@@ -137,14 +137,6 @@ const CANONICAL_NAME: Record<DependencyEcosystem, (name: string) => string | nul
   pypi: normalizePyPiName,
 };
 
-/**
- * A package name as this layer keys it (npm as written, PyPI by PEP 503), or
- * null when it is not a valid name for the ecosystem.
- */
-export function canonicalPackageName(ecosystem: DependencyEcosystem, name: string): string | null {
-  return CANONICAL_NAME[ecosystem](name);
-}
-
 interface RegistryEntry {
   // Resolved from a registry other than the public one (see `LockfileSource`).
   registry?: {

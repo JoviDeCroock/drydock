@@ -20,7 +20,6 @@ import { parseYarnLock } from "./yarn-lock";
 export { diffLockfileChanges, diffLockfileSnapshots } from "./diff";
 export { mergeBump, PUBLIC_ROUTE, routedBump, type NameRoute } from "./mirror";
 export { readStrictYaml } from "./lines";
-export { canonicalPackageName } from "./snapshot";
 
 // Whether a requirements file changed what it installs in a way no bump
 // shows: a requirement line that names no version changed (a new file with

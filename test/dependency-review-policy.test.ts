@@ -98,7 +98,14 @@ describe("extractBumpEvidence", () => {
           ],
           dependencies: [
             { key: "evil", status: "added", staged: "^1.0.0" },
-            { key: "moved", status: "added", staged: "^1.0.0", previouslyDeclared: true },
+            {
+              key: "moved",
+              status: "added",
+              staged: "^1.0.0",
+              section: "optionalDependencies",
+              previouslyDeclared: true,
+              previouslyInstalled: true,
+            },
           ],
           bin: [{ key: "lp", status: "added", staged: "cli.js" }],
         },
@@ -277,9 +284,10 @@ describe("evaluateBumpEvidence", () => {
       status: "unreviewed",
       unreviewed: "not-found",
     });
-    expect(decideBump({ kind: "new-package" }, noAge, now)).toEqual({ status: "new-package" });
+    const noYoung = { ...noAge, holdOnNewDependencies: false };
+    expect(decideBump({ kind: "new-package" }, noYoung, now)).toEqual({ status: "new-package" });
     expect(
-      decideBump({ kind: "new-package" }, { ...noAge, holdOnNewPackages: true }, now).status,
+      decideBump({ kind: "new-package" }, { ...noYoung, holdOnNewPackages: true }, now).status,
     ).toBe("hold");
   });
 });

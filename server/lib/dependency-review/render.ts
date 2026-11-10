@@ -5,7 +5,12 @@ import type {
   ReviewedBump,
 } from "./types";
 import { hasUnreadContent } from "./evidence";
-import { holdReasonPhrases, unreadContentText, unreviewedText } from "./wording";
+import {
+  holdReasonPhrases,
+  REPLACES_PRIVATE_TEXT,
+  unreadContentText,
+  unreviewedText,
+} from "./wording";
 
 export const DEPENDENCY_REVIEW_CHECK_NAME = "Drydock dependency review";
 export const APPROVE_ACTION_IDENTIFIER = "approve-holds";
@@ -193,10 +198,7 @@ function isPassedUnread(bump: ReviewedBump): boolean {
 function renderHeld(reviewed: ReviewedBump, input: RenderDependencyReviewInput): string[] {
   const { verdict } = reviewed;
   if (verdict.status !== "hold") return [];
-  const reasons = holdReasonPhrases(verdict, {
-    bump: reviewed.bump,
-    formatName: (name) => code(name, 214),
-  });
+  const reasons = holdReasonPhrases(verdict, { bump: reviewed.bump });
   const lines = [`- ${link(reviewed.bump, input)}: ${reasons.join("; ")}`];
   if (verdict.evidence) lines.push(...renderEvidence(verdict.evidence));
   return lines;
@@ -225,7 +227,13 @@ function listLine(bumps: readonly ReviewedBump[], input: RenderDependencyReviewI
 }
 
 function link(bump: DependencyBump, input: RenderDependencyReviewInput): string {
-  const scope = bump.direct ? "" : " (transitive)";
+  const notes = [
+    bump.direct ? null : "transitive",
+    bump.replacesPrivate ? REPLACES_PRIVATE_TEXT : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const scope = notes ? ` (${notes})` : "";
   const range = bump.fromVersion
     ? `${code(bump.name, 214)} ${code(bump.fromVersion, 64)} → ${code(bump.toVersion, 64)}`
     : `${code(bump.name, 214)} ${code(bump.toVersion, 64)}`;

@@ -540,8 +540,10 @@ describe("dependency review age recheck", () => {
     return { ...setup, name };
   }
 
-  // The defaults: no switch holds a new package, so the age fallback decides.
-  const AGE_ONLY = { ...DEFAULT_DEPENDENCY_REVIEW_POLICY };
+  // The age fallback alone decides a new package: the young-package rule, the
+  // one default switch that holds new packages, is off, and its holds are
+  // never rechecked.
+  const AGE_ONLY = { ...DEFAULT_DEPENDENCY_REVIEW_POLICY, holdOnNewDependencies: false };
 
   test("a review held only by age schedules a recheck for when the hold passes", async () => {
     const { api, review, queue } = await ageHeldReview({ publishedDaysAgo: 2 });

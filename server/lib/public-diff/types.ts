@@ -93,6 +93,10 @@ export interface PublicDiffVersionListing {
   cacheExpiresAt?: string;
   versions: PublicDiffVersion[];
   suggested: { from: string; to: string } | null;
+  // The package's first publish, where a version's `publishedAt` is not its
+  // first upload (PyPI reports each release's newest). Read by dependency
+  // review; the /diff route does not return it.
+  firstPublishedAt?: string;
 }
 
 export interface PublicDiffAdapter {

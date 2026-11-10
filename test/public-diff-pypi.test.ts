@@ -104,6 +104,52 @@ describe("listPublicPyPiVersions", () => {
   });
 });
 
+describe("a PyPI project's first publish time", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const NOW = Date.parse("2026-11-10T12:00:00.000Z");
+  const ago = (days: number) => new Date(NOW - days * DAY).toISOString();
+
+  test("is its earliest upload of any file, so a wheel backfill does not make it new", () => {
+    // foo 1.0 was published 400 days ago and gained a wheel yesterday; the
+    // installed 2.0 is 10 days old.
+    const foo: PyPiProjectMetadata = {
+      info: { name: "foo", version: "2.0" },
+      releases: {
+        "1.0": [
+          releaseFile("foo-1.0.tar.gz", { uploaded: ago(400) }),
+          releaseFile("foo-1.0-py3-none-any.whl", { uploaded: ago(1) }),
+        ],
+        "2.0": [releaseFile("foo-2.0.tar.gz", { uploaded: ago(10) })],
+      },
+    };
+    const listing = listPublicPyPiVersions(foo);
+    expect(listing.firstPublishedAt).toBe(ago(400));
+    // Each version's own time stays its newest upload, as /diff and the age
+    // fallback read it.
+    expect(listing.versions).toEqual([
+      { version: "2.0", distTags: ["latest"], publishedAt: ago(10) },
+      { version: "1.0", distTags: [], publishedAt: ago(1) },
+    ]);
+  });
+
+  test("ignores yanked files and is absent when no file has a time", () => {
+    const yanked: PyPiProjectMetadata = {
+      info: { name: "foo", version: "2.0" },
+      releases: {
+        "0.1": [releaseFile("foo-0.1.tar.gz", { uploaded: ago(900), yanked: true })],
+        "2.0": [releaseFile("foo-2.0.tar.gz", { uploaded: ago(10) })],
+      },
+    };
+    expect(listPublicPyPiVersions(yanked).firstPublishedAt).toBe(ago(10));
+
+    const untimed: PyPiProjectMetadata = {
+      info: { name: "foo", version: "2.0" },
+      releases: { "2.0": [{ ...releaseFile("foo-2.0.tar.gz"), upload_time_iso_8601: undefined }] },
+    };
+    expect(listPublicPyPiVersions(untimed)).not.toHaveProperty("firstPublishedAt");
+  });
+});
+
 describe("resolvePublicPyPiVersionPair", () => {
   test("maps equivalent spellings to PyPI's release keys", () => {
     expect(resolvePublicPyPiVersionPair(metadata, "1.0", "v1.1.0.0")).toEqual({

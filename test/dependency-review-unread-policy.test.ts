@@ -18,7 +18,6 @@ import {
   type BumpVerdict,
   type DependencyBump,
   type DependencyReviewPolicy,
-  type NewDependencyCause,
   type ReviewedBump,
   type UnreviewedReason,
 } from "../server/lib/dependency-review/types";
@@ -32,6 +31,9 @@ const TEN_DAYS_OLD = iso(NOW - 10 * DAY);
 
 const POLICY = DEFAULT_DEPENDENCY_REVIEW_POLICY;
 const NO_AGE: DependencyReviewPolicy = { ...POLICY, unreadMinimumAgeDays: null };
+// The age fallback alone, without the young-package rule on new packages.
+const AGE_ONLY_SWITCH = { holdOnNewDependencies: false };
+const AGE_ONLY: DependencyReviewPolicy = { ...POLICY, ...AGE_ONLY_SWITCH };
 // Every capability switch on: a changed binary is still not a capability.
 const EVERY_SWITCH: DependencyReviewPolicy = { ...NO_AGE, holdOnNewBinCommands: true };
 
@@ -165,13 +167,13 @@ describe("age fallback", () => {
   );
 
   test("a new package holds as too new, then passes as a new package", () => {
-    expect(decideBump({ kind: "new-package", publishedAt: ONE_DAY_OLD }, POLICY, NOW)).toEqual({
+    expect(decideBump({ kind: "new-package", publishedAt: ONE_DAY_OLD }, AGE_ONLY, NOW)).toEqual({
       status: "hold",
       reasons: ["too-new"],
       evidence: null,
       passesAt: iso(NOW + 2 * DAY),
     });
-    expect(decideBump({ kind: "new-package", publishedAt: TEN_DAYS_OLD }, POLICY, NOW)).toEqual({
+    expect(decideBump({ kind: "new-package", publishedAt: TEN_DAYS_OLD }, AGE_ONLY, NOW)).toEqual({
       status: "new-package",
     });
   });
@@ -260,7 +262,10 @@ describe("age fallback", () => {
 
   test("needsReleaseAge asks only where the verdict reads the publish time", () => {
     expect(needsReleaseAge({ kind: "new-package" }, POLICY)).toBe(true);
-    expect(needsReleaseAge({ kind: "new-package" }, NO_AGE)).toBe(false);
+    // The young-package rule reads a new package's times without the fallback.
+    expect(needsReleaseAge({ kind: "new-package" }, NO_AGE)).toBe(true);
+    expect(needsReleaseAge({ kind: "new-package", repinned: true }, NO_AGE)).toBe(false);
+    expect(needsReleaseAge({ kind: "new-package" }, { ...NO_AGE, ...AGE_ONLY_SWITCH })).toBe(false);
     expect(needsReleaseAge({ kind: "new-package" }, { ...POLICY, holdOnNewPackages: true })).toBe(
       false,
     );
@@ -624,7 +629,11 @@ describe("pins, re-pins, and the review limit in the summary", () => {
         },
         {
           bump: bump({ name: "aged", fromVersion: null, repinned: true }),
-          verdict: decideBump({ kind: "new-package", publishedAt: ONE_DAY_OLD }, POLICY, NOW),
+          verdict: decideBump(
+            { kind: "new-package", publishedAt: ONE_DAY_OLD, repinned: true },
+            POLICY,
+            NOW,
+          ),
           approved: false,
         },
       ],
@@ -641,14 +650,14 @@ describe("pins, re-pins, and the review limit in the summary", () => {
       POLICY,
       NOW,
     );
-    const added = decideBump({ kind: "new-package", pastReviewLimit: true }, POLICY, NOW);
+    const added = decideBump({ kind: "new-package", pastReviewLimit: true }, AGE_ONLY, NOW);
     expect(capped).toMatchObject({ status: "hold", pastReviewLimit: true });
     expect(added).toMatchObject({ status: "hold", pastReviewLimit: true });
     // A known publish time wins over the marker.
     expect(
       decideBump(
         { kind: "new-package", publishedAt: ONE_DAY_OLD, pastReviewLimit: true },
-        POLICY,
+        AGE_ONLY,
         NOW,
       ),
     ).not.toHaveProperty("pastReviewLimit");
@@ -669,57 +678,114 @@ describe("pins, re-pins, and the review limit in the summary", () => {
   });
 });
 
-describe("an added dependency's hold says which and why", () => {
-  const render = (verdict: Extract<BumpVerdict, { status: "hold" }>) =>
+describe("a young package or an added dependency says why it holds", () => {
+  type Hold = Extract<BumpVerdict, { status: "hold" }>;
+  const render = (verdict: Hold, overrides: Partial<DependencyBump> = {}) =>
     renderDependencyReviewCheck({
-      bumps: [{ bump: bump(), verdict, approved: false }],
+      bumps: [{ bump: bump(overrides), verdict, approved: false }],
       conclusion: "held",
       diffUrl: () => null,
       approvedBy: null,
       unreadLockfiles: [],
     }).summary;
-  const held = (newDependency?: NewDependencyCause) => ({
-    status: "hold" as const,
-    reasons: ["dependency-added" as const],
+  const young = (fields: Partial<Hold>): Hold => ({
+    status: "hold",
+    reasons: ["young-package"],
+    evidence: null,
+    ...fields,
+  });
+  const added = (fields: Partial<Hold> = {}): Hold => ({
+    status: "hold",
+    reasons: ["dependency-added"],
     evidence: CLEAN,
-    ...(newDependency ? { newDependency } : {}),
+    ...fields,
   });
   const at = "2026-11-04T09:30:00.000Z";
 
-  test.each<[string, NewDependencyCause | undefined, string]>([
+  test.each<[string, Hold, string]>([
     [
-      "a young package",
-      { cause: "young-package", name: "fresh", why: "first-published", at },
-      "adds a dependency on `fresh`, a package new to the lockfile and first published 2026-11-04 09:30 UTC",
+      "first published recently",
+      young({ young: { why: "first-published", at } }),
+      ": a package new to the lockfile, first published 2026-11-04 09:30 UTC",
     ],
     [
-      "a young version",
-      { cause: "young-package", name: "@acme/util", why: "version-published", at },
-      "adds a dependency on `@acme/util`, a package new to the lockfile whose installed version was published 2026-11-04 09:30 UTC",
+      "a recent installed version",
+      young({ young: { why: "version-published", at } }),
+      ": a package new to the lockfile whose installed version was published 2026-11-04 09:30 UTC",
     ],
     [
       "an unknown age",
-      { cause: "young-package", name: "fresh", why: "age-unknown" },
-      "adds a dependency on `fresh`, a package new to the lockfile whose age Drydock could not establish",
+      young({ young: { why: "age-unknown" } }),
+      ": a package new to the lockfile whose age Drydock could not establish",
+    ],
+    [
+      "past the review limit",
+      young({ young: { why: "age-unknown" }, pastReviewLimit: true }),
+      ": a package new to the lockfile whose age Drydock could not establish (past the per-PR review limit)",
     ],
     [
       "no verdict",
-      { cause: "young-package", name: "fresh", why: "no-verdict" },
-      "adds a dependency on `fresh`, a package new to the lockfile with no Drydock verdict",
+      young({ young: { why: "no-verdict" }, unreviewed: "remote-source" }),
+      ": a package new to the lockfile with no Drydock verdict (comes from a git, URL, or tarball source Drydock can't diff)",
     ],
     [
       "a lockfile that does not pin the tree",
-      { cause: "lockfile-unpinned" },
-      "adds a dependency; this lockfile does not pin transitive dependencies, so Drydock cannot see what it installs",
+      added({ dependencyUnseen: "lockfile-unpinned" }),
+      ": adds a dependency; this lockfile does not pin transitive dependencies, so Drydock cannot see what it installs",
     ],
     [
-      "names it could not match",
-      { cause: "unmatched" },
-      "adds a dependency Drydock could not match against the lockfile",
+      "a review with unread coverage",
+      added({ dependencyUnseen: "coverage-incomplete" }),
+      ": adds a dependency; part of this pull request went unread, so Drydock cannot see what it installs",
     ],
-    ["a verdict stored before the cause was recorded", undefined, ": adds a dependency"],
-  ])("%s", (_, cause, phrase) => {
-    expect(render(held(cause))).toContain(phrase);
+  ])("%s", (_, verdict, phrase) => {
+    expect(render(verdict, { fromVersion: null, direct: false })).toContain(phrase);
+  });
+
+  test("a verdict stored before the cause was recorded reads as before", () => {
+    expect(render(added())).toMatch(/: adds a dependency$/m);
+  });
+
+  test("an aged package that replaces a non-public source passes, listed with that note", () => {
+    // fresh@1.0.1 public, first published 400 days ago and this version 30;
+    // the base installed fresh@1.0.0 from the organization's private registry.
+    const verdict = decideBump(
+      {
+        kind: "new-package",
+        firstPublishedAt: iso(NOW - 400 * DAY),
+        publishedAt: iso(NOW - 30 * DAY),
+      },
+      POLICY,
+      NOW,
+    );
+    expect(verdict).toEqual({ status: "new-package" });
+    const { summary } = renderDependencyReviewCheck({
+      bumps: [
+        {
+          bump: bump({ name: "fresh", fromVersion: null, direct: false, replacesPrivate: true }),
+          verdict,
+          approved: false,
+        },
+      ],
+      conclusion: "clear",
+      diffUrl: () => null,
+      approvedBy: null,
+      unreadLockfiles: [],
+    });
+    expect(summary).toMatch(
+      /### New packages \(1\)\n+`fresh` `1\.0\.1` \(transitive, previously from a non-public source\)/,
+    );
+  });
+
+  test("a package that replaces a non-public source says so beside its name", () => {
+    const summary = render(young({ young: { why: "first-published", at } }), {
+      fromVersion: null,
+      direct: false,
+      replacesPrivate: true,
+    });
+    expect(summary).toContain(
+      "`left-pad` `1.0.1` (transitive, previously from a non-public source)",
+    );
   });
 });
 

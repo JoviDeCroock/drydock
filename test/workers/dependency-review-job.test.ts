@@ -224,43 +224,46 @@ describe("dependency review job", () => {
     expectTokenStaysOnGithub(api);
   });
 
-  test("a release adding a dependency on a package created yesterday holds, naming it", async () => {
-    const dependency = uniquePackageName("fresh-dep");
+  test("a young package beneath a newly added one holds; the release adding it does not", async () => {
     const host = uniquePackageName("host");
+    const carrier = uniquePackageName("carrier");
+    const payload = uniquePackageName("payload");
     const { api, review, input } = await scenario({
       before: { [host]: "1.0.0" },
-      after: { [host]: "1.0.1", [dependency]: "2.0.0" },
+      after: { [host]: "1.0.1", [carrier]: "2.0.0", [payload]: "1.0.0" },
     });
     await seedNpmDiff({
       name: host,
       from: "1.0.0",
       to: "1.0.1",
       fromPackageJson: { name: host, version: "1.0.0" },
-      toPackageJson: { name: host, version: "1.0.1", dependencies: { [dependency]: "^2.0.0" } },
+      toPackageJson: { name: host, version: "1.0.1", dependencies: { [carrier]: "^2.0.0" } },
     });
-    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    setPublishTimes(dependency, { "2.0.0": yesterday });
+    const daysAgo = (days: number) =>
+      new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    setPublishTimes(carrier, { "2.0.0": daysAgo(200) });
+    const yesterday = daysAgo(1);
+    setPublishTimes(payload, { "1.0.0": yesterday });
 
     await runDependencyReviewJob(input);
 
     const row = await readReview(review.id);
-    expect(row.conclusion).toBe("held");
-    expect(row.bumps.find((b) => b.bump.name === host)).toMatchObject({
+    expect(row).toMatchObject({ conclusion: "held", heldCount: 1 });
+    const byName = (name: string) => row.bumps.find((b) => b.bump.name === name);
+    expect(byName(host)).toMatchObject({
       bump: { lockfilePinsTree: true },
-      verdict: {
-        status: "hold",
-        reasons: ["dependency-added"],
-        newDependency: {
-          cause: "young-package",
-          name: dependency,
-          why: "first-published",
-          at: yesterday,
-        },
-      },
+      verdict: { status: "clear", evidence: { dependenciesAdded: 1 } },
+    });
+    expect(byName(carrier)?.verdict).toEqual({ status: "new-package" });
+    expect(byName(payload)?.verdict).toEqual({
+      status: "hold",
+      reasons: ["young-package"],
+      evidence: null,
+      young: { why: "first-published", at: yesterday },
     });
     expect(api.lastCheckRunState()).toMatchObject({ conclusion: "action_required" });
     expect(JSON.stringify(api.lastCheckRunState())).toContain(
-      `adds a dependency on \`${dependency}\`, a package new to the lockfile and first published`,
+      `\`${payload}\` \`1.0.0\`: a package new to the lockfile, first published`,
     );
     expectTokenStaysOnGithub(api);
   });
@@ -289,10 +292,10 @@ describe("dependency review job", () => {
     expect(row).toMatchObject({ status: "completed", conclusion: "clear", heldCount: 0 });
     expect(row.bumps.find((b) => b.bump.name === host)?.verdict).toMatchObject({
       status: "clear",
-      evidence: {
-        dependenciesAdded: 1,
-        addedDependencies: { names: [dependency], complete: true },
-      },
+      evidence: { dependenciesAdded: 1 },
+    });
+    expect(row.bumps.find((b) => b.bump.name === dependency)?.verdict).toEqual({
+      status: "new-package",
     });
     expect(api.lastCheckRunState()).toMatchObject({ conclusion: "success" });
   });
@@ -1635,6 +1638,49 @@ describe("lockfiles the review could not read", () => {
     expect(checkOutput(api).summary).toContain("bun.lock");
     expect(checkOutput(api).title).toBe("No updates held");
     expect(checkOutput(api).summary).not.toContain("adds no npm or PyPI dependencies");
+  });
+
+  test("with an unread lockfile, a release that adds a dependency holds on any lockfile", async () => {
+    const host = uniquePackageName("host");
+    const carrier = uniquePackageName("carrier");
+    const { api, review, input } = await scenario({
+      policy: {
+        ...DEFAULT_DEPENDENCY_REVIEW_POLICY,
+        unreadMinimumAgeDays: null,
+        holdOnUnreviewed: false,
+      },
+      before: { [host]: "1.0.0" },
+      after: { [host]: "1.0.1" },
+      pr: {
+        files: [
+          { filename: "package-lock.json", status: "modified" },
+          { filename: "bun.lock", status: "modified" },
+        ],
+      },
+    });
+    await seedNpmDiff({
+      name: host,
+      from: "1.0.0",
+      to: "1.0.1",
+      fromPackageJson: { name: host, version: "1.0.0" },
+      toPackageJson: { name: host, version: "1.0.1", dependencies: { [carrier]: "^1.0.0" } },
+    });
+
+    await runDependencyReviewJob(input);
+
+    const row = await readReview(review.id);
+    expect(row.conclusion).toBe("held");
+    expect(row.bumps[0]).toMatchObject({
+      bump: { name: host, lockfilePinsTree: true },
+      verdict: {
+        status: "hold",
+        reasons: ["dependency-added"],
+        dependencyUnseen: "coverage-incomplete",
+      },
+    });
+    expect(checkOutput(api).summary).toContain(
+      "adds a dependency; part of this pull request went unread, so Drydock cannot see what it installs",
+    );
   });
 
   test("lockfiles past the 20-per-review cap hold the review", async () => {

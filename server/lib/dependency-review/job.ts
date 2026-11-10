@@ -30,7 +30,6 @@ import {
   collectionPolicyKey,
   concludeDependencyReview,
   decideBump,
-  newDependencyScopes,
 } from "./policy";
 import {
   bumpProgressKey,
@@ -313,11 +312,18 @@ async function runReview(
     stage.bumps,
   );
   const decidedAtMs = Date.now();
-  // `dependency-added` reads the whole review: which packages are new to the
-  // PR's lockfiles and how young they are.
-  const scopes = newDependencyScopes(stage.bumps, stage.outcomes, decidedAtMs);
+  // An unread lockfile or registry config, or a listing GitHub cut short, may
+  // hide bumps nothing vouched for and that have no publish time to wait out.
+  const partial = collected.unreadLockfiles.length > 0 || !collected.listingComplete;
   const reviewed: ReviewedBump[] = stage.bumps.map((bump, index) => {
-    const verdict = decideBump(stage.outcomes[index], settings.policy, decidedAtMs, scopes[index]);
+    const outcome = stage.outcomes[index];
+    // A package a release's new dependency installs could be new only in
+    // what went unread, so no lockfile shows everything it brings in.
+    const verdict = decideBump(
+      partial && outcome.kind === "diffed" ? { ...outcome, coverageIncomplete: true } : outcome,
+      settings.policy,
+      decidedAtMs,
+    );
     return {
       bump,
       verdict,
@@ -326,11 +332,9 @@ async function runReview(
   });
 
   let conclusion = concludeDependencyReview(reviewed);
-  // An unread lockfile or registry config, or a listing GitHub cut short, may
-  // hide bumps nothing vouched for and that have no publish time to wait out,
-  // so it holds whenever the age fallback is on (unknown age holds), as well
-  // as under `holdOnUnreviewed`. Either way the PR is never called clear.
-  const partial = collected.unreadLockfiles.length > 0 || !collected.listingComplete;
+  // Partial coverage holds whenever the age fallback is on (unknown age
+  // holds), as well as under `holdOnUnreviewed`. Either way the PR is never
+  // called clear.
   const heldOnCoverage =
     partial && (settings.policy.holdOnUnreviewed || settings.policy.unreadMinimumAgeDays !== null);
   if (heldOnCoverage && conclusion !== "held") conclusion = "held";

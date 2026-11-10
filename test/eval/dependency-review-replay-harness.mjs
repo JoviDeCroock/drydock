@@ -38,13 +38,16 @@ import {
   collectionPolicy,
   concludeDependencyReview,
   decideBump,
+  dependencyNameKey,
   extractBumpEvidence,
+  newDependencyScopes,
 } from "../../server/lib/dependency-review/policy";
 import {
   committedInstallInput,
   resolutionConfigChanged,
   resolutionConfigKind,
 } from "../../server/lib/dependency-review/registry-config";
+import { ageRecheckAt } from "../../server/lib/dependency-review/recheck";
 import * as render from "../../server/lib/dependency-review/render";
 import * as reviewStage from "../../server/lib/dependency-review/review-bumps";
 import { DEFAULT_DEPENDENCY_REVIEW_POLICY } from "../../server/lib/dependency-review/types";
@@ -606,11 +609,28 @@ async function coldDiff(bump) {
   return result;
 }
 
+// Evidence cached before `addedDependencies` existed reads as "names
+// unknown", which holds; such an entry is re-diffed (and overwritten) when it
+// added a dependency. One that added none gets the empty list
+// `extractBumpEvidence` now writes, since nothing else in it changed.
+function staleEvidence(cached) {
+  const evidence = cached.status === "served" ? cached.evidence : null;
+  return Boolean(evidence && !evidence.addedDependencies && evidence.dependenciesAdded > 0);
+}
+
+function withAddedNames(cached) {
+  if (cached.status !== "served" || cached.evidence.addedDependencies) return cached;
+  return {
+    ...cached,
+    evidence: { ...cached.evidence, addedDependencies: { names: [], complete: true } },
+  };
+}
+
 async function diffFor(bump, deadline) {
   const adapter = getPublicDiffAdapter(bump.ecosystem);
   const file = diffCachePath(pairKey(bump, adapter), adapter);
   const cached = readJsonGz(file);
-  if (cached) return cached;
+  if (cached && !staleEvidence(cached)) return withAddedNames(cached);
   if (Date.now() > deadline) return { status: "not-replayed" };
   const result = await coldDiff(bump);
   // A failure may be transient; a rerun tries it again.
@@ -711,9 +731,26 @@ function settledOutcome(entry, bump, diff) {
 const listings = new Map();
 const publishTimes = new Map();
 
+// review-bumps.ts `firstPublishedAtOf` (module-private): the earliest publish
+// time the listing reports.
+function firstPublishedAtOf(listing) {
+  let first = null;
+  let firstMs = Number.POSITIVE_INFINITY;
+  for (const { publishedAt } of listing?.versions ?? []) {
+    const ms = publishedAt ? Date.parse(publishedAt) : Number.NaN;
+    if (Number.isFinite(ms) && ms < firstMs) {
+      firstMs = ms;
+      first = publishedAt;
+    }
+  }
+  return first;
+}
+
+// The target version's publish time and the package's first, from one
+// listing, as production records them.
 async function lookupPublishTime(bump) {
   const adapter = getPublicDiffAdapter(bump.ecosystem);
-  if (!adapter) return null;
+  if (!adapter) return { publishedAt: null, firstPublishedAt: null };
   const name = adapter.normalizePackageName(bump.name);
   const key = `${bump.ecosystem}|${name}`;
   if (!listings.has(key)) {
@@ -726,9 +763,13 @@ async function lookupPublishTime(bump) {
     );
   }
   const listing = await listings.get(key);
-  if (!listing) return null;
+  if (!listing) return { publishedAt: null, firstPublishedAt: null };
   const same = adapter.versionsEquivalent ?? ((a, b) => a === b);
-  return listing.versions.find((entry) => same(entry.version, bump.toVersion))?.publishedAt ?? null;
+  return {
+    publishedAt:
+      listing.versions.find((entry) => same(entry.version, bump.toVersion))?.publishedAt ?? null,
+    firstPublishedAt: firstPublishedAtOf(listing),
+  };
 }
 
 async function publishTimeFor(bump) {
@@ -740,8 +781,8 @@ async function publishTimeFor(bump) {
     publishTimes.set(
       key,
       lookupPublishTime(bump).then(
-        (publishedAt) => ({ publishedAt, lookup: publishedAt ? "found" : "missing" }),
-        () => ({ publishedAt: null, lookup: "failed" }),
+        (times) => ({ ...times, lookup: times.publishedAt ? "found" : "missing" }),
+        () => ({ publishedAt: null, firstPublishedAt: null, lookup: "failed" }),
       ),
     );
   }
@@ -925,18 +966,31 @@ export async function runReplay({ repositories, prsPerRepo, budgetMs, token, log
  * as old. The target's registry publish time is `bump.publish.publishedAt`
  * (ISO, or null when unknown, private, or remote).
  */
-function verdictFor(bump, policy, nowMs) {
+function verdictFor(bump, policy, nowMs, scope) {
+  return decideBump(outcomeFor(bump), policy, nowMs, scope);
+}
+
+// The outcome as the review stage stores it: the publish time on every kind,
+// and on a new package its first publish time too.
+function outcomeFor(bump) {
   const publishedAt = bump.publish?.publishedAt ?? null;
-  return decideBump({ ...bump.outcome, publishedAt }, policy, nowMs);
+  return bump.outcome.kind === "new-package"
+    ? { ...bump.outcome, publishedAt, firstPublishedAt: bump.publish?.firstPublishedAt ?? null }
+    : { ...bump.outcome, publishedAt };
 }
 
 // job.ts's conclusion, without approvals: unread coverage (an unread lockfile,
 // manifest, or resolution config, or a cut-short listing) holds whenever the
 // age fallback is on or `holdOnUnreviewed` is (`heldOnCoverage`).
-function concludePull(pr, policy, nowMs) {
-  const reviewed = pr.bumps.map((bump) => ({
+// `scoped`: the current `dependency-added` rule, with the review-wide scopes
+// job.ts builds; otherwise the earlier rule (any added dependency holds).
+function concludePull(pr, policy, nowMs, scoped = true) {
+  const scopes = scoped
+    ? newDependencyScopes(pr.bumps, pr.bumps.map(outcomeFor), nowMs)
+    : pr.bumps.map(() => undefined);
+  const reviewed = pr.bumps.map((bump, index) => ({
     bump,
-    verdict: verdictFor(bump, policy, nowMs),
+    verdict: verdictFor(bump, policy, nowMs, scopes[index]),
     approved: false,
   }));
   let conclusion = concludeDependencyReview(reviewed);
@@ -944,7 +998,8 @@ function concludePull(pr, policy, nowMs) {
   const heldOnCoverage =
     partial && (policy.holdOnUnreviewed || policy.unreadMinimumAgeDays !== null);
   if (heldOnCoverage && conclusion !== "held") conclusion = "held";
-  return { conclusion, reviewed, heldOnCoverage };
+  const recheckAt = ageRecheckAt(reviewed, conclusion, heldOnCoverage);
+  return { conclusion, reviewed, heldOnCoverage, recheckAt };
 }
 
 function strictPolicy() {
@@ -991,10 +1046,15 @@ function isReplayed(pr) {
   );
 }
 
-function evaluateVariant(prs, policy, clock) {
+function evaluateVariant(prs, policy, clock, scoped = true) {
   const rows = prs.map((pr) => {
     const nowMs = clock(pr);
-    const { conclusion, reviewed, heldOnCoverage } = concludePull(pr, policy, nowMs);
+    const { conclusion, reviewed, heldOnCoverage, recheckAt } = concludePull(
+      pr,
+      policy,
+      nowMs,
+      scoped,
+    );
     const holds = reviewed.filter(({ verdict }) => verdict.status === "hold");
     const reasons = new Set(holds.flatMap(({ verdict }) => verdict.reasons));
     const triggers = new Set(holds.flatMap(({ verdict }) => holdTriggers(verdict)));
@@ -1033,6 +1093,10 @@ function evaluateVariant(prs, policy, clock) {
       unvouched,
       ageOnly,
       passesInHours,
+      // Held with nothing a recheck lifts: someone has to approve or push.
+      needsPerson: conclusion === "held" && recheckAt === null,
+      nowMs,
+      reviewed,
     };
   });
   const withBumps = rows.filter((row) => row.pr.bumps.length > 0);
@@ -1064,6 +1128,7 @@ function evaluateVariant(prs, policy, clock) {
       .filter((row) => row.conclusion === "held" && row.pinOnly)
       .map((row) => `${row.pr.repo}#${row.pr.number}`),
     heldOnCoverage: rows.filter((row) => row.heldOnCoverage).length,
+    bySize: sizeBuckets(rows),
     ageOnly: {
       prs: ageWaits.length,
       untilApproved: ageWaits.filter((hours) => hours === Infinity).length,
@@ -1071,6 +1136,100 @@ function evaluateVariant(prs, policy, clock) {
     },
     rows,
   };
+}
+
+const SIZE_BUCKETS = [
+  ["1", 1, 1],
+  ["2-5", 2, 5],
+  ["6-20", 6, 20],
+  ["21+", 21, Infinity],
+];
+
+// PRs with bumps by size: passing, held only until an age recheck lifts it,
+// or held for a person.
+function sizeBuckets(rows) {
+  return SIZE_BUCKETS.map(([label, min, max]) => {
+    const inBucket = rows.filter((row) => row.pr.bumps.length >= min && row.pr.bumps.length <= max);
+    const held = inBucket.filter((row) => row.conclusion === "held");
+    const person = held.filter((row) => row.needsPerson).length;
+    return {
+      label,
+      prs: inBucket.length,
+      pass: inBucket.length - held.length,
+      timer: held.length - person,
+      person,
+    };
+  });
+}
+
+// The `dependency-added` holds of the earlier rule (`before`) against the
+// current one (`after`), bump by bump: why each remaining hold holds, and,
+// for each that stopped, the added names that entered a lockfile as a new
+// package, with that package's first-publish and installed-version age at the
+// decision time.
+function newDependencyShift(before, after) {
+  const holdsDeps = (verdict) =>
+    verdict.status === "hold" && verdict.reasons.includes("dependency-added");
+  const remaining = [];
+  const lifted = [];
+  let beforeCount = 0;
+  let afterCount = 0;
+  after.rows.forEach((row, index) => {
+    const old = before.rows[index];
+    const pr = `${row.pr.repo}#${row.pr.number}`;
+    row.reviewed.forEach(({ bump, verdict }, at) => {
+      const wasHeld = holdsDeps(old.reviewed[at].verdict);
+      const isHeld = holdsDeps(verdict);
+      if (wasHeld) beforeCount += 1;
+      if (isHeld) afterCount += 1;
+      const label = `${bump.ecosystem} ${bump.name} ${bump.fromVersion ?? "(new)"} → ${bump.toVersion}`;
+      if (isHeld) {
+        const cause = verdict.newDependency;
+        remaining.push({
+          pr,
+          bump: label,
+          added: bump.evidence?.addedDependencies?.names ?? null,
+          cause: !cause
+            ? "unscoped"
+            : cause.cause === "young-package"
+              ? {
+                  "first-published": "young package",
+                  "version-published": "young version",
+                  "age-unknown": "age unknown",
+                  "no-verdict": "no plain public verdict",
+                }[cause.why]
+              : cause.cause === "lockfile-unpinned"
+                ? "lockfile does not pin the tree"
+                : "names unknown",
+          name: cause?.name ?? null,
+        });
+      } else if (wasHeld) {
+        const names = new Set(bump.evidence?.addedDependencies?.names ?? []);
+        const entered = row.pr.bumps.filter(
+          (other) =>
+            other.ecosystem === bump.ecosystem &&
+            other.fromVersion === null &&
+            !other.repinned &&
+            names.has(dependencyNameKey(other.ecosystem, other.name)),
+        );
+        const ageDays = (iso) =>
+          iso && Number.isFinite(Date.parse(iso)) ? (row.nowMs - Date.parse(iso)) / DAY_MS : null;
+        lifted.push({
+          pr,
+          bump: label,
+          added: [...names],
+          entered: entered.map((other) => ({
+            name: other.name,
+            version: other.toVersion,
+            outcome: other.outcome.kind,
+            firstPublishedDays: ageDays(other.publish?.firstPublishedAt),
+            versionDays: ageDays(other.publish?.publishedAt),
+          })),
+        });
+      }
+    });
+  });
+  return { beforeCount, afterCount, remaining, lifted };
 }
 
 // What put a held bump on hold, finer than `verdict.reasons`: an age hold is
@@ -1100,6 +1259,7 @@ function summarizeReplay(dataset) {
     ]),
   );
   variants["proposed@head"] = evaluateVariant(complete, VARIANTS.proposed, headClock);
+  variants["proposed-old-deps"] = evaluateVariant(complete, VARIANTS.proposed, createdClock, false);
   const repos = [...new Set(complete.map((pr) => pr.repo))].map((repo) => {
     const prs = complete.filter((pr) => pr.repo === repo);
     return {
@@ -1210,6 +1370,7 @@ function summarizeReplay(dataset) {
           })),
       ]),
     ),
+    newDependency: newDependencyShift(variants["proposed-old-deps"], variants.proposed),
     parseIncomplete: complete.flatMap((pr) =>
       pr.unreadReasons
         .filter((entry) => entry.reason === "parse-incomplete")
@@ -1267,13 +1428,17 @@ const trio = (s, digits = 0) =>
   `${num(s.median, digits)} / ${num(s.p90, digits)} / ${num(s.max, digits)}`;
 
 function renderReport(dataset, summary) {
-  const names = Object.keys(summary.variants);
+  const order = ["previous", "proposed-old-deps", "proposed", "strict", "proposed@head"];
+  const names = [
+    ...order.filter((name) => summary.variants[name]),
+    ...Object.keys(summary.variants).filter((name) => !order.includes(name)),
+  ];
   const lines = [
     `# Dependency review replay`,
     ``,
     `${dataset.generatedAt} · ${summary.complete} PRs replayed across ${summary.repos.length} repositories · ${summary.totalBumps} bumps (npm ${summary.ecosystems.npm}, PyPI ${summary.ecosystems.pypi}) · ${dataset.authenticated ? "authenticated" : "unauthenticated"} GitHub API · up to ${dataset.prsPerRepo} bot PRs per repository`,
     ``,
-    `Evaluation time is each PR's creation time (\`proposed@head\`: its head commit time). Variants: \`previous\` = defaults with \`unreadMinimumAgeDays: null\`; \`proposed\` = \`DEFAULT_DEPENDENCY_REVIEW_POLICY\` (age fallback ${DEFAULT_DEPENDENCY_REVIEW_POLICY.unreadMinimumAgeDays} days); \`strict\` = every boolean hold switch on, release risk at \`${VARIANTS.strict.holdAtReleaseRisk}\`. Verdicts come from the production \`decideBump\`.`,
+    `Evaluation time is each PR's creation time (\`proposed@head\`: its head commit time). Variants: \`previous\` = defaults with \`unreadMinimumAgeDays: null\`; \`proposed\` = \`DEFAULT_DEPENDENCY_REVIEW_POLICY\` (age fallback ${DEFAULT_DEPENDENCY_REVIEW_POLICY.unreadMinimumAgeDays} days); \`strict\` = every boolean hold switch on, release risk at \`${VARIANTS.strict.holdAtReleaseRisk}\`. \`proposed-old-deps\` = \`proposed\` with the earlier \`dependency-added\` rule (no \`NewDependencyScope\`: any added dependency holds); every other variant passes the review-wide scopes from \`newDependencyScopes\`, as job.ts does. Verdicts come from the production \`decideBump\`.`,
     ``,
     `## Headline`,
     ``,
@@ -1329,6 +1494,53 @@ function renderReport(dataset, summary) {
   lines.push(
     `| coverage only (PRs) | ${names.map((name) => summary.variants[name].coverageOnly).join(" | ")} |`,
   );
+  const shift = summary.newDependency;
+  lines.push(
+    ``,
+    `## \`dependency-added\`: earlier rule against the current one (\`proposed\`)`,
+    ``,
+    `Held bumps with \`dependency-added\`: ${shift.beforeCount} with \`proposed-old-deps\`, ${shift.afterCount} with \`proposed\`.`,
+    ``,
+    `Still holding (cause, and the young package when that is the cause):`,
+    ``,
+  );
+  for (const entry of shift.remaining) {
+    lines.push(
+      `- ${entry.pr} ${entry.bump}: ${entry.cause}${entry.name ? ` (\`${entry.name}\`)` : ""}; adds ${entry.added ? entry.added.join(", ") || "none named" : "names not recorded"}`,
+    );
+  }
+  const entered = shift.lifted.filter((entry) => entry.entered.length > 0);
+  lines.push(
+    ``,
+    `Stopped holding: ${shift.lifted.length} bumps; ${entered.length} of them add a dependency that entered the lockfile as a new package (age in days at PR creation):`,
+    ``,
+  );
+  for (const entry of entered) {
+    const packages = entry.entered.map(
+      (pkg) =>
+        `\`${pkg.name}\`@${pkg.version} (first published ${num(pkg.firstPublishedDays, 1)} d, version ${num(pkg.versionDays, 1)} d, ${pkg.outcome})`,
+    );
+    lines.push(`- ${entry.pr} ${entry.bump}: ${packages.join("; ")}`);
+  }
+  lines.push(
+    ``,
+    `## Who has to act, by PR size (PRs with bumps)`,
+    ``,
+    `\`timer\` = held, and an age recheck (\`ageRecheckAt\`) lifts every hold; \`person\` = held with something only an approval or a push clears.`,
+    ``,
+    `| Variant | ${SIZE_BUCKETS.map(([label]) => `${label} bump${label === "1" ? "" : "s"}: PRs · pass · timer · person`).join(" | ")} |`,
+    `| --- | ${SIZE_BUCKETS.map(() => "---").join(" | ")} |`,
+  );
+  for (const name of names) {
+    lines.push(
+      `| ${name} | ${summary.variants[name].bySize
+        .map(
+          (b) =>
+            `${b.prs} · ${b.pass} · ${b.timer} (${pct(b.timer, b.prs)}) · ${b.person} (${pct(b.person, b.prs)})`,
+        )
+        .join(" | ")} |`,
+    );
+  }
   lines.push(``, `## Pin proofs (bumps, by lockfile format)`, ``);
   lines.push(
     `A public bump that pins hashes is diffed only after \`verifyPublicPin\` proves a pinned hash is the public release's; a failed proof is \`unverified-pin\`. Re-pins (same version, new hash): ${summary.repinned}. Bumps settled as \`unverified-pin\`: ${summary.unverifiedPins}.`,

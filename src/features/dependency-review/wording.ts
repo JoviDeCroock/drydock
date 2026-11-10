@@ -4,9 +4,10 @@ import type { DependencyReview } from "../../models/dependency-review";
 
 export {
   HOLD_REASON_TEXT,
+  dependencyAddedText,
   holdReasonPhrases,
-  newDependencyText,
   REPINNED_TEXT,
+  REPLACES_PRIVATE_TEXT,
   unreadContentText,
   unreviewedText,
 } from "../../../server/lib/dependency-review/wording";
@@ -22,8 +23,8 @@ export const POLICY_SWITCHES: ReadonlyArray<{ key: PolicySwitch; label: string; 
   { key: "holdOnNativeBinaries", label: "adds a native binary" },
   {
     key: "holdOnNewDependencies",
-    label: "adds a dependency on a young package",
-    hint: "A package new to the lockfile that was first published under 90 days ago, whose installed version is under 7 days old, or whose age is unknown. A requirements file without hashes holds on any added dependency.",
+    label: "is a young package new to the lockfile, or adds a dependency Drydock can't follow",
+    hint: "Young: first published under 90 days ago, an installed version under 7 days old, or an age Drydock can't establish. An added dependency holds only where the lockfile doesn't show what it installs: a requirements file without hashes, or a pull request with unread files.",
   },
   { key: "holdOnNewBinCommands", label: "adds a bin command" },
   {
