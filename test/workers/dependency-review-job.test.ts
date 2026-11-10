@@ -981,6 +981,19 @@ describe("dependency review job", () => {
     expect(JSON.parse(row.unreadLockfilesJson)).toEqual(["shared/cache/"]);
   });
 
+  test("a lockfile inside its own cache folder is not cache content", async () => {
+    const { pr, review, input } = await scenario({
+      pr: { files: [{ filename: "app/yarn.lock", status: "modified" }] },
+    });
+    pr.contents.set(`${pr.mergeBaseSha}:app/yarn.lock`, berryLock("a".repeat(128)));
+    pr.contents.set(`${pr.headSha}:app/yarn.lock`, berryLock("b".repeat(128)));
+    pr.contents.set(`${pr.headSha}:app/.yarnrc.yml`, "cacheFolder: .\nenableGlobalCache: false\n");
+
+    await runDependencyReviewJob(input);
+
+    expect(JSON.parse((await readReview(review.id)).unreadLockfilesJson)).toEqual([]);
+  });
+
   test("a cache folder the lockfile's config cannot name reports each changed zip's directory", async () => {
     const { pr, review, input } = await scenario({
       pr: {

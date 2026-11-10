@@ -297,8 +297,9 @@ async function changedResolutionConfig(
  * the head (a changed config is unread coverage already): the configs in and
  * above a changed zip's directory, and in and above the directory of each
  * `yarn.lock` the PR changes, whose cache may be anywhere in the repository.
- * A changed zip under a folder the first set names, and any changed file
- * under a folder the second set names, reports that folder. That costs one
+ * A changed zip under a folder either set names reports that folder; Yarn
+ * loads only zip archives from its cache, so the lockfile and any other file
+ * under a `cacheFolder` of `.` are not cache content. That costs one
  * read per distinct directory, and only for PRs that change such a zip or a
  * `yarn.lock`; past `MAX_CONFIG_FILES` reads, or where a config does not read
  * strictly, each changed zip's directory is reported instead.
@@ -308,7 +309,6 @@ async function changedInstallInputs(
   files: readonly PullRequestFile[],
 ): Promise<string[]> {
   const found = new Set<string>();
-  const paths: string[] = [];
   const zips: string[] = [];
   const lockDirs = new Set<string>();
   for (const file of files) {
@@ -317,7 +317,6 @@ async function changedInstallInputs(
     }
     for (const path of [file.filename, file.previousFilename]) {
       if (!path) continue;
-      paths.push(path);
       const input = committedInstallInput(path);
       if (input !== null) found.add(input);
       else if (path.toLowerCase().endsWith(".zip")) zips.push(path);
@@ -365,7 +364,7 @@ async function changedInstallInputs(
     const named = namedFolders(dir);
     if (named === null) for (const zip of zips) found.add(dirname(zip));
     for (const folder of named ?? []) {
-      if (paths.some((path) => path.startsWith(folder))) found.add(folder || "./");
+      if (zips.some((zip) => zip.startsWith(folder))) found.add(folder || "./");
     }
   }
   return [...found];
