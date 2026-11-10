@@ -83,13 +83,13 @@ make it required.
    | Changed file | Unread when |
    | --- | --- |
    | Supported lockfile (`package-lock.json` / `npm-shrinkwrap.json` v2–v3, `pnpm-lock.yaml` v5–v9, `yarn.lock` classic and Berry, `uv.lock`) | Past the 20-per-review cap, over 8 MiB, deleted by the PR, or not finished by the parser: malformed, outside the canonical shape, over its entry caps, or holding an entry it can't classify (an unplaceable entry makes the snapshot incomplete; it is never dropped). Peer variants of one release in `pnpm-lock.yaml` are one entry; variants with different resolutions make the file unread. |
-   | Requirements (`requirements*.txt`, `constraints*.txt`, `requirements/*.txt`, and any other changed `.txt`, since pip follows `-r`/`-c` into files of any name) | As above, plus: an index or find-links option other than an explicit pypi.org `--index-url`, any option pip doesn't accept exactly as written, a name pinned to two versions, a change to its unpinned lines (ranges such as `foo>=1.3`, URLs, VCS and `-e` lines, includes), or a change to the extras, marker, or per-requirement install options of a name pinned to the same release on both sides (adding, removing, or re-versioning a conditional line is an ordinary bump). A `.txt` that isn't requirements holds on its text change. |
+   | Requirements (`requirements*.txt`, `constraints*.txt`, `requirements/*.txt`, and any other changed `.txt`, since pip follows `-r`/`-c` into files of any name) | As above, plus: an index or find-links option other than an explicit pypi.org `--index-url`, any option pip doesn't accept exactly as written, a name pinned to two versions, a change to its unpinned lines (ranges such as `foo>=1.3`, URLs, VCS and `-e` lines, includes), or a change to the extras, marker, or per-requirement install options of a name pinned on both sides, with or without a version change (only a line added or removed outright is an ordinary bump). A `.txt` that isn't requirements holds on its text change. |
    | Unparsed npm or PyPI lockfile (`bun.lock`, `poetry.lock`, `Pipfile.lock`, `pdm.lock`, `pylock*.toml`) | Always. |
    | Dependency manifest (`package.json`, `pyproject.toml`, `setup.cfg`, `setup.py`, `Pipfile`, pip-tools `*.in`) | Unless the PR changes a parsed lockfile of its ecosystem that covers it: one in the same directory, or one above it whose parsed snapshot records the directory as a project: npm importer keys, pnpm `importers` from every YAML document, Berry `workspace:` resolutions, uv editable, virtual, and directory sources, or the Yarn root manifest's `workspaces` globs. A requirements file covers only its own pip-tools input (`X.in` for `X.txt`) or a manifest its `pip-compile` or `uv pip compile` header line names. |
    | `.npmrc`, `.yarnrc.yml` (anywhere in the PR) | Any change other than to comments and blank lines (an added or removed file counts unless it holds only those), any rename, and any side that does not read in the strict shape. Over 64 KiB a file does not read. |
    | Yarn classic `.yarnrc`, `uv.toml`, `pip.conf`, `pip.ini` | Any change. |
    | `pyproject.toml` `[tool]` and `[tool.uv…]` tables | Any change to their text (whitespace-normalized). |
-   | Committed Yarn install files: anything under `.yarn/cache`, `.yarn/unplugged`, `.yarn/releases`, or `.yarn/plugins`, the PnP loader (`.pnp.cjs`, `.pnp.js`, `.pnp.loader.mjs`, `.pnp.data.json`), and any zip in the cache a `.yarnrc.yml` `cacheFolder` names (read at the head, relative to that file) | Added, removed, changed, or renamed; reported once per directory (per file for the loader). Yarn installs or runs these with nothing the lockfile diff binds. A zip elsewhere is an ordinary file; a moved `pnpUnpluggedFolder` is not followed. |
+   | Committed Yarn install files: anything under `.yarn/cache`, `.yarn/unplugged`, `.yarn/releases`, or `.yarn/plugins`, the PnP loader (`.pnp.cjs`, `.pnp.js`, `.pnp.loader.mjs`, `.pnp.data.json`), any file named like a Berry cache archive, wherever it is, and a cache a `.yarnrc.yml` `cacheFolder` names (read at the head from the configs in and above a changed zip's directory, for that zip, and in and above a changed `yarn.lock`'s, for any file in the folder) | Added, removed, changed, or renamed; reported once per directory (per file for the loader), or each changed zip's directory where such a config can't be read. Yarn installs or runs these with nothing the lockfile diff binds. Any other zip is an ordinary file; a moved `pnpUnpluggedFolder` is not followed. |
 
    Up to 20 changed `.npmrc`, `.yarnrc.yml`, and `pyproject.toml` files are
    compared per review; past that, a changed one is unread. Up to 20 uncovered
@@ -105,11 +105,13 @@ make it required.
    come from, per side of the bump, and the bump takes the worse side
    (public, mirror, private, remote, in that order). Sources whose code is in
    the PR itself (`file:`, `link:`, `workspace:`, `portal:`, `exec:`, paths)
-   are left out. An npm `inBundle` entry without its own `resolved` is left out
-   only when npm ships it in the bundler's tarball: a named bundle dependency,
-   anything a bundled package depends on (peers included) that resolves inside
-   the bundler, or anything installed inside a bundled package. Every other
-   copy is reviewed.
+   are left out. No bundled npm entry is: one npm's own rule accepts as
+   bundled (named in a `bundleDependencies` array, depended on by a bundled
+   package, peers included, and resolving inside the bundler, or installed
+   inside a bundled package) is reviewed as the registry release of its name
+   and version with no pin expected, since npm writes none. `true` and the
+   `bundledDependencies` spelling bundle nothing. Any other `inBundle` entry
+   expects a pin like the rest, so it holds.
 
    | Place | When | Review |
    | --- | --- | --- |
@@ -400,18 +402,13 @@ never leave the organization.
 
 A registry that also proxies the public registry must be declared a mirror,
 not a private registry: bumps from a private registry are not reviewed. A
-release the PR moves onto a declared private registry from the public registry
-or a mirror is a remote source, not exempt.
+release the PR moves onto a private registry from the public registry or a
+mirror is a remote source. An undeclared registry or proxy is a remote source
+too, so under the default policy its bumps hold until approved.
 
-A registry or proxy that is neither declared is a remote source, so under the
-default policy every bump resolved through it holds until approved. Declare a
-pass-through proxy as a mirror to have its bumps proven and diffed, or the
-organization's own registry as private to exempt it from the age fallback.
-
-Extra bot logins identify trusted dependency automation, such as self-hosted
-Renovate, whose account may not have repository collaborator permission. Human
-repository writers need no allowlist entry. List only trusted automation: these
-logins bypass the human author and sender permission checks.
+Extra bot logins identify trusted automation, such as self-hosted Renovate,
+whose account may lack collaborator permission; human writers need no entry.
+These logins bypass the author and sender permission checks.
 
 The GitHub App needs **Checks: read and write**, **Pull requests: read**, and
 **Contents: read**, and the **Pull request**, **Check run**, and **Check
@@ -422,9 +419,8 @@ logs.
 A deployment with a custom `NPM_REGISTRY` has no public egress: nothing is
 diffed, no pin is proven, and no publish time is known. Every pinned bump is an
 unverified pin, and under the default policy every public bump holds until
-approved. Its operator either approves
-each update or turns the minimum age off (leave the field empty), which lets
-unreviewed bumps and new packages pass unless `holdOnUnreviewed` or
+approved. Its operator approves each update or turns the minimum age off,
+which lets unreviewed bumps and new packages pass unless `holdOnUnreviewed` or
 `holdOnNewPackages` holds them.
 
 To enforce the check, add **Drydock dependency review** as a required status
