@@ -49,9 +49,9 @@ export interface DependencyBump {
   // like any other.
   repinned?: true;
   // The lockfile this bump comes from pins every package an install puts in
-  // the tree (npm, pnpm, Yarn, uv; a requirements file only in pip's
-  // hash-checking mode), so a dependency a release adds either resolves to an
-  // entry already there or arrives as a bump of its own. Set by collection,
+  // the tree (npm, pnpm, Yarn, uv; never a requirements file), so a
+  // dependency a release adds either resolves to an entry already there or
+  // arrives as a bump of its own. Set by collection,
   // kept through the proofs, and cleared when a merged copy of the change
   // comes from a lockfile that does not. Absent: not known, and any dependency
   // the release adds holds (`holdOnNewDependencies`).
@@ -61,6 +61,16 @@ export interface DependencyBump {
   // non-public source: the base version is no predecessor of the public
   // release, so `fromVersion` is null. Dependency confusion's shape.
   replacesPrivate?: true;
+  // PyPI: the lockfile records no wheel for the target version, so it is
+  // built from source, and its build requirements are installed without
+  // being locked.
+  buildsFromSource?: true;
+  // With `privateSource` and `remoteSource`: a name in a declared private
+  // scope that the lockfile resolves from the public registry, by a recorded
+  // public URL, a route the repository sets to the public registry, or a move
+  // off a non-public source. Never sent to a public registry; it holds until
+  // approved (`private-scope-public`).
+  privateScopePublic?: true;
 }
 
 export type LockfileKind = "npm" | "pnpm" | "yarn" | "uv" | "requirements";
@@ -153,7 +163,9 @@ export type UnreviewedReason =
   // A public or mirror bump whose pinned hashes the review stage could not
   // match to the public registry's release. Like a remote source: nothing to
   // diff and no publish time to wait out.
-  | "unverified-pin";
+  | "unverified-pin"
+  // `privateScopePublic`: dependency confusion's signal. Always held.
+  | "private-scope-public";
 
 export interface BumpFinding {
   severity: FindingSeverity;
@@ -212,12 +224,13 @@ export type BumpVerdict =
 /**
  * Why a package new to the lockfile counts as young: first published, or its
  * installed version published, too recently (`at` is that time), an age the
- * review could not establish, or no Drydock verdict at all (a private,
- * remote, or unverified source).
+ * review could not establish, no Drydock verdict at all (a remote or
+ * unverified source), or a source build whose build requirements no lockfile
+ * pins.
  */
 export type YoungPackage =
   | { why: "first-published" | "version-published"; at: string }
-  | { why: "age-unknown" | "no-verdict" };
+  | { why: "age-unknown" | "no-verdict" | "built-from-source" };
 
 /**
  * What the review stage learned about one bump, before any policy reads it.
@@ -254,6 +267,8 @@ export type BumpOutcome =
       pastReviewLimit?: true;
       // A re-pin of a version the lockfile already had, not a new package.
       repinned?: true;
+      // The bump's `buildsFromSource`.
+      buildsFromSource?: true;
     };
 
 export interface ReviewedBump {

@@ -97,10 +97,7 @@ type Hold = Extract<BumpVerdict, { status: "hold" }>;
 type NpmEntry = { name?: string; version: string; integrity?: string };
 
 /** package-lock.json v3; `root` is what the repository's own manifest declares. */
-function npmLock(
-  entries: Record<string, NpmEntry>,
-  root: Record<string, unknown> = { dependencies: { host: "^1.0.0" } },
-): string {
+function npmLock(entries: Record<string, NpmEntry>, root: Record<string, unknown> = {}): string {
   const packages: Record<string, unknown> = { "": { name: "app", version: "1.0.0", ...root } };
   for (const [path, entry] of Object.entries(entries)) {
     const name = entry.name ?? path.split("node_modules/").at(-1)!;
@@ -140,7 +137,7 @@ function review(pairs: LockfilePair[], options: ReviewOptions = {}): Map<string,
     const kind = pair.kind ?? "npm";
     const head = parseLockfile(kind, pair.after);
     const base = pair.before === null ? null : parseLockfile(kind, pair.before);
-    const pinsTree = kind !== "requirements" || head.hashChecked === true;
+    const pinsTree = kind !== "requirements";
     for (const change of diffLockfileChanges(base, head, pair.path ?? "package-lock.json")) {
       const bump = routedBump(change, PUBLIC_ROUTE, {
         publicMirrors: [],
@@ -163,6 +160,7 @@ function review(pairs: LockfilePair[], options: ReviewOptions = {}): Map<string,
             kind: "new-package",
             ...(times ? { firstPublishedAt: ago(times[0]), publishedAt: ago(times[1]) } : {}),
             ...(bump.repinned ? { repinned: true as const } : {}),
+            ...(bump.buildsFromSource ? { buildsFromSource: true as const } : {}),
           }
         : {
             kind: "diffed",
@@ -268,6 +266,47 @@ describe("a package new to the lockfile holds while young", () => {
     expect(verdicts.get("payload")).toMatchObject({ reasons: ["young-package"] });
   });
 
+  test("the release a bundled base copy names, now fetched from the registry, holds while young", () => {
+    // The base's `payload` 1.0.0 shipped inside `bundler`'s tarball; npm never
+    // fetched the registry's 1.0.0, so that release is new to the lockfile.
+    const withBundled = (extra: Record<string, unknown>) =>
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": { dependencies: { bundler: "^1.0.0" } },
+          "node_modules/bundler": {
+            version: "1.0.0",
+            resolved: "https://registry.npmjs.org/bundler/-/bundler-1.0.0.tgz",
+            integrity: sha512("bundler@1.0.0"),
+            bundleDependencies: ["payload"],
+          },
+          "node_modules/bundler/node_modules/payload": { version: "1.0.0", inBundle: true },
+          ...extra,
+        },
+      });
+    const verdicts = review(
+      [
+        {
+          before: withBundled({}),
+          after: withBundled({
+            "node_modules/payload": {
+              version: "1.0.0",
+              resolved: "https://registry.npmjs.org/payload/-/payload-1.0.0.tgz",
+              integrity: sha512("payload@1.0.0"),
+            },
+          }),
+        },
+      ],
+      { times: { payload: [10, 10] } },
+    );
+    expect(verdicts.get("payload")).toEqual({
+      status: "hold",
+      reasons: ["young-package"],
+      evidence: null,
+      young: { why: "first-published", at: ago(10) },
+    });
+  });
+
   test("a new package the pull request adds directly", () => {
     const verdicts = review(
       [
@@ -354,6 +393,75 @@ describe("a package new to the lockfile holds while young", () => {
     });
   });
 
+  describe("a uv package new to the lockfile with no wheel is built from source", () => {
+    const uvLock = (packages: Array<{ name: string; version: string; wheel?: boolean }>) =>
+      [
+        "version = 1",
+        ...packages.flatMap(({ name, version, wheel }) => [
+          "",
+          "[[package]]",
+          `name = "${name}"`,
+          `version = "${version}"`,
+          'source = { registry = "https://pypi.org/simple" }',
+          `sdist = { url = "https://files.pythonhosted.org/packages/ab/${name}-${version}.tar.gz", hash = "sha256:${sha256(`${name}${version}`)}", size = 1 }`,
+          ...(wheel
+            ? [
+                "wheels = [",
+                `    { url = "https://files.pythonhosted.org/packages/ab/${name}-${version}-py3-none-any.whl", hash = "sha256:${sha256(`${name}${version}w`)}", size = 1 },`,
+                "]",
+              ]
+            : []),
+        ]),
+      ].join("\n");
+    const ADDS_CARRIER = extractBumpEvidence(
+      release({ carrier: "==1.0.0" }, { ecosystem: "pypi" }),
+    );
+
+    test("however old, it holds: its build requirements are not locked", () => {
+      // carrier: project 400 days old, release 30; its sdist's
+      // `build-system.requires = ["builder>=1"]` resolves a day-old builder.
+      const verdicts = review(
+        [
+          {
+            kind: "uv",
+            path: "uv.lock",
+            before: uvLock([{ name: "host", version: "1.0.0", wheel: true }]),
+            after: uvLock([
+              { name: "host", version: "1.0.1", wheel: true },
+              { name: "carrier", version: "1.0.0" },
+            ]),
+          },
+        ],
+        { times: { carrier: OLD }, evidence: { host: ADDS_CARRIER } },
+      );
+      expect(verdicts.get("host")?.status).toBe("clear");
+      expect(verdicts.get("carrier")).toEqual({
+        status: "hold",
+        reasons: ["young-package"],
+        evidence: null,
+        young: { why: "built-from-source" },
+      });
+    });
+
+    test("with a wheel it is judged by its age as before", () => {
+      const verdicts = review(
+        [
+          {
+            kind: "uv",
+            path: "uv.lock",
+            before: uvLock([{ name: "host", version: "1.0.0", wheel: true }]),
+            after: uvLock([
+              { name: "host", version: "1.0.1", wheel: true },
+              { name: "carrier", version: "1.0.0", wheel: true },
+            ]),
+          },
+        ],
+        { times: { carrier: OLD }, evidence: { host: ADDS_CARRIER } },
+      );
+      expect(verdicts.get("carrier")).toEqual({ status: "new-package" });
+    });
+  });
+
   test("a change new in one lockfile and re-pinned in another holds as new", () => {
     const repinned = sha512("new pin");
     const verdicts = review(
@@ -398,18 +506,24 @@ describe("an added dependency holds where the lockfile can't show what it instal
     });
   });
 
-  test("a requirements file in hash-checking mode pins the tree, so it passes", () => {
+  test("a requirements file in hash-checking mode too: build requirements are outside it", () => {
+    // The host adds `carrier==1.0.0`, an sdist whose `build-system.requires`
+    // pip installs in an isolated environment the file's hashes never reach.
     const verdicts = review(
       [
         {
           kind: "requirements",
           before: `host==1.0.0${hash("a")}\n`,
-          after: `host==1.0.1${hash("b")}\n`,
+          after: `host==1.0.1${hash("b")}\ncarrier==1.0.0${hash("c")}\n`,
         },
       ],
-      { evidence: { host: ADDS_PYPI } },
+      { evidence: { host: ADDS_PYPI }, times: { carrier: OLD } },
     );
-    expect(verdicts.get("host")?.status).toBe("clear");
+    expect(verdicts.get("host")).toMatchObject({
+      status: "hold",
+      reasons: ["dependency-added"],
+      dependencyUnseen: "lockfile-unpinned",
+    });
   });
 
   test("any lockfile, when part of the review went unread", () => {
@@ -608,17 +722,6 @@ describe("switches and precedence", () => {
 });
 
 describe("collection says which lockfiles pin the whole tree", () => {
-  const hash = `--hash=sha256:${"a".repeat(64)}`;
-
-  test("a requirements file pins the tree only in pip's hash-checking mode", () => {
-    expect(parseLockfile("requirements", `left-pad==1.0.0 ${hash}\n`).hashChecked).toBe(true);
-    expect(parseLockfile("requirements", "left-pad==1.0.0\n").hashChecked).toBe(false);
-    expect(
-      parseLockfile("requirements", `left-pad==1.0.0 ${hash}\nright-pad==1.0.0\n`).hashChecked,
-    ).toBe(false);
-    expect(parseLockfile("requirements", "-r base.txt\n").hashChecked).toBe(false);
-  });
-
   test("a change merged from two lockfiles pins the tree only if both do", () => {
     const pinned: DependencyBump = {
       ecosystem: "pypi",

@@ -442,7 +442,7 @@ describe("a move off a non-public source onto the public registry is a new packa
     expect(bump).not.toHaveProperty("privateSource");
   });
 
-  test("private to private, and a declared private scope, stay private", () => {
+  test("private to private stays private", () => {
     const [kept] = routed(
       "npm",
       npmLock({ fresh: npmAt(PRIVATE, "1.0.0") }),
@@ -455,23 +455,6 @@ describe("a move off a non-public source onto the public registry is a new packa
     expect(kept.privateSource).toBe(true);
     expect(kept).not.toHaveProperty("replacesPrivate");
     expect(kept).not.toHaveProperty("remoteSource");
-
-    const scoped = (base: string, version: string) =>
-      npmLock({
-        "@corp/fresh": {
-          version,
-          resolved: `${base}@corp/fresh/-/fresh-${version}.tgz`,
-          integrity: sha512(version),
-        },
-      });
-    const [secret] = routed(
-      "npm",
-      scoped(PRIVATE, "1.0.0"),
-      scoped("https://registry.npmjs.org/", "1.0.1"),
-      { ...declared, privateScopes: ["@corp"] },
-    );
-    expect(secret.privateSource).toBe(true);
-    expect(secret).not.toHaveProperty("replacesPrivate");
   });
 
   test("public to private stays a remote source, not a new package", () => {
@@ -482,6 +465,107 @@ describe("a move off a non-public source onto the public registry is a new packa
       declared,
     );
     expect(bump).toMatchObject({ fromVersion: "1.0.0", privateSource: true, remoteSource: true });
+    expect(bump).not.toHaveProperty("replacesPrivate");
+  });
+});
+
+describe("a name in a private scope is exempt only from a declared private registry", () => {
+  const PRIVATE = "https://private.example/npm/";
+  const NPMJS = "https://registry.npmjs.org/";
+  const scope = { privateRegistries: [PRIVATE], privateScopes: ["@corp"] };
+  const scoped = (base: string, version: string) =>
+    npmLock({
+      "@corp/fresh": {
+        version,
+        resolved: `${base}@corp/fresh/-/fresh-${version}.tgz`,
+        integrity: sha512(`${base}${version}`),
+      },
+    });
+  const confused = { privateSource: true, remoteSource: true, privateScopePublic: true };
+
+  test("the reviewer's input: private @corp/fresh@1.0.0 to public @corp/fresh@1.0.1", () => {
+    const [bump] = routed("npm", scoped(PRIVATE, "1.0.0"), scoped(NPMJS, "1.0.1"), scope);
+    expect(bump).toMatchObject({ name: "@corp/fresh", ...confused });
+    expect(bump).not.toHaveProperty("replacesPrivate");
+    expect(bump).not.toHaveProperty("mirror");
+    expect(bump).not.toHaveProperty("pinnedHashes");
+  });
+
+  test("new to the lockfile from the public registry", () => {
+    const [bump] = routed("npm", npmLock({}), scoped(NPMJS, "1.0.1"), scope);
+    expect(bump).toMatchObject({ fromVersion: null, ...confused });
+  });
+
+  test("onto a mirror from a declared private registry", () => {
+    const [bump] = routed("npm", scoped(PRIVATE, "1.0.0"), scoped(MIRROR, "1.0.1"), scope);
+    expect(bump).toMatchObject(confused);
+    expect(bump).not.toHaveProperty("mirror");
+  });
+
+  test("on a declared private registry, or hosted behind a mirror, it stays private", () => {
+    for (const [before, after] of [
+      [scoped(PRIVATE, "1.0.0"), scoped(PRIVATE, "1.0.1")],
+      [npmLock({}), scoped(PRIVATE, "1.0.1")],
+      [scoped(MIRROR, "1.0.0"), scoped(MIRROR, "1.0.1")],
+    ]) {
+      const [bump] = routed("npm", before, after, scope);
+      expect(bump.privateSource).toBe(true);
+      expect(bump).not.toHaveProperty("remoteSource");
+      expect(bump).not.toHaveProperty("privateScopePublic");
+      expect(bump).not.toHaveProperty("mirror");
+    }
+  });
+
+  test("pnpm records no URL: a scope the repository routes to the public registry", () => {
+    const pnpm = (v: string) =>
+      pnpmLock([{ key: `'@corp/fresh@${v}'`, resolution: `{integrity: ${sha512(v)}}` }]);
+    const found = collectCustomRegistries(emptyCustomRegistries(), {
+      npmrc: `@corp:registry=${NPMJS}`,
+      yarnrc: null,
+    });
+    const route = npmNameRoute(found, "@corp/fresh");
+    expect(route).toEqual({ kind: "public", explicit: true });
+    const [bump] = routed("pnpm", pnpm("1.0.0"), pnpm("1.0.1"), { ...scope, route });
+    expect(bump).toMatchObject(confused);
+
+    // Routed nowhere in the repository: the registry is set outside it, which
+    // is what declaring the scope private is for.
+    const [unrouted] = routed("pnpm", pnpm("1.0.0"), pnpm("1.0.1"), scope);
+    expect(unrouted.privateSource).toBe(true);
+    expect(unrouted).not.toHaveProperty("privateScopePublic");
+  });
+});
+
+describe("a mirror copy at the base is a predecessor only with the head's pins", () => {
+  const at = (base: string) => `${base}payload/-/payload-1.0.0.tgz`;
+  const lock = (base: string, integrity: string) =>
+    npmLock({ payload: { version: "1.0.0", resolved: at(base), integrity } });
+
+  test("the reviewer's input: a mirror copy pinned to other bytes, then the public release", () => {
+    const [bump] = routed(
+      "npm",
+      lock(MIRROR, sha512("mirror bytes")),
+      lock("https://registry.npmjs.org/", sha512("public bytes")),
+    );
+    expect(bump).toEqual({
+      ecosystem: "npm",
+      name: "payload",
+      fromVersion: null,
+      toVersion: "1.0.0",
+      direct: false,
+      lockfilePath: "lock",
+      replacesPrivate: true,
+      pinnedHashes: [sha512("public bytes")],
+    });
+  });
+
+  test("the same strong pin is a plain move", () => {
+    const [bump] = routed(
+      "npm",
+      lock(MIRROR, sha512("same")),
+      lock("https://registry.npmjs.org/", sha512("same")),
+    );
+    expect(bump).toMatchObject({ fromVersion: null, toVersion: "1.0.0", repinned: true });
     expect(bump).not.toHaveProperty("replacesPrivate");
   });
 });

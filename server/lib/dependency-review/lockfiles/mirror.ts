@@ -13,7 +13,8 @@ import {
  * config outside the canonical shape, an environment-dependent value).
  */
 export type NameRoute =
-  | { kind: "public" }
+  // `explicit`: the repository's config names the public registry for it.
+  | { kind: "public"; explicit?: true }
   | { kind: "registries"; urls: readonly string[] }
   | { kind: "unknown" };
 
@@ -83,20 +84,40 @@ export function routedBump(
   const sides = change.from ? [change.from, change.to] : [change.to];
   const places = sides.map((source) => placeOf(bump, source, route, policy));
   const secret = privateScope(bump, policy);
+  const head = places[places.length - 1];
+  const nonPublicBase = places.length === 2 && PLACE_RANK[places[0]] >= PLACE_RANK.private;
+  // A private-scope name the lockfile resolves from the public registry, by a
+  // URL it records there, a route the repository sets there, or a move off a
+  // non-public source: what the install fetches is a public package under the
+  // organization's name, which is dependency confusion's signal, not its own
+  // package. A plain public entry the repository routes nowhere stays private:
+  // its registry is set outside the repository, which is what the scope
+  // declares. So does one from a mirror the organization hosts it behind.
+  if (
+    secret &&
+    (head === "public" || head === "mirror") &&
+    ((head === "public" && change.to.publicUrl === true) ||
+      (route.kind === "public" && route.explicit === true) ||
+      nonPublicBase)
+  ) {
+    return { ...bump, privateSource: true, remoteSource: true, privateScopePublic: true };
+  }
   // A head that resolves publicly (or through a mirror) where the base was a
   // private registry or another non-public source: the base version is no
   // predecessor of the public release, which is what the install now fetches.
   // It is a package new to the lockfile, never exempt as the organization's
   // own; dependency confusion takes this shape.
+  // The same holds for a base copy from a mirror whose bytes are not the ones
+  // the head pins: nothing proves that copy was the public release.
   if (
-    places.length === 2 &&
     !secret &&
-    PLACE_RANK[places[0]] >= PLACE_RANK.private &&
-    PLACE_RANK[places[1]] <= PLACE_RANK.mirror
+    PLACE_RANK[head] <= PLACE_RANK.mirror &&
+    (nonPublicBase ||
+      (places.length === 2 && places[0] === "mirror" && unprovenMirrorBase(bump, change)))
   ) {
-    const { repinned: _repinned, ...head } = change.bump;
+    const { repinned: _repinned, ...rest } = change.bump;
     return routedBump(
-      { ...change, bump: { ...head, fromVersion: null, replacesPrivate: true }, from: null },
+      { ...change, bump: { ...rest, fromVersion: null, replacesPrivate: true }, from: null },
       route,
       policy,
     );
@@ -128,6 +149,19 @@ export function routedBump(
   }
   if (place === "private") return { ...bump, privateSource: true };
   return { ...bump, privateSource: true, remoteSource: true };
+}
+
+// A base copy from a mirror of the release the head also installs, pinned to
+// bytes other than the head's: a re-pin would prove only the head's pin, never
+// that the base copy was the public release.
+function unprovenMirrorBase(bump: DependencyBump, change: LockfileChange): boolean {
+  const { from, to } = change;
+  if (!from?.version || !to.version || !sameRelease(bump.ecosystem, from.version, to.version)) {
+    return false;
+  }
+  const same = (a: readonly string[] | null, b: readonly string[] | null) =>
+    a !== null && b !== null && a.length > 0 && a.join(" ") === b.join(" ");
+  return from.mixed || to.mixed || !same(from.hashes, to.hashes);
 }
 
 function privateScope(bump: DependencyBump, policy: SourcePolicy): boolean {
@@ -297,6 +331,8 @@ export function mergeBump(existing: DependencyBump, bump: DependencyBump): void 
   // New in any lockfile is new: a re-pin elsewhere must not hide it.
   if (!bump.repinned) delete existing.repinned;
   if (bump.replacesPrivate) existing.replacesPrivate = true;
+  if (bump.buildsFromSource) existing.buildsFromSource = true;
+  if (bump.privateScopePublic) existing.privateScopePublic = true;
   // Fail closed: the change counts as pinning the whole tree only when every
   // lockfile it came from does.
   if (!bump.lockfilePinsTree) delete existing.lockfilePinsTree;

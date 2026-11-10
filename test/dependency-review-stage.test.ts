@@ -305,11 +305,15 @@ describe("publish-time lookups", () => {
     const result = await stage([
       bump("corp", { privateSource: true }),
       bump("from-git", { privateSource: true, remoteSource: true }),
+      bump("@corp/fresh", { privateSource: true, remoteSource: true, privateScopePublic: true }),
     ]);
-    expect(listVersions).not.toHaveBeenCalled();
+    for (const fn of [listVersions, verifyMirrorBump, verifyPublicPin, loadDiff]) {
+      expect(fn).not.toHaveBeenCalled();
+    }
     expect(result.outcomes).toEqual([
       { kind: "unreviewed", reason: "private-source" },
       { kind: "unreviewed", reason: "remote-source" },
+      { kind: "unreviewed", reason: "private-scope-public" },
     ]);
   });
 });

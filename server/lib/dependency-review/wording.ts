@@ -44,6 +44,7 @@ const UNREVIEWED_TEXT: Record<UnreviewedReason, string> = {
   "remote-source": "comes from a git, URL, or tarball source Drydock can't diff",
   "unverified-pin":
     "Drydock could not match the hashes pinned for this update to the public registry's release",
+  "private-scope-public": "a name in a private scope resolved from a public source",
 };
 
 // An `unverified-pin` whose entry pins nothing a lookup can match. No lookup
@@ -177,6 +178,8 @@ function youngPackageText(
       return verdict.unreviewed
         ? `${base} with no Drydock verdict (${unreviewedText(verdict.unreviewed, bump)})`
         : `${base} with no Drydock verdict`;
+    case "built-from-source":
+      return `${base} that is built from source; its build dependencies are not in the lockfile`;
   }
 }
 

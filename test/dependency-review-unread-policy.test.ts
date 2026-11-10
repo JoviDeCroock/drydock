@@ -531,6 +531,37 @@ describe("pins, re-pins, and the review limit in the summary", () => {
     expect(needsReleaseAge({ kind: "unreviewed", reason: "unverified-pin" }, POLICY)).toBe(false);
   });
 
+  test("a private-scope name from a public source holds until approved, whatever the switches", () => {
+    const HELD = {
+      status: "hold",
+      reasons: ["unreviewed"],
+      evidence: null,
+      unreviewed: "private-scope-public",
+    };
+    for (const policy of [POLICY, NO_AGE, AGE_ONLY, { ...NO_AGE, ...AGE_ONLY_SWITCH }]) {
+      for (const newPackage of [undefined, true as const]) {
+        const outcome: BumpOutcome = {
+          kind: "unreviewed",
+          reason: "private-scope-public",
+          ...(newPackage ? { newPackage } : {}),
+        };
+        expect(decideBump(outcome, policy, NOW)).toEqual(HELD);
+        expect(needsReleaseAge(outcome, policy)).toBe(false);
+      }
+    }
+    const { summary } = render(
+      [
+        {
+          bump: bump({ name: "@corp/fresh", privateSource: true, remoteSource: true }),
+          verdict: HELD as Extract<BumpVerdict, { status: "hold" }>,
+          approved: false,
+        },
+      ],
+      "held",
+    );
+    expect(summary).toContain("a name in a private scope resolved from a public source");
+  });
+
   const AGE_HOLD: Extract<BumpVerdict, { status: "hold" }> = {
     status: "hold",
     reasons: ["too-new"],
@@ -727,6 +758,11 @@ describe("a young package or an added dependency says why it holds", () => {
       "no verdict",
       young({ young: { why: "no-verdict" }, unreviewed: "remote-source" }),
       ": a package new to the lockfile with no Drydock verdict (comes from a git, URL, or tarball source Drydock can't diff)",
+    ],
+    [
+      "built from source",
+      young({ young: { why: "built-from-source" } }),
+      ": a package new to the lockfile that is built from source; its build dependencies are not in the lockfile",
     ],
     [
       "a lockfile that does not pin the tree",

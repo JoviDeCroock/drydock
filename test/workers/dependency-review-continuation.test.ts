@@ -388,6 +388,46 @@ describe("dependency review continuation", () => {
     });
   });
 
+  test.each([
+    ["a collection stored by older code is collected again", true],
+    ["a collection stored under the current rules is reused", false],
+  ])("%s", async (_, older) => {
+    const { names, before, after } = manyBumps("stored", MAX_COLD_DIFFS_PER_PASS + 5);
+    const { review, api, queue, run } = await scenario({ before, after });
+    await run();
+    const between = await readReview(review.id);
+    expect(between.status).toBe("queued");
+    const progress = JSON.parse(between.progressJson ?? "{}") as {
+      collected: { policyKey: string; bumps: DependencyBump[] };
+    };
+    if (older) {
+      // The key older code wrote: the declarations alone, no rules version.
+      const { version: _, ...declarations } = JSON.parse(progress.collected.policyKey) as Record<
+        string,
+        unknown
+      >;
+      progress.collected.policyKey = JSON.stringify(declarations);
+      // Its classification of the same lockfile differed.
+      const stale = progress.collected.bumps.find((b) => b.name === names[0])!;
+      stale.privateSource = true;
+    }
+    await createDb(env.DB)
+      .update(schema.dependencyReviews)
+      .set({ progressJson: JSON.stringify(progress) })
+      .where(eq(schema.dependencyReviews.id, review.id));
+    const sentBefore = api.requests.length;
+
+    await run(queue.sent[0].body);
+
+    const reread = api.requests.slice(sentBefore).some((r) => r.url.includes("/contents/"));
+    expect(reread).toBe(older);
+    const done = await readReview(review.id);
+    expect(done.status).toBe("completed");
+    expect(done.bumps.find((b) => b.bump.name === names[0])?.bump).not.toHaveProperty(
+      "privateSource",
+    );
+  });
+
   test("a scope made private between passes is never sent for a pending mirror proof", async () => {
     const mirror = "https://artifacts.example.com/npm/";
     const { before, after } = manyBumps("scoped", MAX_COLD_DIFFS_PER_PASS + 5);

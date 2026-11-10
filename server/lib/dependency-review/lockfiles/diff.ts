@@ -82,6 +82,9 @@ export function diffLockfileChanges(
         ? [...new Set(introduced.flatMap((pin) => pin.split(" ")))].sort()
         : null;
       const pinExpected = head.strongPins || hadPin(fromSource) || hadPin(to);
+      // A base release only bundled copies record was never fetched, so the
+      // copy the head fetches is new to the lockfile, not a re-pin of it.
+      const fetchedFirst = fromSource.bundledOnly === true && !to.bundledOnly;
       changes.push({
         bump: {
           ecosystem: pkg.ecosystem,
@@ -90,25 +93,33 @@ export function diffLockfileChanges(
           toVersion: toId,
           direct: pkg.direct,
           lockfilePath,
-          repinned: true,
+          ...(fetchedFirst ? {} : { repinned: true as const }),
         },
-        from: fromSource,
+        from: fetchedFirst ? null : fromSource,
         to: { ...to, hashes },
         pinExpected,
       });
     }
     added.sort(compare);
+    // A base release only bundled copies record is a predecessor only of
+    // another bundled-only release: a fetched copy never came from it.
+    const eligible = (toVersion: string, ids: string[]) =>
+      pkg.sources.get(toVersion)!.bundledOnly
+        ? ids
+        : ids.filter((id) => !baseSources.get(id)!.bundledOnly);
     const from = new Map<string, string | null>();
     for (const toVersion of added) {
-      const below = closest(removed, toVersion, compare, "below");
+      const below = closest(eligible(toVersion, removed), toVersion, compare, "below");
       if (below !== null) from.set(toVersion, take(removed, below));
     }
     for (const toVersion of added) {
       if (from.has(toVersion)) continue;
-      const near = closest(removed, toVersion, compare, "either");
+      const near = closest(eligible(toVersion, removed), toVersion, compare, "either");
       from.set(
         toVersion,
-        near !== null ? take(removed, near) : closest(before, toVersion, compare, "either"),
+        near !== null
+          ? take(removed, near)
+          : closest(eligible(toVersion, before), toVersion, compare, "either"),
       );
     }
     for (const toVersion of added) {
@@ -128,6 +139,7 @@ export function diffLockfileChanges(
             ? { privateSource: true as const }
             : {}),
           ...(kinds.includes("remote") ? { remoteSource: true as const } : {}),
+          ...(to.sourceBuild ? { buildsFromSource: true as const } : {}),
         },
         from: fromSource,
         to,

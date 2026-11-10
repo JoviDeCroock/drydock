@@ -12,6 +12,10 @@ import {
 import { readStrictYaml, type YamlValue } from "./lines";
 
 const DEPENDENCY_SECTIONS = new Set(["dependencies", "devDependencies", "optionalDependencies"]);
+// The edges a package entry installs (v9 in `snapshots`, v5/v6 in
+// `packages`). Peers are resolved by the importing package's own edges, and
+// its resolved peer versions are part of the key the edge names.
+const ENTRY_EDGES = new Set(["dependencies", "optionalDependencies"]);
 // The `packages` entry fields that say what to fetch. They are taken from
 // `packages` only; a `snapshots` entry carrying one is not a shape pnpm's
 // lockfile writer produces.
@@ -41,6 +45,10 @@ export function parsePnpmLock(text: string): LockfileSnapshot {
   const entries = new Map<string, PnpmEntry[]>();
   const packageIds = new Set<string>();
   const snapshotIds = new Set<string>();
+  // Full `packages` and `snapshots` keys, peer suffixes included, and every
+  // install edge as `[from, dep, value]`.
+  const keys = new Set<string>();
+  const edges: Array<[string, string, string]> = [];
   // The keys on the path to the current entry, by depth.
   const path: string[] = [];
   let pkg: PnpmEntry | null = null;
@@ -66,6 +74,7 @@ export function parsePnpmLock(text: string): LockfileSnapshot {
         if (key === null) return fail();
         const id = before(key, "(");
         if (!builder.reserve()) return false;
+        keys.add(key);
         if (section === "snapshots") {
           snapshotIds.add(id);
           return;
@@ -94,19 +103,31 @@ export function parsePnpmLock(text: string): LockfileSnapshot {
         if (key === null || value.kind !== "scalar") return fail();
         pkg.resolution.set(key, value.text);
       }
+      if (depth === 3 && ENTRY_EDGES.has(path[2]) && key !== null) {
+        if (value.kind !== "scalar") return fail();
+        if (!builder.reserve()) return false;
+        edges.push([path[1], key, value.text]);
+      }
       return;
     }
     // Every document's importers: pnpm's own `packageManagerDependencies`
     // document lists only `.`, the workspace's lists every project.
     if (section === "importers" && depth === 1 && key !== null) builder.addWorkspace(key);
     const declared = importerDeclaration(path, depth, key, value);
-    if (declared) builder.markDirect(importerPackageName(declared[0], declared[1]));
+    if (declared) {
+      builder.markDirect(importerPackageName(declared[0], declared[1]));
+      if (!builder.reserve()) return false;
+      edges.push([path[0] === "importers" ? path[1] : "", declared[0], declared[1]]);
+    }
   });
   if (!readable || !valid) {
     builder.markIncomplete();
     return builder.finish();
   }
   for (const id of snapshotIds) if (!packageIds.has(id)) builder.markIncomplete();
+  for (const [from, dep, value] of edges) {
+    if (!resolvesToKey(keys, dep, value)) builder.unresolvedEdge(from, dep, value);
+  }
   for (const [first, ...others] of entries.values()) {
     // Peer variants install one release; one fetched from a different source
     // or pin is not a shape pnpm's lockfile writer produces.
@@ -115,6 +136,22 @@ export function parsePnpmLock(text: string): LockfileSnapshot {
     else recordEntry(builder, first);
   }
   return builder.finish();
+}
+
+/**
+ * Whether an install edge names an entry of the lockfile, the way the
+ * installer reads the value: a version (with any peer suffix) under the
+ * dependency's own name, or an alias, host-qualified, or remote reference
+ * that is itself the key, in the v9 (`name@1.0.0`), v6 (`/name@1.0.0`), and
+ * v5 (`/name/1.0.0`) key forms. One that names nothing is resolved at
+ * install time, so the lockfile is not the whole install. A `link:` or `file:` value is
+ * repository code.
+ */
+function resolvesToKey(keys: ReadonlySet<string>, dep: string, value: string): boolean {
+  if (isLocalSource(value)) return true;
+  return [`${dep}@${value}`, value, `/${dep}@${value}`, `/${dep}/${value}`, `/${value}`].some(
+    (key) => keys.has(key),
+  );
 }
 
 // `[dep, resolved]` for an importer's dependency line: v9/v6 importers
@@ -194,7 +231,7 @@ function recordEntry(builder: SnapshotBuilder, entry: PnpmEntry): void {
     const source: TarballSource = keyed
       ? classifyNpmTarball(tarball, name, version)
       : { kind: "remote", location: null };
-    if (source.kind === "public") builder.add(name, version, { hashes, pin });
+    if (source.kind === "public") builder.add(name, version, { hashes, pin, publicUrl: true });
     else if (source.kind === "registry") {
       builder.add(name, version, {
         registry: { location: source.location, ref: tarball },

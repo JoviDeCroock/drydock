@@ -5,6 +5,7 @@ import {
   incompleteSnapshot,
   isPublicPyPiFileUrl,
   type LockfileSnapshot,
+  type SnapshotBuilder,
 } from "./snapshot";
 
 const PYPI_SIMPLE = /^https:\/\/pypi\.org\/simple\/?$/;
@@ -31,12 +32,18 @@ interface UvPackage {
   // Every `{ name = "..." }` in the block: its dependency lists, optional and
   // dev groups, and `requires-dist` metadata.
   dependsOn: string[];
+  // The names it installs: its `dependencies` and its optional and dev
+  // groups, not `metadata` (what it declared, which uv resolved into those).
+  edges: string[];
   // The `sha256:` hash of each `sdist` / `wheels` file, while every file
   // entry read cleanly as one with a sha256 hash.
   hashes: string[];
   // The `url` of each file entry.
   urls: string[];
   files: number;
+  // Entries read in the `wheels` array. None: the release is built from its
+  // sdist, with build requirements resolved outside the lock.
+  wheels: number;
   filesClean: boolean;
   // Field lines seen twice, or a name/version/source line in a form this
   // reader does not take: uv would read something this reader cannot.
@@ -69,6 +76,10 @@ export function parseUvLock(text: string): LockfileSnapshot {
   let inPackageTable = false;
   // Inside a multi-line array value: `wheels` (file entries) or any other.
   let array: "wheels" | "other" | null = null;
+  // Inside the package's `dependencies` array, or one of its optional or dev
+  // group subtables: names there are install edges.
+  let edgeArray = false;
+  let edgeTable = false;
   for (const raw of textLines(text)) {
     const line = raw.trim();
     if (line.includes('"""') || line.includes("'''")) {
@@ -79,6 +90,7 @@ export function parseUvLock(text: string): LockfileSnapshot {
     if (array !== null) {
       if (line === "]" || line === "],") {
         array = null;
+        edgeArray = false;
         continue;
       }
       if (line.startsWith("[") && TABLE_HEADER.test(tableHeader(line))) {
@@ -86,9 +98,11 @@ export function parseUvLock(text: string): LockfileSnapshot {
         break;
       }
       if (current && array === "wheels" && line && !line.startsWith("#")) {
+        current.wheels += 1;
         readFileEntry(current, line.endsWith(",") ? line.slice(0, -1) : line);
       }
       if (current) collectDependencyNames(current, line, builder.reserve);
+      if (current && (edgeArray || edgeTable)) collectEdges(current, line, builder.reserve);
       continue;
     }
     if (line.startsWith("[")) {
@@ -99,25 +113,34 @@ export function parseUvLock(text: string): LockfileSnapshot {
         current.block.update(`${raw}\n`);
         packages.push(current);
         inPackageTable = true;
+        edgeTable = false;
       } else if (header.startsWith("[package.") || header.startsWith("[[package.")) {
         // `[package.optional-dependencies]` and similar stay with the current
         // package; a file table in table form is not read.
         const sub = header.replace(/^\[\[?package\.|\]\]?$/g, "");
         if (current && !METADATA_SUBTABLES.has(sub)) current.filesClean = false;
         inPackageTable = false;
+        edgeTable = sub === "optional-dependencies" || sub === "dev-dependencies";
       } else {
         if (!TABLE_HEADER.test(header)) builder.markIncomplete();
         // Any other table (`[manifest]`, `[options]`) ends the package.
         current = null;
         inPackageTable = false;
+        edgeTable = false;
       }
       continue;
     }
     if (!current) continue;
     collectDependencyNames(current, line, builder.reserve);
-    if (inPackageTable) array = readPackageLine(current, raw, line);
+    const dependencies = inPackageTable && /^dependencies\s*=/.test(line);
+    if (edgeTable || dependencies) collectEdges(current, line, builder.reserve);
+    if (inPackageTable) {
+      array = readPackageLine(current, raw, line);
+      edgeArray = dependencies && array !== null;
+    }
   }
   if (array !== null) builder.markIncomplete();
+  checkInstallEdges(builder, packages);
   for (const pkg of packages) {
     // Recorded anyway: an incomplete snapshot is never diffed, but it still
     // shows what was read.
@@ -139,13 +162,15 @@ export function parseUvLock(text: string): LockfileSnapshot {
       // (each one pins a sha256); one whose files cannot be read cannot be
       // bound to PyPI's release, so the snapshot is unread.
       if (pypi && pkg.files > 0 && !pkg.filesClean) builder.markIncomplete();
+      const sourceBuild = pkg.wheels === 0;
       if (pypi && pkg.urls.every((url) => isPublicPyPiFileUrl(url))) {
-        builder.add(pkg.name, pkg.version, { hashes, pin });
+        builder.add(pkg.name, pkg.version, { hashes, pin, sourceBuild });
       } else {
         builder.add(pkg.name, pkg.version, {
           registry: { location: value, ref: null, urls: pkg.urls },
           hashes,
           pin,
+          sourceBuild,
         });
       }
     } else if (!LOCAL_UV_SOURCES.has(kind)) {
@@ -161,14 +186,37 @@ function newPackage(): UvPackage {
     version: null,
     source: null,
     dependsOn: [],
+    edges: [],
     hashes: [],
     urls: [],
     files: 0,
+    wheels: 0,
     filesClean: true,
     malformed: false,
     seen: new Set(),
     block: createHash("sha256"),
   };
+}
+
+/**
+ * Every name a package installs must be a package of the same lock. uv's
+ * lock is universal (every platform, extra, and group), so one that names
+ * nothing is resolved at install time and the lock is not the whole install.
+ */
+function checkInstallEdges(builder: SnapshotBuilder, packages: readonly UvPackage[]): void {
+  const names = new Set(packages.map((pkg) => normalizedName(pkg.name ?? "")));
+  for (const pkg of packages) {
+    for (const dep of pkg.edges) {
+      if (!names.has(normalizedName(dep))) builder.unresolvedEdge(pkg.name ?? "", dep, "");
+    }
+  }
+}
+
+function collectEdges(pkg: UvPackage, line: string, reserve: (count?: number) => boolean): void {
+  for (const m of line.matchAll(DEPENDENCY_NAME)) {
+    if (!reserve()) break;
+    pkg.edges.push(m[1]);
+  }
 }
 
 function collectDependencyNames(
@@ -534,7 +582,6 @@ export function parseRequirements(text: string): LockfileSnapshot {
     pins.set(key, pin);
   }
   const qualifiers = new Map<string, string>();
-  const hashChecked = pins.size > 0 && [...pins.values()].every((pin) => !pin.unhashed);
   for (const [name, { version, hashes, unhashed, qualifiers: lines }] of pins) {
     qualifiers.set(name, [...lines].sort().join("\n"));
     const all = [...hashes].sort();
@@ -550,7 +597,7 @@ export function parseRequirements(text: string): LockfileSnapshot {
     });
     builder.markDirect(name);
   }
-  return { ...builder.finish(unpinned.sort()), qualifiers, hashChecked };
+  return { ...builder.finish(unpinned.sort()), qualifiers };
 }
 
 function normalizedName(name: string): string {

@@ -38,9 +38,7 @@ import {
   collectionPolicy,
   concludeDependencyReview,
   decideBump,
-  dependencyNameKey,
   extractBumpEvidence,
-  newDependencyScopes,
 } from "../../server/lib/dependency-review/policy";
 import {
   committedInstallInput,
@@ -609,33 +607,27 @@ async function coldDiff(bump) {
   return result;
 }
 
-// Evidence cached before `addedDependencies` existed reads as "names
-// unknown", which holds; such an entry is re-diffed (and overwritten) when it
-// added a dependency. One that added none gets the empty list
-// `extractBumpEvidence` now writes, since nothing else in it changed.
-function staleEvidence(cached) {
-  const evidence = cached.status === "served" ? cached.evidence : null;
-  return Boolean(evidence && !evidence.addedDependencies && evidence.dependenciesAdded > 0);
-}
-
-function withAddedNames(cached) {
-  if (cached.status !== "served" || cached.evidence.addedDependencies) return cached;
-  return {
-    ...cached,
-    evidence: { ...cached.evidence, addedDependencies: { names: [], complete: true } },
-  };
+// Diffs cached by the name-matching rule's harness carry the added
+// dependency names in their evidence. Production evidence no longer has them,
+// so they move out of the evidence into `addedNames`, which only the report
+// reads (null: not recorded for this pair).
+function splitAddedNames(result) {
+  if (result.status !== "served") return result;
+  const { addedDependencies, ...evidence } = result.evidence;
+  const addedNames = evidence.dependenciesAdded === 0 ? [] : (addedDependencies?.names ?? null);
+  return { ...result, evidence, addedNames };
 }
 
 async function diffFor(bump, deadline) {
   const adapter = getPublicDiffAdapter(bump.ecosystem);
   const file = diffCachePath(pairKey(bump, adapter), adapter);
   const cached = readJsonGz(file);
-  if (cached && !staleEvidence(cached)) return withAddedNames(cached);
+  if (cached) return splitAddedNames(cached);
   if (Date.now() > deadline) return { status: "not-replayed" };
   const result = await coldDiff(bump);
   // A failure may be transient; a rerun tries it again.
   if (result.status !== "failed") writeJsonGz(file, result);
-  return result;
+  return splitAddedNames(result);
 }
 
 // ---------------------------------------------------------------------------
@@ -711,16 +703,36 @@ function settledOutcome(entry, bump, diff) {
   }
   if (!entry.inReview) {
     return original.fromVersion === null && !original.mirror && original.pinnedHashes === undefined
-      ? { kind: "new-package", pastReviewLimit: true }
+      ? {
+          kind: "new-package",
+          pastReviewLimit: true,
+          ...(original.repinned ? { repinned: true } : {}),
+        }
       : { kind: "unreviewed", reason: "over-cap", pastReviewLimit: true };
   }
   if (bump.privateSource) {
     return { kind: "unreviewed", reason: "unverified-pin" };
   }
-  if (bump.fromVersion === null) return { kind: "new-package" };
-  if (diff.status === "served") return { kind: "diffed", evidence: diff.evidence };
+  if (bump.fromVersion === null) {
+    return bump.repinned ? { kind: "new-package", repinned: true } : { kind: "new-package" };
+  }
+  if (diff.status === "served") {
+    return {
+      kind: "diffed",
+      evidence: diff.evidence,
+      lockfilePinsTree: bump.lockfilePinsTree === true,
+    };
+  }
   if (diff.status === "not-replayed") return null;
   return { kind: "unreviewed", reason: diff.status };
+}
+
+// review-bumps.ts `markNewPackage` (module-private): an unreviewed outcome of
+// a package new to its lockfile says so.
+function markNewPackage(outcome, original) {
+  return outcome.kind === "unreviewed" && original.fromVersion === null && !original.repinned
+    ? { ...outcome, newPackage: true }
+    : outcome;
 }
 
 // ---------------------------------------------------------------------------
@@ -731,9 +743,11 @@ function settledOutcome(entry, bump, diff) {
 const listings = new Map();
 const publishTimes = new Map();
 
-// review-bumps.ts `firstPublishedAtOf` (module-private): the earliest publish
-// time the listing reports.
+// review-bumps.ts `firstPublishedAtOf` (module-private): the adapter's own
+// figure where it has one (PyPI: the earliest non-yanked upload of any file),
+// otherwise the earliest publish time the listing reports.
 function firstPublishedAtOf(listing) {
+  if (listing?.firstPublishedAt) return listing.firstPublishedAt;
   let first = null;
   let firstMs = Number.POSITIVE_INFINITY;
   for (const { publishedAt } of listing?.versions ?? []) {
@@ -811,10 +825,13 @@ function outcomeStatus(outcome) {
 // proof, the settled outcome, the evidence, and the cold-diff cost.
 function recordBump(entry, result) {
   const { original, resolved } = entry;
-  const outcome = settledOutcome(entry, resolved, result ?? { status: "none" }) ?? {
-    kind: "unreviewed",
-    reason: "not-replayed",
-  };
+  const outcome = markNewPackage(
+    settledOutcome(entry, resolved, result ?? { status: "none" }) ?? {
+      kind: "unreviewed",
+      reason: "not-replayed",
+    },
+    original,
+  );
   const { pinnedHashes, mirror, ...fields } = original;
   const proof = mirror ? "mirror" : needsPinProof(original) ? "pin" : null;
   return {
@@ -830,7 +847,9 @@ function recordBump(entry, result) {
     ...(resolved?.privateSource && !original.privateSource ? { resolvedPrivate: true } : {}),
     outcome,
     diff: { status: outcomeStatus(outcome), ...(result?.error ? { error: result.error } : {}) },
-    ...(outcome.kind === "diffed" ? { evidence: outcome.evidence } : {}),
+    ...(outcome.kind === "diffed"
+      ? { evidence: outcome.evidence, addedNames: result?.addedNames ?? null }
+      : {}),
     ...(result?.cost ? { cost: result.cost } : {}),
   };
 }
@@ -966,35 +985,51 @@ export async function runReplay({ repositories, prsPerRepo, budgetMs, token, log
  * as old. The target's registry publish time is `bump.publish.publishedAt`
  * (ISO, or null when unknown, private, or remote).
  */
-function verdictFor(bump, policy, nowMs, scope) {
-  return decideBump(outcomeFor(bump), policy, nowMs, scope);
+function verdictFor(bump, policy, nowMs, partial, oldRule = false) {
+  const outcome = outcomeFor(bump, partial);
+  if (!oldRule) return decideBump(outcome, policy, nowMs);
+  // The rule before the young-package one, which production no longer has a
+  // switch for: a reviewed release that declares a new dependency holds for
+  // `dependency-added` (an outcome that does not say its lockfile pins the
+  // tree reads as unpinned, which holds whenever `dependenciesAdded > 0`),
+  // and a package new to the lockfile is judged by the age fallback alone.
+  if (outcome.kind === "diffed") {
+    const { lockfilePinsTree: _pins, coverageIncomplete: _partial, ...rest } = outcome;
+    return decideBump(rest, policy, nowMs);
+  }
+  return decideBump(outcome, { ...policy, holdOnNewDependencies: false }, nowMs);
 }
 
-// The outcome as the review stage stores it: the publish time on every kind,
-// and on a new package its first publish time too.
-function outcomeFor(bump) {
+// The outcome as job.ts decides it: the publish time on every kind, on a new
+// package its first publish time too, and on a diffed bump whether the review
+// was partial (job.ts adds `coverageIncomplete`).
+function outcomeFor(bump, partial) {
   const publishedAt = bump.publish?.publishedAt ?? null;
-  return bump.outcome.kind === "new-package"
-    ? { ...bump.outcome, publishedAt, firstPublishedAt: bump.publish?.firstPublishedAt ?? null }
-    : { ...bump.outcome, publishedAt };
+  if (bump.outcome.kind === "new-package") {
+    return {
+      ...bump.outcome,
+      publishedAt,
+      firstPublishedAt: bump.publish?.firstPublishedAt ?? null,
+    };
+  }
+  if (bump.outcome.kind === "diffed" && partial) {
+    return { ...bump.outcome, publishedAt, coverageIncomplete: true };
+  }
+  return { ...bump.outcome, publishedAt };
 }
 
 // job.ts's conclusion, without approvals: unread coverage (an unread lockfile,
 // manifest, or resolution config, or a cut-short listing) holds whenever the
 // age fallback is on or `holdOnUnreviewed` is (`heldOnCoverage`).
-// `scoped`: the current `dependency-added` rule, with the review-wide scopes
-// job.ts builds; otherwise the earlier rule (any added dependency holds).
-function concludePull(pr, policy, nowMs, scoped = true) {
-  const scopes = scoped
-    ? newDependencyScopes(pr.bumps, pr.bumps.map(outcomeFor), nowMs)
-    : pr.bumps.map(() => undefined);
-  const reviewed = pr.bumps.map((bump, index) => ({
+// `oldRule`: the rule before the young-package one (see `verdictFor`).
+function concludePull(pr, policy, nowMs, oldRule = false) {
+  const partial = pr.unreadLockfiles.length > 0 || !pr.listingComplete;
+  const reviewed = pr.bumps.map((bump) => ({
     bump,
-    verdict: verdictFor(bump, policy, nowMs, scopes[index]),
+    verdict: verdictFor(bump, policy, nowMs, partial, oldRule),
     approved: false,
   }));
   let conclusion = concludeDependencyReview(reviewed);
-  const partial = pr.unreadLockfiles.length > 0 || !pr.listingComplete;
   const heldOnCoverage =
     partial && (policy.holdOnUnreviewed || policy.unreadMinimumAgeDays !== null);
   if (heldOnCoverage && conclusion !== "held") conclusion = "held";
@@ -1046,14 +1081,14 @@ function isReplayed(pr) {
   );
 }
 
-function evaluateVariant(prs, policy, clock, scoped = true) {
+function evaluateVariant(prs, policy, clock, oldRule = false) {
   const rows = prs.map((pr) => {
     const nowMs = clock(pr);
     const { conclusion, reviewed, heldOnCoverage, recheckAt } = concludePull(
       pr,
       policy,
       nowMs,
-      scoped,
+      oldRule,
     );
     const holds = reviewed.filter(({ verdict }) => verdict.status === "hold");
     const reasons = new Set(holds.flatMap(({ verdict }) => verdict.reasons));
@@ -1162,74 +1197,82 @@ function sizeBuckets(rows) {
   });
 }
 
-// The `dependency-added` holds of the earlier rule (`before`) against the
-// current one (`after`), bump by bump: why each remaining hold holds, and,
-// for each that stopped, the added names that entered a lockfile as a new
-// package, with that package's first-publish and installed-version age at the
-// decision time.
-function newDependencyShift(before, after) {
-  const holdsDeps = (verdict) =>
-    verdict.status === "hold" && verdict.reasons.includes("dependency-added");
-  const remaining = [];
-  const lifted = [];
-  let beforeCount = 0;
-  let afterCount = 0;
+const YOUNG_CLASS = {
+  "first-published": "young package",
+  "version-published": "young version",
+  "age-unknown": "age unknown",
+  "no-verdict": "no verdict",
+};
+
+// PyPI names compare by PEP 503; npm names as written.
+function sameName(ecosystem, a, b) {
+  if (ecosystem !== "pypi") return a === b;
+  const norm = (name) => name.toLowerCase().replace(/[-_.]+/g, "-");
+  return norm(a) === norm(b);
+}
+
+/**
+ * The young-package and `dependency-added` holds of the current rule (`after`)
+ * against the old one (`before`): `dependency-added` counts on both sides, and
+ * for every young-package hold its cause, its ages at the decision time, how
+ * it entered the lockfile (declared by a release the PR diffs, a direct
+ * dependency, or neither), and what the old rule decided for it.
+ */
+function youngPackageShift(before, after) {
+  const holds = (verdict, reason) => verdict.status === "hold" && verdict.reasons.includes(reason);
+  let depsBefore = 0;
+  let depsAfter = 0;
+  const young = [];
   after.rows.forEach((row, index) => {
     const old = before.rows[index];
-    const pr = `${row.pr.repo}#${row.pr.number}`;
+    const ageDays = (iso) =>
+      iso && Number.isFinite(Date.parse(iso)) ? (row.nowMs - Date.parse(iso)) / DAY_MS : null;
     row.reviewed.forEach(({ bump, verdict }, at) => {
-      const wasHeld = holdsDeps(old.reviewed[at].verdict);
-      const isHeld = holdsDeps(verdict);
-      if (wasHeld) beforeCount += 1;
-      if (isHeld) afterCount += 1;
-      const label = `${bump.ecosystem} ${bump.name} ${bump.fromVersion ?? "(new)"} → ${bump.toVersion}`;
-      if (isHeld) {
-        const cause = verdict.newDependency;
-        remaining.push({
-          pr,
-          bump: label,
-          added: bump.evidence?.addedDependencies?.names ?? null,
-          cause: !cause
-            ? "unscoped"
-            : cause.cause === "young-package"
-              ? {
-                  "first-published": "young package",
-                  "version-published": "young version",
-                  "age-unknown": "age unknown",
-                  "no-verdict": "no plain public verdict",
-                }[cause.why]
-              : cause.cause === "lockfile-unpinned"
-                ? "lockfile does not pin the tree"
-                : "names unknown",
-          name: cause?.name ?? null,
-        });
-      } else if (wasHeld) {
-        const names = new Set(bump.evidence?.addedDependencies?.names ?? []);
-        const entered = row.pr.bumps.filter(
+      if (holds(old.reviewed[at].verdict, "dependency-added")) depsBefore += 1;
+      if (holds(verdict, "dependency-added")) depsAfter += 1;
+      if (!holds(verdict, "young-package")) return;
+      const declaredBy = row.pr.bumps
+        .filter(
           (other) =>
             other.ecosystem === bump.ecosystem &&
-            other.fromVersion === null &&
-            !other.repinned &&
-            names.has(dependencyNameKey(other.ecosystem, other.name)),
-        );
-        const ageDays = (iso) =>
-          iso && Number.isFinite(Date.parse(iso)) ? (row.nowMs - Date.parse(iso)) / DAY_MS : null;
-        lifted.push({
-          pr,
-          bump: label,
-          added: [...names],
-          entered: entered.map((other) => ({
-            name: other.name,
-            version: other.toVersion,
-            outcome: other.outcome.kind,
-            firstPublishedDays: ageDays(other.publish?.firstPublishedAt),
-            versionDays: ageDays(other.publish?.publishedAt),
-          })),
-        });
-      }
+            other.addedNames?.some((name) => sameName(bump.ecosystem, name, bump.name)),
+        )
+        .map((other) => `${other.name}@${other.toVersion}`);
+      const namesUnknown = row.pr.bumps.some(
+        (other) => other.ecosystem === bump.ecosystem && other.addedNames === null,
+      );
+      const otherNew = row.pr.bumps.filter(
+        (other) =>
+          other !== bump &&
+          other.ecosystem === bump.ecosystem &&
+          other.fromVersion === null &&
+          !other.repinned,
+      ).length;
+      const oldVerdict = old.reviewed[at].verdict;
+      young.push({
+        pr: `${row.pr.repo}#${row.pr.number}`,
+        bump: `${bump.ecosystem} ${bump.name}@${bump.toVersion}`,
+        cause: YOUNG_CLASS[verdict.young?.why] ?? String(verdict.young?.why),
+        unreviewed: verdict.unreviewed ?? null,
+        firstPublishedDays: ageDays(bump.publish?.firstPublishedAt),
+        versionDays: ageDays(bump.publish?.publishedAt),
+        entered: declaredBy.length
+          ? `declared by ${declaredBy.join(", ")}`
+          : bump.direct
+            ? "direct dependency"
+            : otherNew > 0
+              ? `transitive, under another new package (${otherNew} in the PR)`
+              : namesUnknown
+                ? "not matched (a diffed release's names unrecorded)"
+                : "not declared by any diffed release (alias or other path)",
+        oldRule:
+          oldVerdict.status === "hold"
+            ? oldVerdict.reasons.join("+")
+            : `passes (${oldVerdict.status})`,
+      });
     });
   });
-  return { beforeCount, afterCount, remaining, lifted };
+  return { depsBefore, depsAfter, young };
 }
 
 // What put a held bump on hold, finer than `verdict.reasons`: an age hold is
@@ -1243,6 +1286,7 @@ function holdTriggers(verdict) {
       return verdict.evidence ? "too-new:unread-content" : "too-new:new-package";
     }
     if (reason === "unreviewed") return `unreviewed:${verdict.unreviewed}`;
+    if (reason === "young-package") return `young-package:${verdict.young?.why}`;
     return reason;
   });
 }
@@ -1259,7 +1303,7 @@ function summarizeReplay(dataset) {
     ]),
   );
   variants["proposed@head"] = evaluateVariant(complete, VARIANTS.proposed, headClock);
-  variants["proposed-old-deps"] = evaluateVariant(complete, VARIANTS.proposed, createdClock, false);
+  variants["proposed-old-deps"] = evaluateVariant(complete, VARIANTS.proposed, createdClock, true);
   const repos = [...new Set(complete.map((pr) => pr.repo))].map((repo) => {
     const prs = complete.filter((pr) => pr.repo === repo);
     return {
@@ -1370,7 +1414,7 @@ function summarizeReplay(dataset) {
           })),
       ]),
     ),
-    newDependency: newDependencyShift(variants["proposed-old-deps"], variants.proposed),
+    youngShift: youngPackageShift(variants["proposed-old-deps"], variants.proposed),
     parseIncomplete: complete.flatMap((pr) =>
       pr.unreadReasons
         .filter((entry) => entry.reason === "parse-incomplete")
@@ -1438,7 +1482,7 @@ function renderReport(dataset, summary) {
     ``,
     `${dataset.generatedAt} · ${summary.complete} PRs replayed across ${summary.repos.length} repositories · ${summary.totalBumps} bumps (npm ${summary.ecosystems.npm}, PyPI ${summary.ecosystems.pypi}) · ${dataset.authenticated ? "authenticated" : "unauthenticated"} GitHub API · up to ${dataset.prsPerRepo} bot PRs per repository`,
     ``,
-    `Evaluation time is each PR's creation time (\`proposed@head\`: its head commit time). Variants: \`previous\` = defaults with \`unreadMinimumAgeDays: null\`; \`proposed\` = \`DEFAULT_DEPENDENCY_REVIEW_POLICY\` (age fallback ${DEFAULT_DEPENDENCY_REVIEW_POLICY.unreadMinimumAgeDays} days); \`strict\` = every boolean hold switch on, release risk at \`${VARIANTS.strict.holdAtReleaseRisk}\`. \`proposed-old-deps\` = \`proposed\` with the earlier \`dependency-added\` rule (no \`NewDependencyScope\`: any added dependency holds); every other variant passes the review-wide scopes from \`newDependencyScopes\`, as job.ts does. Verdicts come from the production \`decideBump\`.`,
+    `Evaluation time is each PR's creation time (\`proposed@head\`: its head commit time). Variants: \`previous\` = defaults with \`unreadMinimumAgeDays: null\`; \`proposed\` = \`DEFAULT_DEPENDENCY_REVIEW_POLICY\` (age fallback ${DEFAULT_DEPENDENCY_REVIEW_POLICY.unreadMinimumAgeDays} days); \`strict\` = every boolean hold switch on, release risk at \`${VARIANTS.strict.holdAtReleaseRisk}\`. \`proposed-old-deps\` = \`proposed\` under the rule before \`young-package\`, computed in this harness because production has no switch for it: a diffed release with \`dependenciesAdded > 0\` holds for \`dependency-added\`, and a package new to the lockfile is judged by the 3-day age fallback alone. Every other variant is production at HEAD. Verdicts come from the production \`decideBump\`.`,
     ``,
     `## Headline`,
     ``,
@@ -1494,33 +1538,23 @@ function renderReport(dataset, summary) {
   lines.push(
     `| coverage only (PRs) | ${names.map((name) => summary.variants[name].coverageOnly).join(" | ")} |`,
   );
-  const shift = summary.newDependency;
+  const shift = summary.youngShift;
+  const fallbackToo = shift.young.filter((entry) => entry.oldRule.startsWith("too-new"));
   lines.push(
     ``,
-    `## \`dependency-added\`: earlier rule against the current one (\`proposed\`)`,
+    `## \`young-package\` and \`dependency-added\` (\`proposed\` against \`proposed-old-deps\`)`,
     ``,
-    `Held bumps with \`dependency-added\`: ${shift.beforeCount} with \`proposed-old-deps\`, ${shift.afterCount} with \`proposed\`.`,
+    `Held bumps with \`dependency-added\`: ${shift.depsBefore} under the old rule, ${shift.depsAfter} now. Held bumps with \`young-package\`: ${shift.young.length}; the 3-day age fallback alone (old rule) also holds ${fallbackToo.length}, only the new rule holds ${shift.young.length - fallbackToo.length}.`,
     ``,
-    `Still holding (cause, and the young package when that is the cause):`,
+    `Ages are days before PR creation. \`entered\`: how the package reached the lockfile, from the added dependency names recorded for each diffed release by the earlier name-matching harness (kept outside the evidence).`,
     ``,
+    `| PR | package | cause | first published (d) | version (d) | entered | old rule |`,
+    `| --- | --- | --- | --- | --- | --- | --- |`,
   );
-  for (const entry of shift.remaining) {
+  for (const entry of shift.young) {
     lines.push(
-      `- ${entry.pr} ${entry.bump}: ${entry.cause}${entry.name ? ` (\`${entry.name}\`)` : ""}; adds ${entry.added ? entry.added.join(", ") || "none named" : "names not recorded"}`,
+      `| ${entry.pr} | ${entry.bump} | ${entry.cause}${entry.unreviewed ? ` (${entry.unreviewed})` : ""} | ${num(entry.firstPublishedDays, 1)} | ${num(entry.versionDays, 1)} | ${entry.entered} | ${entry.oldRule} |`,
     );
-  }
-  const entered = shift.lifted.filter((entry) => entry.entered.length > 0);
-  lines.push(
-    ``,
-    `Stopped holding: ${shift.lifted.length} bumps; ${entered.length} of them add a dependency that entered the lockfile as a new package (age in days at PR creation):`,
-    ``,
-  );
-  for (const entry of entered) {
-    const packages = entry.entered.map(
-      (pkg) =>
-        `\`${pkg.name}\`@${pkg.version} (first published ${num(pkg.firstPublishedDays, 1)} d, version ${num(pkg.versionDays, 1)} d, ${pkg.outcome})`,
-    );
-    lines.push(`- ${entry.pr} ${entry.bump}: ${packages.join("; ")}`);
   }
   lines.push(
     ``,

@@ -17,6 +17,12 @@ export interface CustomRegistries {
   defaultUrls: Set<string>;
   scopeUrls: Map<string, Set<string>>;
   unknown: boolean;
+  // Scopes (`""` for the default registry) the config sends to the public
+  // registry by name. Routed nowhere else, they read as public either way;
+  // a private-scope name routed here was sent there by the repository.
+  explicitPublic?: Set<string>;
+  // Some config that applies sets npm's `legacy-peer-deps`.
+  legacyPeerDeps?: true;
 }
 
 /** What one config file routes, or null when it is not in the canonical shape. */
@@ -26,6 +32,10 @@ export interface RegistryRouting {
   // A registry setting whose value depends on the environment, or a setting
   // that rewrites where packages are fetched from.
   unknown: boolean;
+  // See `CustomRegistries.explicitPublic`.
+  explicitPublic?: string[];
+  // `.npmrc` sets `legacy-peer-deps=true`: npm installs no peers.
+  legacyPeerDeps?: true;
 }
 
 const PUBLIC_NPM = /^https?:\/\/registry\.(?:npmjs\.org|yarnpkg\.com)\/?$/;
@@ -63,6 +73,11 @@ export function addRouting(found: CustomRegistries, routing: RegistryRouting | n
     found.all = true;
     mark(found.defaultUrls, url);
   }
+  if (routing.legacyPeerDeps) found.legacyPeerDeps = true;
+  for (const scope of routing.explicitPublic ?? []) {
+    found.explicitPublic ??= new Set();
+    if (found.explicitPublic.size < MAX_ROUTED_URLS) found.explicitPublic.add(scope);
+  }
   for (const [scope, urls] of routing.scopeUrls) {
     found.scopes.add(scope);
     const into = found.scopeUrls.get(scope) ?? new Set();
@@ -90,7 +105,10 @@ function route(routing: RegistryRouting, scope: string | null, value: string): v
     routing.unknown = true;
     return;
   }
-  if (PUBLIC_NPM.test(value)) return;
+  if (PUBLIC_NPM.test(value)) {
+    (routing.explicitPublic ??= []).push(scope ?? "");
+    return;
+  }
   if (scope === null) {
     routing.defaultUrls.push(value);
     return;
@@ -134,6 +152,7 @@ export function parseNpmrc(text: string): RegistryRouting | null {
     }
     // Per-registry auth (`//host/:_authToken=…`) does not route.
     if (key.startsWith("//")) continue;
+    if (lower === "legacy-peer-deps" && value === "true") routing.legacyPeerDeps = true;
     const scoped = SCOPE_REGISTRY.exec(key);
     if (key === "registry" || scoped) {
       if (!value || /["'\\;#\s]/.test(value)) return null;
@@ -199,7 +218,12 @@ function scopeOf(name: string): string {
  * of them.
  */
 export function npmNameRoute(registries: CustomRegistries, name: string): NameRoute {
-  if (isPublicNpmName(registries, name)) return PUBLIC_ROUTE;
+  if (isPublicNpmName(registries, name)) {
+    const named = registries.explicitPublic;
+    return named?.has(scopeOf(name)) || named?.has("")
+      ? { kind: "public", explicit: true }
+      : PUBLIC_ROUTE;
+  }
   if (registries.unknown) return { kind: "unknown" };
   const scoped = registries.scopeUrls.get(scopeOf(name));
   const urls = scoped ?? registries.defaultUrls;

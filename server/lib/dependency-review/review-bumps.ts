@@ -301,7 +301,11 @@ function settledOutcome(
   if (!entry.reviewable) {
     return {
       kind: "unreviewed",
-      reason: original.remoteSource ? "remote-source" : "private-source",
+      reason: original.privateScopePublic
+        ? "private-scope-public"
+        : original.remoteSource
+          ? "remote-source"
+          : "private-source",
     };
   }
   if (!entry.inReview) {
@@ -311,6 +315,7 @@ function settledOutcome(
           kind: "new-package",
           pastReviewLimit: true,
           ...(original.repinned ? { repinned: true as const } : {}),
+          ...(original.buildsFromSource ? { buildsFromSource: true as const } : {}),
         }
       : { kind: "unreviewed", reason: "over-cap", pastReviewLimit: true };
   }
@@ -319,7 +324,11 @@ function settledOutcome(
     return { kind: "unreviewed", reason: "unverified-pin" };
   }
   if (bump.fromVersion === null) {
-    return bump.repinned ? { kind: "new-package", repinned: true } : { kind: "new-package" };
+    return {
+      kind: "new-package",
+      ...(bump.repinned ? { repinned: true as const } : {}),
+      ...(bump.buildsFromSource ? { buildsFromSource: true as const } : {}),
+    };
   }
   if (progress.evidence) {
     return {

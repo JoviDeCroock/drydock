@@ -179,12 +179,15 @@ function dependencyUnseen(
  * Why a package new to the lockfile counts as young at `nowMs`, or null when
  * its age vouches for it: first published at least `YOUNG_PACKAGE_DAYS` and
  * its installed version at least `YOUNG_VERSION_DAYS` before. Past the review
- * limit, or with either time unknown, it is young.
+ * limit, with either time unknown, or built from source (its build
+ * requirements are not locked), it is young.
  */
 function youngPackage(
   outcome: Extract<BumpOutcome, { kind: "new-package" }>,
   nowMs: number,
 ): YoungPackage | null {
+  // However old, its build requirements are resolved at install time.
+  if (outcome.buildsFromSource) return { why: "built-from-source" };
   if (outcome.pastReviewLimit) return { why: "age-unknown" };
   const first = outcome.firstPublishedAt;
   const version = outcome.publishedAt;
@@ -208,7 +211,9 @@ function unreadOptions(policy: DependencyReviewPolicy) {
 // No publish time could vouch for these bytes: a git ref, URL, or tarball, or a
 // pin that is not the public release's.
 function hasNoPublishTime(reason: UnreviewedReason): boolean {
-  return reason === "remote-source" || reason === "unverified-pin";
+  return (
+    reason === "remote-source" || reason === "unverified-pin" || reason === "private-scope-public"
+  );
 }
 
 /**
@@ -297,7 +302,8 @@ export function decideBump(
     }
     case "unreviewed": {
       const reason = outcome.reason;
-      if (policy.holdOnUnreviewed) {
+      // Dependency confusion's signal holds whatever the switches say.
+      if (policy.holdOnUnreviewed || reason === "private-scope-public") {
         return { status: "hold", reasons: ["unreviewed"], evidence: null, unreviewed: reason };
       }
       // The organization declared this registry its own and vouches for what
@@ -388,9 +394,18 @@ export function collectionPolicy(policy: CollectionPolicy): CollectionPolicy {
   };
 }
 
-/** Equal for two policies exactly when collection would classify every bump alike. */
+// The collect stage's classification rules. A stored collection is reused
+// only under the same version, so a review collected by older code is
+// collected again after a deploy. Bump it whenever collection would classify
+// the same lockfiles differently (sources, tree pinning, completeness).
+const COLLECTION_SEMANTICS_VERSION = 2;
+
+/**
+ * Equal for two policies exactly when collection would classify every bump
+ * alike: the same collection rules and the same declarations.
+ */
 export function collectionPolicyKey(policy: CollectionPolicy): string {
-  return JSON.stringify(collectionPolicy(policy));
+  return JSON.stringify({ version: COLLECTION_SEMANTICS_VERSION, ...collectionPolicy(policy) });
 }
 
 /**
