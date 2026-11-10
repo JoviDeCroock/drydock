@@ -785,10 +785,11 @@ export const dependencyReviewApprovals = sqliteTable(
     packageName: text("package_name").notNull(),
     fromVersion: text("from_version").notNull(),
     toVersion: text("to_version").notNull(),
-    // "public", "private", or "mirror:<sha256 of the pinned hashes>" for a
-    // mirror pin nobody proved public: approving a change resolved from a
-    // private registry must not approve the same versions resolved from a
-    // public one, or re-pinned to other bytes.
+    // `changeSource` (server/lib/dependency-review/identity.ts): "public",
+    // "private", "remote", or for a pin nobody proved public
+    // "mirror:<sha256 of the pinned hashes>" / "pin:<sha256 of the pinned
+    // hashes>". Approving a change from one source must not approve the same
+    // versions from another, or re-pinned to other bytes.
     source: text("source").notNull().default("public"),
     approvedByLogin: text("approved_by_login").notNull(),
     approvedByGithubId: integer("approved_by_github_id").notNull(),

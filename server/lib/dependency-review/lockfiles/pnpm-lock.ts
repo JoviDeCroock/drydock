@@ -34,8 +34,12 @@ const RESOLUTION_FIELDS = new Set([
 // `packageManagerDependencies` come first) is read.
 export function parsePnpmLock(text: string): LockfileSnapshot {
   const builder = createSnapshotBuilder("npm");
-  // By key without its peer suffix.
-  const entries = new Map<string, PnpmEntry>();
+  builder.expectStrongPins();
+  // Every `packages` entry, by the release its key names: the peer variants
+  // of one release (v6+ `(peer@x)`, v5 `_peer@x` suffixes) each have one.
+  // Keys themselves are never repeated; the reader refuses a duplicate key.
+  const entries = new Map<string, PnpmEntry[]>();
+  const packageIds = new Set<string>();
   const snapshotIds = new Set<string>();
   // The keys on the path to the current entry, by depth.
   const path: string[] = [];
@@ -67,9 +71,13 @@ export function parsePnpmLock(text: string): LockfileSnapshot {
           return;
         }
         const parsed = pnpmPackageKey(id);
-        if (!parsed || entries.has(id)) return fail();
+        if (!parsed) return fail();
+        packageIds.add(id);
         pkg = { ...parsed, fields: new Map(), resolution: null };
-        entries.set(id, pkg);
+        const release = JSON.stringify([parsed.host, parsed.name, parsed.ref]);
+        const variants = entries.get(release);
+        if (variants) variants.push(pkg);
+        else entries.set(release, [pkg]);
         return;
       }
       if (depth === 2 && key !== null && SOURCE_FIELDS.has(key)) {
@@ -88,6 +96,9 @@ export function parsePnpmLock(text: string): LockfileSnapshot {
       }
       return;
     }
+    // Every document's importers: pnpm's own `packageManagerDependencies`
+    // document lists only `.`, the workspace's lists every project.
+    if (section === "importers" && depth === 1 && key !== null) builder.addWorkspace(key);
     const declared = importerDeclaration(path, depth, key, value);
     if (declared) builder.markDirect(importerPackageName(declared[0], declared[1]));
   });
@@ -95,8 +106,14 @@ export function parsePnpmLock(text: string): LockfileSnapshot {
     builder.markIncomplete();
     return builder.finish();
   }
-  for (const id of snapshotIds) if (!entries.has(id)) builder.markIncomplete();
-  for (const entry of entries.values()) recordEntry(builder, entry);
+  for (const id of snapshotIds) if (!packageIds.has(id)) builder.markIncomplete();
+  for (const [first, ...others] of entries.values()) {
+    // Peer variants install one release; one fetched from a different source
+    // or pin is not a shape pnpm's lockfile writer produces.
+    const source = sourceOf(first);
+    if (others.some((other) => sourceOf(other) !== source)) builder.markIncomplete();
+    else recordEntry(builder, first);
+  }
   return builder.finish();
 }
 
@@ -129,6 +146,13 @@ interface PnpmEntry {
   fields: Map<string, string>;
   // Null when the entry has none, so nothing says what to fetch.
   resolution: Map<string, string> | null;
+}
+
+// What decides where an entry is fetched from and what it must hash to.
+function sourceOf(entry: PnpmEntry): string {
+  const sorted = (map: ReadonlyMap<string, string> | null) =>
+    map === null ? null : [...map].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return JSON.stringify([sorted(entry.fields), sorted(entry.resolution)]);
 }
 
 // Directory resolutions are repository code and are skipped. Git resolutions

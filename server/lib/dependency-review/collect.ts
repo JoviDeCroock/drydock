@@ -22,18 +22,15 @@ import {
   emptyCustomRegistries,
   npmNameRoute,
   configAncestors,
+  committedInstallInput,
   parseRoutingConfig,
   resolutionConfigChanged,
   resolutionConfigKind,
   unreadableCustomRegistries,
   type CustomRegistries,
 } from "./registry-config";
-import type {
-  DependencyBump,
-  DependencyEcosystem,
-  DependencyReviewPolicy,
-  LockfileKind,
-} from "./types";
+import { collectionPolicy, type CollectionPolicy } from "./policy";
+import type { DependencyBump, DependencyEcosystem, LockfileKind } from "./types";
 
 const MAX_LOCKFILES = 20;
 const MAX_MANIFESTS = 20;
@@ -81,7 +78,7 @@ export async function collectBumps(
   context: ReviewContext,
   baseSha: string,
   changedFiles: number | null,
-  policy: DependencyReviewPolicy,
+  policy: CollectionPolicy,
 ): Promise<CollectedBumps> {
   const { review, repo, token } = context;
   const listing = await listPullRequestFiles(token, repo, review.pullNumber);
@@ -115,12 +112,14 @@ export async function collectBumps(
     kind,
     text: null,
     manifest: null,
+    workspaces: null,
     fallback: !lockfileKindForPath(file.filename),
   }));
   let mergeBasePromise: Promise<string> | undefined;
   const mergeBaseRef = () =>
     (mergeBasePromise ??= fetchMergeBase(token, repo, baseSha, review.headSha));
   unreadLockfiles.push(...(await changedResolutionConfig(context, files, mergeBaseRef)));
+  unreadLockfiles.push(...changedInstallInputs(files));
   if (lockfiles.length === 0) {
     unreadLockfiles.push(...(await unreadManifests(context, changed, heads, mergeBaseRef)));
     return { bumps: [], unreadLockfiles, listingComplete: complete };
@@ -138,14 +137,28 @@ export async function collectBumps(
     ]);
     if (before === "too-large" || after === "too-large" || after === null) {
       unreadLockfiles.push(file.filename);
-      heads.push({ path: file.filename, kind, text: null, manifest: null, fallback });
+      heads.push({
+        path: file.filename,
+        kind,
+        text: null,
+        manifest: null,
+        workspaces: null,
+        fallback,
+      });
       continue;
     }
-    heads.push({ path: file.filename, kind, text: after.text, manifest: after.manifest, fallback });
     const baseSnapshot = before
       ? parseLockfile(kind, before.text, { manifestText: before.manifest })
       : null;
     const headSnapshot = parseLockfile(kind, after.text, { manifestText: after.manifest });
+    heads.push({
+      path: file.filename,
+      kind,
+      text: after.text,
+      manifest: after.manifest,
+      workspaces: headSnapshot.complete ? headSnapshot.workspaces : null,
+      fallback,
+    });
     // A capped or unparseable side diffs to nothing, which must not read as
     // "nothing changed".
     if (!headSnapshot.complete || (baseSnapshot && !baseSnapshot.complete)) {
@@ -171,11 +184,7 @@ export async function collectBumps(
       // diffed (unless proven a mirror copy): dropping it would let its
       // change pass unseen.
       const route = custom ? npmNameRoute(custom, change.bump.name) : PUBLIC_ROUTE;
-      const bump = routedBump(change, route, {
-        publicMirrors: policy.publicMirrors ?? [],
-        privateRegistries: policy.privateRegistries ?? [],
-        privateScopes: policy.privateScopes ?? [],
-      });
+      const bump = routedBump(change, route, collectionPolicy(policy));
       const key = dependencyChangeKey(bump);
       const existing = byChange.get(key);
       if (existing) mergeBump(existing, bump);
@@ -280,12 +289,27 @@ async function changedResolutionConfig(
   return unread;
 }
 
+// Committed package caches and loaders the PR adds, removes, or changes
+// (see `committedInstallInput`), one entry per directory.
+function changedInstallInputs(files: readonly PullRequestFile[]): string[] {
+  const found = new Set<string>();
+  for (const file of files) {
+    for (const path of [file.filename, file.previousFilename]) {
+      const input = path ? committedInstallInput(path) : null;
+      if (input !== null) found.add(input);
+    }
+  }
+  return [...found];
+}
+
 interface HeadLockfile {
   path: string;
   kind: LockfileKind;
   // Null when the lockfile went unread, which already holds the review.
   text: string | null;
   manifest: string | null;
+  // The parsed head's workspace directories; null when it went unread.
+  workspaces: ReadonlySet<string> | null;
   // A `.txt` read as requirements without a recognized requirements filename.
   fallback: boolean;
 }
@@ -330,14 +354,16 @@ async function unreadManifests(
 
 /**
  * Changed manifests no changed lockfile resolves. A lockfile covers a manifest
- * in its own directory, or below it only when it records that directory as a
- * workspace: a root lockfile says nothing about a sibling project with none.
+ * in its own directory, or below it only when its parsed snapshot records that
+ * directory as a workspace (see `LockfileSnapshot.workspaces`), or for Yarn
+ * when the root manifest's `workspaces` globs match it: a root lockfile says
+ * nothing about a sibling project with none.
  */
 function uncoveredManifests(
   changed: readonly PullRequestFile[],
   heads: readonly HeadLockfile[],
 ): string[] {
-  const workspaces = new Map<HeadLockfile, (dir: string) => boolean>();
+  const yarnGlobs = new Map<HeadLockfile, RegExp[]>();
   const covers = (head: HeadLockfile, manifest: string) => {
     if (head.fallback) return false;
     const manifestDir = dirname(manifest);
@@ -353,13 +379,17 @@ function uncoveredManifests(
     }
     if (manifestDir === lockDir) return true;
     if (!manifestDir.startsWith(lockDir)) return false;
-    if (head.text === null) return true;
-    let isWorkspace = workspaces.get(head);
-    if (!isWorkspace) {
-      isWorkspace = workspaceMatcher(head.kind, head.text, head.manifest);
-      workspaces.set(head, isWorkspace);
+    // An unread lockfile already holds the review.
+    if (head.workspaces === null) return true;
+    const dir = manifestDir.slice(lockDir.length, -1);
+    if (head.workspaces.has(dir)) return true;
+    if (head.kind !== "yarn") return false;
+    let globs = yarnGlobs.get(head);
+    if (!globs) {
+      globs = yarnWorkspaceGlobs(head.manifest);
+      yarnGlobs.set(head, globs);
     }
-    return isWorkspace(manifestDir.slice(lockDir.length, -1));
+    return dir.length <= 512 && globs.some((glob) => glob.test(dir));
   };
   const covered = (ecosystem: DependencyEcosystem, manifest: string) =>
     heads.some((head) => KIND_ECOSYSTEM[head.kind] === ecosystem && covers(head, manifest));
@@ -383,54 +413,6 @@ function compiledFrom(text: string | null, manifestName: string): boolean {
     if (COMPILE_COMMAND.test(line) && line.split(/\s+/).includes(manifestName)) return true;
   }
   return false;
-}
-
-const PNPM_IMPORTER = /^ {2}(['"]?)(.+?)\1:\s*$/;
-const UV_LOCAL_SOURCE = /source = \{ (?:editable|virtual|directory) = "([^"]+)" \}/g;
-const BERRY_WORKSPACE_MARKER = "@workspace:";
-
-/** Which directories, relative to the lockfile's, it records as workspaces. */
-function workspaceMatcher(
-  kind: LockfileKind,
-  text: string,
-  manifest: string | null,
-): (dir: string) => boolean {
-  const dirs = new Set<string>();
-  const normalize = (dir: string) => dir.replace(/^\.\//, "").replace(/\/+$/, "");
-  if (kind === "npm") {
-    const parsed = parseJson(text);
-    const packages = isRecord(parsed) && isRecord(parsed.packages) ? parsed.packages : {};
-    for (const key of Object.keys(packages)) {
-      if (key && !key.includes("node_modules/")) dirs.add(key);
-    }
-  } else if (kind === "pnpm") {
-    const lines = text.split("\n");
-    const start = lines.findIndex((line) => line.trimEnd() === "importers:");
-    for (let index = start + 1; start >= 0 && index < lines.length; index += 1) {
-      const line = lines[index];
-      if (/^\S/.test(line)) break;
-      const match = PNPM_IMPORTER.exec(line);
-      if (match) dirs.add(normalize(match[2]));
-    }
-  } else if (kind === "uv") {
-    for (const match of text.matchAll(UV_LOCAL_SOURCE)) dirs.add(normalize(match[1]));
-  } else if (kind === "yarn") {
-    // A forward scan rather than a `[^"]+"` pattern, which on a long run of
-    // markers with no closing quote rescans to the end from each one. The
-    // next quote and newline are remembered, so the text is read once.
-    let quote = -1;
-    let newline = -1;
-    for (let at = text.indexOf(BERRY_WORKSPACE_MARKER); at !== -1;) {
-      const start = at + BERRY_WORKSPACE_MARKER.length;
-      if (quote !== Infinity && quote < start) quote = nextIndex(text, '"', start);
-      if (newline !== Infinity && newline < start) newline = nextIndex(text, "\n", start);
-      if (quote > start && quote < newline) dirs.add(normalize(text.slice(start, quote)));
-      at = text.indexOf(BERRY_WORKSPACE_MARKER, start);
-    }
-    const globs = yarnWorkspaceGlobs(manifest);
-    return (dir) => dirs.has(dir) || (dir.length <= 512 && globs.some((glob) => glob.test(dir)));
-  }
-  return (dir) => dirs.has(dir);
 }
 
 // Yarn v1 lockfiles don't list workspaces; the root manifest's globs do. One
@@ -457,11 +439,6 @@ function yarnWorkspaceGlobs(manifest: string | null): RegExp[] {
     globs.push(new RegExp(`^${pattern}$`));
   }
   return globs;
-}
-
-function nextIndex(text: string, search: string, from: number): number {
-  const at = text.indexOf(search, from);
-  return at === -1 ? Infinity : at;
 }
 
 function parseJson(text: string): unknown {

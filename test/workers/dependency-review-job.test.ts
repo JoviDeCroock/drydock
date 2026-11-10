@@ -268,18 +268,22 @@ describe("dependency review job", () => {
     expect(row).toMatchObject({ conclusion: "held", bumpCount: 41, heldCount: 1 });
     expect(row.bumps.filter((b) => b.verdict.status === "clear")).toHaveLength(40);
     // Holds are stored first, so a capped list never drops one. The one cold
-    // pair reaches the (stubbed, empty) registry.
+    // pair reaches the stubbed registry, whose tarballs are missing.
     expect(row.bumps[0]).toMatchObject({
       bump: { name: names[40] },
-      verdict: { status: "hold", reasons: ["unreviewed"], unreviewed: "not-found" },
+      verdict: { status: "hold", reasons: ["unreviewed"], unreviewed: "failed" },
     });
     expect(api.lastCheckRunState()).toMatchObject({ conclusion: "action_required" });
-    const registryCalls = api.requests.filter((r) => r.host === "registry.npmjs.org");
-    expect(registryCalls.every((r) => r.url.includes(names[40]))).toBe(true);
+    // Every pin is proven from its packument; only the cold pair downloads.
+    const downloads = api.requests.filter(
+      (r) => r.host === "registry.npmjs.org" && r.url.endsWith(".tgz"),
+    );
+    expect(downloads.length).toBeGreaterThan(0);
+    expect(downloads.every((r) => r.url.includes(names[40]))).toBe(true);
     expectTokenStaysOnGithub(api);
   });
 
-  test("a version the public registry does not have is held as not found", async () => {
+  test("a release whose tarballs can't be downloaded is held as a failed diff", async () => {
     const { name, api, review, input } = await scenario();
 
     await runDependencyReviewJob(input);
@@ -288,7 +292,7 @@ describe("dependency review job", () => {
     expect(row.bumps[0].verdict).toMatchObject({
       status: "hold",
       reasons: ["unreviewed"],
-      unreviewed: "not-found",
+      unreviewed: "failed",
     });
     expect(api.lastCheckRunState()).toMatchObject({ conclusion: "action_required" });
     const registryCalls = api.requests.filter((r) => r.host === "registry.npmjs.org");
@@ -297,7 +301,7 @@ describe("dependency review job", () => {
     expectTokenStaysOnGithub(api);
   });
 
-  test("with holdOnUnreviewed and the age fallback off, a not-found bump no longer blocks the check", async () => {
+  test("with holdOnUnreviewed and the age fallback off, a failed diff no longer blocks the check", async () => {
     const { api, review, input } = await scenario({
       policy: { holdOnUnreviewed: false, unreadMinimumAgeDays: null },
     });
@@ -305,7 +309,7 @@ describe("dependency review job", () => {
     await runDependencyReviewJob(input);
 
     const row = await readReview(review.id);
-    expect(row.bumps[0].verdict).toEqual({ status: "unreviewed", unreviewed: "not-found" });
+    expect(row.bumps[0].verdict).toEqual({ status: "unreviewed", unreviewed: "failed" });
     expect(row).toMatchObject({ conclusion: "clear", heldCount: 0 });
     expect(api.lastCheckRunState()).toMatchObject({ conclusion: "success" });
   });
@@ -317,11 +321,12 @@ describe("dependency review job", () => {
 
     await runDependencyReviewJob(input, { NPM_REGISTRY: "https://npm.internal.example" });
 
+    // With no public egress the lockfile's pin can't be proven either.
     const row = await readReview(review.id);
     expect(row.bumps[0].verdict).toMatchObject({
       status: "hold",
       reasons: ["unreviewed"],
-      unreviewed: "unsupported",
+      unreviewed: "unverified-pin",
     });
     expect(row.conclusion).toBe("held");
     expect(api.lastCheckRunState()).toMatchObject({ conclusion: "action_required" });
@@ -893,11 +898,79 @@ describe("dependency review job", () => {
     expect((await readReview(review.id)).conclusion).toBe("held");
   });
 
+  test("a changed Yarn zero-install cache holds, reported once per directory", async () => {
+    const { review, input } = await scenario({
+      pr: {
+        files: [
+          {
+            filename: ".yarn/cache/left-pad-npm-1.3.0-b1ba5b8b38-0000000000.zip",
+            status: "modified",
+          },
+          { filename: ".yarn/cache/is-odd-npm-3.0.1-93c3c3f41b-0000000000.zip", status: "added" },
+          { filename: "README.md", status: "modified" },
+        ],
+      },
+    });
+
+    await runDependencyReviewJob(input);
+
+    const row = await readReview(review.id);
+    expect(row.conclusion).toBe("held");
+    expect(JSON.parse(row.unreadLockfilesJson)).toEqual([".yarn/cache/"]);
+  });
+
   test.each([
     [
       "pnpm importers",
       "pnpm-lock.yaml",
       "lockfileVersion: '9.0'\n\nimporters:\n  .:\n    dependencies: {}\n  packages/app:\n    dependencies: {}\n",
+      true,
+    ],
+    [
+      "pnpm importers in the workspace document after pnpm's own",
+      "pnpm-lock.yaml",
+      [
+        "---",
+        "lockfileVersion: '9.0'",
+        "",
+        "importers:",
+        "",
+        "  .:",
+        "    configDependencies: {}",
+        "    packageManagerDependencies:",
+        "      pnpm:",
+        "        specifier: 10.0.0",
+        "        version: 10.0.0",
+        "",
+        "---",
+        "lockfileVersion: '9.0'",
+        "",
+        "importers:",
+        "",
+        "  .:",
+        "    dependencies: {}",
+        "",
+        "  packages/app:",
+        "    dependencies: {}",
+        "",
+      ].join("\n"),
+      true,
+    ],
+    [
+      "a Berry workspace resolution",
+      "yarn.lock",
+      [
+        "__metadata:",
+        "  version: 8",
+        "  cacheKey: 10",
+        "",
+        '"app@workspace:packages/app":',
+        "  version: 0.0.0-use.local",
+        '  resolution: "app@workspace:packages/app"',
+        "  languageName: unknown",
+        "  linkType: soft",
+        "",
+      ].join("\n"),
       true,
     ],
     [

@@ -524,7 +524,7 @@ describe("pins, re-pins, and the review limit in the summary", () => {
     expect(needsReleaseAge({ kind: "unreviewed", reason: "unverified-pin" }, POLICY)).toBe(false);
     const { summary } = render([{ bump: bump(), verdict, approved: false }], "held");
     expect(summary).toContain(
-      "no Drydock verdict (Drydock could not match its pinned hashes to the public registry's release); without a matching public release there is no publish time to wait out, so it holds until approved",
+      "no Drydock verdict (Drydock could not match the hashes pinned for this update to the public registry's release); it holds until approved; Re-run checks again if the registry was unreachable, and an npm package your organization hosts itself belongs under private npm scopes",
     );
   });
 
@@ -644,5 +644,30 @@ describe("registry settings validation", () => {
         .privateScopes,
     ).toEqual(["@corp", "@corp-tools"]);
     expect(parseDependencyReviewPolicy({}).privateScopes).toEqual([]);
+  });
+});
+
+describe("an aged release that adds an unheld native binary", () => {
+  test("passes the age fallback but is listed as unread, and the title is not clear", () => {
+    const evidence = extractBumpEvidence(
+      diffWith([{ path: "bin/new.node", status: "added", flags: ["binary", "native-elf"] }]),
+    );
+    const policy = { ...POLICY, holdOnNativeBinaries: false };
+    const young = decideBump({ kind: "diffed", evidence, publishedAt: ONE_DAY_OLD }, policy, NOW);
+    expect(young).toMatchObject({ status: "hold", reasons: ["too-new"] });
+    const aged = decideBump({ kind: "diffed", evidence, publishedAt: TEN_DAYS_OLD }, policy, NOW);
+    expect(aged).toEqual({ status: "clear", evidence });
+
+    const { title, summary } = renderDependencyReviewCheck({
+      bumps: [{ bump: bump({ name: "gains-a-binary" }), verdict: aged, approved: false }],
+      conclusion: "clear",
+      diffUrl: () => null,
+      approvedBy: null,
+      unreadLockfiles: [],
+    });
+    expect(title).toBe("No updates held");
+    expect(summary).toContain("### Passed with unread changes (1)");
+    expect(summary).toContain("adds 1 native binary no rule reads");
+    expect(summary).not.toContain("### Clear");
   });
 });

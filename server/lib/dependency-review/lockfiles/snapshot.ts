@@ -58,6 +58,15 @@ export interface LockfileSnapshot {
   // pin (ranges, URLs, VCS and editable lines, includes), normalized and
   // sorted. A change here moves versions the snapshot cannot name.
   unpinned: readonly string[];
+  // Directories, relative to the lockfile's (`""` for its own, no trailing
+  // slash), that the lockfile resolves as projects of its own: npm and pnpm
+  // importers, Berry `workspace:` resolutions, uv workspace members and local
+  // directory sources. A manifest in one of them is covered by the lockfile.
+  workspaces: ReadonlySet<string>;
+  // The format's own tooling writes a strong pin for every registry entry
+  // (npm package-lock v2/v3, pnpm, Yarn classic, uv), so an entry without a
+  // usable one is the PR's choice rather than the format's.
+  strongPins: boolean;
 }
 
 // Lockfile text is repository data. Above this it is not parsed at all.
@@ -146,6 +155,10 @@ export interface SnapshotBuilder {
     location?: string | null,
   ): void;
   markDirect(name: unknown): void;
+  // Records a directory the lockfile resolves as a project (see `workspaces`).
+  addWorkspace(dir: string): void;
+  // Marks the format as one that always pins (see `strongPins`).
+  expectStrongPins(): void;
   markIncomplete(): void;
   // Claims room for `count` intermediate records; false (and incomplete) once
   // the parse budget is spent, after which the parser stops.
@@ -186,9 +199,11 @@ function pinKey(hashes: readonly string[] | null, pin: string | null): string {
 export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotBuilder {
   const packages = new Map<string, MutablePackage>();
   const direct = new Set<string>();
+  const workspaces = new Set<string>();
   let entries = 0;
   let records = 0;
   let complete = true;
+  let strongPins = false;
   const canonical = (name: unknown) =>
     typeof name === "string" ? CANONICAL_NAME[ecosystem](name) : null;
   const validVersion = (version: unknown): version is string =>
@@ -259,6 +274,12 @@ export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotB
       const key = canonical(name);
       if (key !== null && direct.size < MAX_SNAPSHOT_ENTRIES) direct.add(key);
     },
+    expectStrongPins() {
+      strongPins = true;
+    },
+    addWorkspace(dir) {
+      if (workspaces.size < MAX_SNAPSHOT_ENTRIES) workspaces.add(workspaceDir(dir));
+    },
     markIncomplete() {
       complete = false;
     },
@@ -279,13 +300,27 @@ export function createSnapshotBuilder(ecosystem: DependencyEcosystem): SnapshotB
           direct: direct.has(key),
         });
       }
-      return { packages: out, complete, unpinned };
+      return { packages: out, complete, unpinned, workspaces, strongPins };
     },
   };
 }
 
 export function incompleteSnapshot(): LockfileSnapshot {
-  return { packages: new Map(), complete: false, unpinned: [] };
+  return {
+    packages: new Map(),
+    complete: false,
+    unpinned: [],
+    workspaces: new Set(),
+    strongPins: false,
+  };
+}
+
+// `./packages/a/` and `packages/a` are one directory; `.` is the lockfile's.
+function workspaceDir(dir: string): string {
+  let out = dir;
+  while (out.startsWith("./")) out = out.slice(2);
+  while (out.endsWith("/")) out = out.slice(0, -1);
+  return out === "." ? "" : out;
 }
 
 const MAX_REF_LENGTH = 200;

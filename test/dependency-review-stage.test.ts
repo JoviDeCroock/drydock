@@ -302,7 +302,7 @@ describe("publish-time lookups", () => {
 });
 
 describe("mirror-resolved bumps", () => {
-  test("a proven mirror bump becomes a public bump; an unproven one stays private", async () => {
+  test("a proven mirror bump becomes a public bump; an unproven one is an unverified pin", async () => {
     verifyMirrorBump.mockImplementation(
       async (_env, _ctx, candidate: DependencyBump) => candidate.name === "proven",
     );
@@ -313,9 +313,9 @@ describe("mirror-resolved bumps", () => {
     expect(verifyMirrorBump.mock.calls[0][2]).toMatchObject({ name: "proven", mirror: {} });
     const [proven, unproven] = result.bumps;
     expect(proven).toEqual({ ...bump("proven"), viaMirror: true });
-    expect(unproven).toMatchObject({ privateSource: true, mirror: {} });
+    expect(unproven).toMatchObject({ privateSource: true, remoteSource: true, mirror: {} });
     expect(result.outcomes[0]).toMatchObject({ kind: "diffed" });
-    expect(result.outcomes[1]).toEqual({ kind: "unreviewed", reason: "private-source" });
+    expect(result.outcomes[1]).toEqual({ kind: "unreviewed", reason: "unverified-pin" });
     expect(loadDiff).toHaveBeenCalledTimes(1);
     // Approvals, links, and the stored row use the public identity.
     expect(dependencyChangeKey(proven)).toBe(dependencyChangeKey(bump("proven")));
@@ -337,17 +337,17 @@ describe("mirror-resolved bumps", () => {
     expect(verifyMirrorBump).toHaveBeenCalledTimes(1);
   });
 
-  test("a failing proof, or public egress off, leaves the bump private", async () => {
+  test("a failing proof, or public egress off, makes the bump an unverified pin", async () => {
     verifyMirrorBump.mockRejectedValue(new Error("registry down"));
     const failed = await stage([mirrorBump("flaky")]);
-    expect(failed.outcomes[0]).toEqual({ kind: "unreviewed", reason: "private-source" });
+    expect(failed.outcomes[0]).toEqual({ kind: "unreviewed", reason: "unverified-pin" });
 
     verifyMirrorBump.mockClear();
     const offline = await stage([mirrorBump("offline")], {
       env: { NPM_REGISTRY: "https://npm.internal.example" },
     });
     expect(verifyMirrorBump).not.toHaveBeenCalled();
-    expect(offline.outcomes[0]).toEqual({ kind: "unreviewed", reason: "private-source" });
+    expect(offline.outcomes[0]).toEqual({ kind: "unreviewed", reason: "unverified-pin" });
   });
 });
 
@@ -391,7 +391,7 @@ describe("a proof belongs to the hashes it proved", () => {
     expect(next.bumps[0]).toMatchObject({ viaMirror: true });
     expect(next.bumps[1]).toMatchObject({ privateSource: true, mirror: {} });
     expect(next.bumps[1].viaMirror).toBeUndefined();
-    expect(next.outcomes[1]).toEqual({ kind: "unreviewed", reason: "private-source" });
+    expect(next.outcomes[1]).toEqual({ kind: "unreviewed", reason: "unverified-pin" });
   });
 
   test.each([
@@ -611,3 +611,73 @@ function emptyEvidence() {
     findingCount: 0,
   };
 }
+
+describe("a mirror pin that is not the public release", () => {
+  test("holds under the default policy like a failed public pin, never passing as private", async () => {
+    verifyMirrorBump.mockResolvedValue(false);
+    verifyPublicPin.mockResolvedValue(false);
+    const mirrored = mirrorBump("swapped");
+    const pinned = pinnedPublic("swapped-public", "sha512-x");
+
+    const result = await stage([mirrored, pinned]);
+
+    expect(loadDiff).not.toHaveBeenCalled();
+    expect(listVersions).not.toHaveBeenCalled();
+    const verdicts = result.outcomes.map((outcome) =>
+      decideBump(outcome, DEFAULT_DEPENDENCY_REVIEW_POLICY, NOW),
+    );
+    expect(verdicts[0]).toEqual({
+      status: "hold",
+      reasons: ["too-new"],
+      evidence: null,
+      unreviewed: "unverified-pin",
+    });
+    expect(verdicts[0]).toEqual(verdicts[1]);
+    // The approval stays bound to the hashes the mirror pinned.
+    expect(dependencyChangeKey(result.bumps[0])).toBe(dependencyChangeKey(mirrored));
+    expect(dependencyChangeKey(result.bumps[0]).split("\u0000").at(-1)).toMatch(
+      /^mirror:[0-9a-f]{64}$/,
+    );
+  });
+});
+
+describe("an entry that should pin and doesn't", () => {
+  test("a public bump or re-pin with an empty pin holds as unverified, however old", async () => {
+    verifyPublicPin.mockResolvedValue(true);
+    listVersions.mockResolvedValue({
+      packageName: "x",
+      versions: [{ version: "1.0.1", publishedAt: new Date(NOW - 400 * DAY).toISOString() }],
+      suggested: null,
+    });
+    const bumped = bump("no-pin", { pinnedHashes: [] });
+    const repin = bump("no-repin", { fromVersion: null, repinned: true, pinnedHashes: [] });
+
+    const result = await stage([bumped, repin]);
+
+    expect(verifyPublicPin).not.toHaveBeenCalled();
+    expect(loadDiff).not.toHaveBeenCalled();
+    expect(result.outcomes).toEqual([
+      { kind: "unreviewed", reason: "unverified-pin" },
+      { kind: "unreviewed", reason: "unverified-pin" },
+    ]);
+    for (const outcome of result.outcomes) {
+      expect(decideBump(outcome, DEFAULT_DEPENDENCY_REVIEW_POLICY, NOW)).toMatchObject({
+        status: "hold",
+        reasons: ["too-new"],
+        unreviewed: "unverified-pin",
+      });
+    }
+    // An empty pin is its own identity, never the plain public change.
+    expect(dependencyChangeKey(result.bumps[0])).not.toBe(dependencyChangeKey(bump("no-pin")));
+    expect(dependencyChangeKey(bumped)).toMatch(/pin:[0-9a-f]{64}$/);
+  });
+
+  test("a mirror pin with an empty side fails without a lookup", async () => {
+    verifyMirrorBump.mockResolvedValue(true);
+    const result = await stage([
+      bump("empty", { privateSource: true, mirror: { fromHashes: [], toHashes: ["sha512-b"] } }),
+    ]);
+    expect(verifyMirrorBump).not.toHaveBeenCalled();
+    expect(result.outcomes[0]).toEqual({ kind: "unreviewed", reason: "unverified-pin" });
+  });
+});

@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createDb } from "../../server/db/client";
 import {
+  claimDependencyReviewAttempt,
   createDependencyReview,
   findApprovedChanges,
   isChangeApproved,
@@ -24,6 +25,7 @@ import type { DependencyReviewQueueMessage } from "../../server/lib/scan/job";
 import {
   dependencyReviewJobEnv,
   fakePullRequest,
+  fixtureIntegrity,
   npmLockfile,
   runDependencyReviewJob,
   seedDependencyReviewOrg,
@@ -64,10 +66,14 @@ async function readReview(reviewId: string) {
   return { ...row, bumps: JSON.parse(row.bumpsJson ?? "[]") as ReviewedBump[] };
 }
 
+// Bumps with a review outcome (a diff's evidence or why it has none), not
+// proofs or publish times alone.
 function storedOutcomeCount(progressJson: string | null): number {
   if (!progressJson) return 0;
-  const progress = JSON.parse(progressJson) as { bumps: Record<string, unknown> };
-  return Object.keys(progress.bumps).length;
+  const progress = JSON.parse(progressJson) as {
+    bumps: Record<string, { evidence?: unknown; unreviewed?: unknown }>;
+  };
+  return Object.values(progress.bumps).filter((entry) => entry.evidence || entry.unreviewed).length;
 }
 
 interface ScenarioOptions extends SeedDependencyReviewOrgOptions {
@@ -109,6 +115,16 @@ function manyBumps(label: string, count: number) {
   };
 }
 
+// The packages whose cold diff ran: a diff downloads both tarballs, while pin
+// proofs and publish-time lookups read only the packument.
+function diffedNames(api: ReturnType<typeof stubGithubApi>, from = 0): string[] {
+  const names = api.requests
+    .slice(from)
+    .filter((request) => request.host === "registry.npmjs.org" && request.url.endsWith(".tgz"))
+    .map((request) => decodeURIComponent(new URL(request.url).pathname.slice(1).split("/-/")[0]));
+  return [...new Set(names)];
+}
+
 function registryNames(api: ReturnType<typeof stubGithubApi>, from = 0): string[] {
   return api.requests
     .slice(from)
@@ -132,7 +148,12 @@ function servePackuments(published: Record<string, Record<string, string>>) {
           versions: Object.fromEntries(
             Object.keys(versions).map((version) => [
               version,
-              { dist: { tarball: `https://registry.npmjs.org/x/-/x-${version}.tgz` } },
+              {
+                dist: {
+                  tarball: `https://registry.npmjs.org/x/-/x-${version}.tgz`,
+                  integrity: fixtureIntegrity(decodeURIComponent(url.pathname.slice(1)), version),
+                },
+              },
             ]),
           ),
           time: versions,
@@ -156,7 +177,7 @@ describe("dependency review continuation", () => {
     await run();
 
     // Cached pairs cost nothing; forty cold pairs spent the pass.
-    expect(registryNames(api)).toHaveLength(MAX_COLD_DIFFS_PER_PASS);
+    expect(diffedNames(api)).toHaveLength(MAX_COLD_DIFFS_PER_PASS);
     const between = await readReview(review.id);
     expect(between).toMatchObject({ status: "queued", conclusion: null });
     expect(storedOutcomeCount(between.progressJson)).toBe(MAX_COLD_DIFFS_PER_PASS + 10);
@@ -191,7 +212,7 @@ describe("dependency review continuation", () => {
     // A not-found outcome is not cached by the public diff, but the stored
     // progress keeps the second pass from asking again, and the stored
     // collection keeps it from reading the lockfiles again.
-    expect(registryNames(api, sentBefore).sort()).toEqual(names.slice(MAX_COLD_DIFFS_PER_PASS));
+    expect(diffedNames(api, sentBefore).sort()).toEqual(names.slice(MAX_COLD_DIFFS_PER_PASS));
     expect(api.requests.slice(sentBefore).some((r) => r.url.includes("/contents/"))).toBe(false);
     const done = await readReview(review.id);
     expect(done).toMatchObject({
@@ -215,6 +236,7 @@ describe("dependency review continuation", () => {
     const { api, review, input, queue } = await scenario({ before, after });
     // Stall the first pass from its 8th cold diff on, as if the platform killed it there.
     let registryCalls = 0;
+    const stalledNames = new Set<string>();
     let stalling = true;
     let reachedPause!: () => void;
     const paused = new Promise<void>((resolve) => {
@@ -229,14 +251,17 @@ describe("dependency review continuation", () => {
       "fetch",
       vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
         const url = request instanceof Request ? request.url : String(request);
-        if (url.startsWith("https://registry.npmjs.org/")) {
-          registryCalls += 1;
-          // From the 8th on every diff stalls; once all four workers are
-          // stalled, the pass writes nothing more.
-          if (stalling && registryCalls >= 8) {
+        if (stalling && url.startsWith("https://registry.npmjs.org/")) {
+          const name = decodeURIComponent(new URL(url).pathname.slice(1).split("/-/")[0]);
+          // A cold diff starts with its base tarball (pin proofs read only the
+          // packument). From the 8th diff on, every download of that package
+          // stalls; once all four workers are stalled, the pass writes nothing more.
+          if (url.endsWith("1.0.0.tgz")) {
+            registryCalls += 1;
+            if (registryCalls >= 8) stalledNames.add(name);
             if (registryCalls === 11) reachedPause();
-            await resumed;
           }
+          if (stalledNames.has(name)) await resumed;
         }
         return inner(request, init);
       }),
@@ -277,7 +302,7 @@ describe("dependency review continuation", () => {
     // The queue's redelivery reclaims the expired lease and continues.
     const sentBefore = api.requests.length;
     await runDependencyReviewJob(input, { SCAN_QUEUE: queue.binding });
-    const askedAgain = registryNames(api, sentBefore).filter((name) => stored.includes(name));
+    const askedAgain = diffedNames(api, sentBefore).filter((name) => stored.includes(name));
     expect(askedAgain).toEqual([]);
     expect(api.checkRunUpdates.find((run) => run.id === firstRun)?.body).toMatchObject({
       conclusion: "cancelled",
@@ -332,6 +357,110 @@ describe("dependency review continuation", () => {
     expect(queue.sent).toHaveLength(1);
   });
 
+  test("dropping a private registry between passes re-collects: its bumps lose the exemption", async () => {
+    const { before, after } = manyBumps("untrusted", MAX_COLD_DIFFS_PER_PASS + 5);
+    const internal = `@corp/${uniquePackageName("internal")}`;
+    const { seeded, pr, api, review, queue, run } = await scenario({
+      before: { ...before, [internal]: "2.0.0" },
+      after: { ...after, [internal]: "2.0.1" },
+      policy: { privateRegistries: ["https://npm.corp.example/"] },
+    });
+    pr.contents.set(`${pr.headSha}:.npmrc`, "@corp:registry=https://npm.corp.example/\n");
+    await run();
+    expect(await readReview(review.id)).toMatchObject({ status: "queued" });
+
+    await saveDependencyReviewSettings(
+      createDb(env.DB),
+      seeded.organizationId,
+      { enabled: true, policy: DEFAULT_DEPENDENCY_REVIEW_POLICY, extraBotLogins: [] },
+      seeded.userId,
+    );
+    const sentBefore = api.requests.length;
+    await run(queue.sent[0].body);
+
+    // The stored collection was made under the old policy, so it is read again.
+    expect(api.requests.slice(sentBefore).some((r) => r.url.includes("/contents/"))).toBe(true);
+    const done = await readReview(review.id);
+    expect(done).toMatchObject({ status: "completed", conclusion: "held" });
+    expect(done.bumps.find((b) => b.bump.name === internal)).toMatchObject({
+      bump: { privateSource: true, remoteSource: true },
+      verdict: { status: "hold", reasons: ["too-new"], unreviewed: "remote-source" },
+    });
+  });
+
+  test("a scope made private between passes is never sent for a pending mirror proof", async () => {
+    const mirror = "https://artifacts.example.com/npm/";
+    const { before, after } = manyBumps("scoped", MAX_COLD_DIFFS_PER_PASS + 5);
+    const internal = `@corp/${uniquePackageName("hosted")}`;
+    const bare = internal.slice(internal.indexOf("/") + 1);
+    const lock = (packages: Record<string, string>, internalVersion: string, hash: string) => {
+      const parsed = JSON.parse(npmLockfile(packages)) as {
+        packages: Record<string, Record<string, unknown>>;
+      };
+      (parsed.packages[""].dependencies as Record<string, string>)[internal] = "*";
+      parsed.packages[`node_modules/${internal}`] = {
+        version: internalVersion,
+        resolved: `${mirror}${internal}/-/${bare}-${internalVersion}.tgz`,
+        integrity: `sha512-${hash}`,
+      };
+      return JSON.stringify(parsed);
+    };
+    const { seeded, pr, api, review, queue, run } = await scenario({
+      before,
+      after,
+      policy: { publicMirrors: [mirror] },
+    });
+    pr.contents.set(
+      `${pr.mergeBaseSha}:package-lock.json`,
+      lock(before, "2.0.0", "a".repeat(86) + "=="),
+    );
+    pr.contents.set(`${pr.headSha}:package-lock.json`, lock(after, "2.0.1", "b".repeat(86) + "=="));
+    await run();
+    const between = await readReview(review.id);
+    expect(between.status).toBe("queued");
+    const progress = JSON.parse(between.progressJson ?? "{}") as {
+      bumps: Record<string, { mirrorVerified?: boolean }>;
+      collected?: { bumps: DependencyBump[] };
+    };
+    // Collected as a mirror candidate under the first policy.
+    expect(progress.collected?.bumps.find((b) => b.name === internal)).toMatchObject({
+      mirror: {},
+    });
+    // As if the first pass ran out of lookups before proving it.
+    for (const [key, entry] of Object.entries(progress.bumps)) {
+      if (key.includes(internal)) delete entry.mirrorVerified;
+    }
+    await createDb(env.DB)
+      .update(schema.dependencyReviews)
+      .set({ progressJson: JSON.stringify(progress) })
+      .where(eq(schema.dependencyReviews.id, review.id));
+
+    await saveDependencyReviewSettings(
+      createDb(env.DB),
+      seeded.organizationId,
+      {
+        enabled: true,
+        policy: {
+          ...DEFAULT_DEPENDENCY_REVIEW_POLICY,
+          publicMirrors: [mirror],
+          privateScopes: ["@corp"],
+        },
+        extraBotLogins: [],
+      },
+      seeded.userId,
+    );
+    const sentBefore = api.requests.length;
+    await run(queue.sent[0].body);
+
+    expect(registryNames(api, sentBefore).filter((name) => name.includes("@corp"))).toEqual([]);
+    const done = await readReview(review.id);
+    expect(done.status).toBe("completed");
+    const kept = done.bumps.find((b) => b.bump.name === internal);
+    expect(kept?.bump).toMatchObject({ privateSource: true });
+    expect(kept?.bump.mirror).toBeUndefined();
+    expect(kept?.verdict).toEqual({ status: "unreviewed", unreviewed: "private-source" });
+  });
+
   test("a pass on a commit that stopped being the head spends nothing and cancels its run", async () => {
     const { before, after } = manyBumps("rebased", MAX_COLD_DIFFS_PER_PASS + 5);
     const { pr, api, review, queue, run } = await scenario({ before, after });
@@ -366,7 +495,7 @@ describe("dependency review continuation", () => {
     await run({ ...input, rerun: true });
 
     // Progress was discarded, so the first names are diffed again.
-    expect(registryNames(api, sentBefore)).toContain(names[0]);
+    expect(diffedNames(api, sentBefore)).toContain(names[0]);
     expect(api.checkRunCreates).toHaveLength(1);
     const row = await readReview(review.id);
     expect(row.status).toBe("queued");
@@ -629,6 +758,53 @@ describe("dependency review age recheck", () => {
       status: "completed",
       checkRunId: done.checkRunId,
       attempt: done.attempt,
+    });
+  });
+
+  test.each(["failed", "superseded"] as const)(
+    "a stale recheck never restarts a review that has %s",
+    async (status) => {
+      const { api, review, queue, run } = await ageHeldReview({ publishedDaysAgo: 2 });
+      const recheck = queue.sent[0].body;
+      const due = { ...recheck, recheck: { ...recheck.recheck!, at: new Date().toISOString() } };
+      await createDb(env.DB)
+        .update(schema.dependencyReviews)
+        .set({ status })
+        .where(eq(schema.dependencyReviews.id, review.id));
+      const before = await readReview(review.id);
+      const requests = api.requests.length;
+
+      await run(due);
+
+      expect(api.requests).toHaveLength(requests);
+      expect(await readReview(review.id)).toMatchObject({ status, attempt: before.attempt });
+      // Even a race that lands between reading and claiming can't: the
+      // resume claim takes only a queued review or an expired lease.
+      expect(
+        await claimDependencyReviewAttempt(createDb(env.DB), review.id, { continuation: true }),
+      ).toBeNull();
+    },
+  );
+
+  test("a stale recheck leaves a review another trigger restarted alone", async () => {
+    const { api, review, queue, run } = await ageHeldReview({ publishedDaysAgo: 2 });
+    const recheck = queue.sent[0].body;
+    const due = { ...recheck, recheck: { ...recheck.recheck!, at: new Date().toISOString() } };
+    // A Re-run claimed the review and was released for a retry: queued, but
+    // its progress names no recheck.
+    await createDb(env.DB)
+      .update(schema.dependencyReviews)
+      .set({ status: "queued", progressJson: null })
+      .where(eq(schema.dependencyReviews.id, review.id));
+    const before = await readReview(review.id);
+    const requests = api.requests.length;
+
+    await run(due);
+
+    expect(api.requests).toHaveLength(requests);
+    expect(await readReview(review.id)).toMatchObject({
+      status: "queued",
+      attempt: before.attempt,
     });
   });
 

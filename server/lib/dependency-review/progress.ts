@@ -4,11 +4,11 @@ import type { BumpEvidence, DependencyBump } from "./types";
 
 /**
  * What the first pass collected for this head, so later passes skip reading
- * every lockfile again. Kept with the mirror prefixes it was collected under:
- * a changed mirror list re-collects.
+ * every lockfile again. Kept with the `collectionPolicyKey` it was collected
+ * under: any change to what classification reads re-collects.
  */
 export interface StoredCollection {
-  publicMirrors: string[];
+  policyKey: string;
   bumps: DependencyBump[];
   unreadLockfiles: string[];
   listingComplete: boolean;
@@ -31,6 +31,9 @@ export interface DependencyReviewProgress {
   settled: number;
   bumps: Record<string, StoredBumpProgress>;
   collected?: StoredCollection;
+  // Set when an age recheck started this attempt: the held run it rechecks.
+  // A redelivery of that recheck may resume this attempt and nothing else.
+  recheckOf?: number;
 }
 
 export interface StoredBumpProgress {
@@ -92,10 +95,11 @@ export function parseProgress(text: string | null, nowMs: number): DependencyRev
     total: number(value.total, 0),
     settled: number(value.settled, 0),
     bumps: value.bumps as Record<string, StoredBumpProgress>,
+    ...(typeof value.recheckOf === "number" ? { recheckOf: value.recheckOf } : {}),
     ...(isRecord(value.collected) &&
     Array.isArray(value.collected.bumps) &&
     Array.isArray(value.collected.unreadLockfiles) &&
-    Array.isArray(value.collected.publicMirrors)
+    typeof value.collected.policyKey === "string"
       ? { collected: value.collected as unknown as StoredCollection }
       : {}),
   };

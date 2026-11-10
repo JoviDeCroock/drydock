@@ -28,14 +28,17 @@ export function parseNpmLock(text: string): LockfileSnapshot {
     return incompleteSnapshot();
   }
   const builder = createSnapshotBuilder("npm");
+  builder.expectStrongPins();
   const all = packages as Record<string, unknown>;
   const entries = Object.entries(all);
+  const bundle = bundledPaths(all);
   for (const [path, entry] of entries) {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
       if (path.includes(NODE_MODULES)) builder.markIncomplete();
       continue;
     }
-    const pkg = installedPackage(path, entry, all);
+    if (path && !path.includes(NODE_MODULES)) builder.addWorkspace(path);
+    const pkg = installedPackage(path, entry, bundle);
     if (pkg) recordInstalled(builder, pkg.name, entry);
   }
   for (const [importer, entry] of entries) {
@@ -48,7 +51,7 @@ export function parseNpmLock(text: string): LockfileSnapshot {
         const hoisted = `${NODE_MODULES}${dep}`;
         const path = Object.hasOwn(packages, local) ? local : hoisted;
         if (!Object.hasOwn(packages, path)) continue;
-        builder.markDirect(installedPackage(path, all[path], all)?.name);
+        builder.markDirect(installedPackage(path, all[path], bundle)?.name);
       }
     }
   }
@@ -57,42 +60,100 @@ export function parseNpmLock(text: string): LockfileSnapshot {
 
 // The package an installed entry stands for, or null when its code is in the
 // repository (a workspace link, a `file:` source) or ships inside a bundling
-// parent's tarball. npm (arborist) only takes `inBundle` from a nested entry
-// with no `resolved` of its own under a package that declares bundled
-// dependencies; anywhere else it fetches the entry like any other, so the flag
-// is ignored there. A `name` that is not a string is recorded as is, which the
-// builder refuses (incomplete).
+// package's tarball (see `bundledPaths`). An `inBundle` flag anywhere else is
+// ignored and the entry recorded like any other: a wrongly recorded entry is
+// an extra bump, a wrongly skipped one an unreviewed install. A `name` that is
+// not a string is recorded as is, which the builder refuses (incomplete).
 function installedPackage(
   path: string,
   entry: unknown,
-  packages: Record<string, unknown>,
+  bundle: ReadonlySet<string>,
 ): { name: unknown } | null {
   const at = path.lastIndexOf(NODE_MODULES);
   if (at === -1) return null;
   if (ownField(entry, "link") === true) return null;
   if (isLocalSource(ownField(entry, "resolved"))) return null;
-  if (ownField(entry, "inBundle") === true && bundled(path, entry, packages)) return null;
+  if (
+    ownField(entry, "inBundle") === true &&
+    ownField(entry, "resolved") === undefined &&
+    bundle.has(path)
+  ) {
+    return null;
+  }
   // An alias (`"x": "npm:real@^1"`) installs under its alias path and names the
   // real package in `name`.
   const name = ownField(entry, "name");
   return { name: name === undefined ? path.slice(at + NODE_MODULES.length) : name };
 }
 
-function bundled(path: string, entry: unknown, packages: Record<string, unknown>): boolean {
-  if (ownField(entry, "resolved") !== undefined) return false;
-  // Every ancestor install path: `a/node_modules/b/node_modules/c` has `a` and
-  // `a/node_modules/b`; the root (``) never bundles.
-  for (let at = path.lastIndexOf(`/${NODE_MODULES}`); at > 0;) {
-    const parent = path.slice(0, at);
-    if (parent.includes(NODE_MODULES) && Object.hasOwn(packages, parent)) {
-      const declared = packages[parent];
-      const list =
-        ownField(declared, "bundleDependencies") ?? ownField(declared, "bundledDependencies");
-      if (list === true || (Array.isArray(list) && list.length > 0)) return true;
+const BUNDLE_EDGES = ["dependencies", "optionalDependencies"] as const;
+
+/**
+ * The install paths npm takes as shipped inside a bundling package's tarball,
+ * the way arborist derives bundles: for each installed package that declares
+ * `bundleDependencies` (or `true`, every dependency), the entries in its own
+ * `node_modules` it names, then whatever those require that node resolution
+ * finds inside that same `node_modules`, transitively. A dependency that
+ * resolves anywhere outside it is fetched, not bundled.
+ */
+function bundledPaths(packages: Record<string, unknown>): Set<string> {
+  const bundle = new Set<string>();
+  for (const [bundler, entry] of Object.entries(packages)) {
+    if (!bundler.includes(NODE_MODULES)) continue;
+    const declared =
+      ownField(entry, "bundleDependencies") ?? ownField(entry, "bundledDependencies");
+    let names: unknown[];
+    if (declared === true) {
+      names = BUNDLE_EDGES.flatMap((field) => {
+        const deps = ownField(entry, field);
+        return typeof deps === "object" && deps !== null ? Object.keys(deps) : [];
+      });
+    } else if (Array.isArray(declared)) names = declared;
+    else continue;
+    const inside = `${bundler}/${NODE_MODULES}`;
+    const queue: string[] = [];
+    for (const name of names) {
+      if (typeof name === "string" && Object.hasOwn(packages, inside + name)) {
+        queue.push(inside + name);
+      }
     }
-    at = path.lastIndexOf(`/${NODE_MODULES}`, at - 1);
+    const seen = new Set<string>();
+    while (queue.length > 0) {
+      const at = queue.pop()!;
+      if (seen.has(at)) continue;
+      seen.add(at);
+      bundle.add(at);
+      for (const field of BUNDLE_EDGES) {
+        const deps = ownField(packages[at], field);
+        if (typeof deps !== "object" || deps === null) continue;
+        for (const dep of Object.keys(deps)) {
+          const target = resolveWithin(packages, at, dep, bundler);
+          if (target !== null) queue.push(target);
+        }
+      }
+    }
   }
-  return false;
+  return bundle;
+}
+
+// Node resolution of `dep` from the package at `from`, looking only as far up
+// as `root`'s own `node_modules`: the first `<dir>/node_modules/<dep>` that is
+// installed, or null when none is (it resolves outside `root`).
+function resolveWithin(
+  packages: Record<string, unknown>,
+  from: string,
+  dep: string,
+  root: string,
+): string | null {
+  let dir = from;
+  for (;;) {
+    const candidate = `${dir}/${NODE_MODULES}${dep}`;
+    if (Object.hasOwn(packages, candidate)) return candidate;
+    if (dir === root) return null;
+    const at = dir.lastIndexOf(`/${NODE_MODULES}`);
+    if (at < root.length) return null;
+    dir = dir.slice(0, at);
+  }
 }
 
 // With no `resolved`, npm fetches `name@version` from the configured registry

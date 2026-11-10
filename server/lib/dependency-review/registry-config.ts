@@ -184,19 +184,6 @@ export function parseYarnrc(text: string): RegistryRouting | null {
   return readable && valid ? routing : null;
 }
 
-/** Whether two files' routing is the same, so changing one changed nothing. */
-function sameRouting(a: RegistryRouting | null, b: RegistryRouting | null): boolean {
-  if (a === null || b === null || a.unknown || b.unknown) return false;
-  const normal = (routing: RegistryRouting) =>
-    JSON.stringify([
-      [...new Set(routing.defaultUrls)].sort(),
-      [...routing.scopeUrls.entries()]
-        .map(([scope, urls]) => [scope, [...new Set(urls)].sort()] as const)
-        .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)),
-    ]);
-  return normal(a) === normal(b);
-}
-
 export function isPublicNpmName(registries: CustomRegistries, name: string): boolean {
   return !registries.all && !registries.scopes.has(scopeOf(name));
 }
@@ -263,10 +250,11 @@ const OPAQUE_CONFIG = /(?:^|\/)(?:\.yarnrc|uv\.toml|pip\.conf|pip\.ini)$/;
 const PYPROJECT = /(?:^|\/)pyproject\.toml$/;
 
 /**
- * Files that move where packages are fetched from without a lockfile showing
- * it: `.npmrc` / `.yarnrc.yml` (routing, compared), a pyproject's `[tool.uv]`
- * tables (compared as text), and Yarn v1's `.yarnrc`, `uv.toml`, and
- * `pip.conf` / `pip.ini` (not read: any change counts).
+ * Files that move where packages are fetched from, or how their bytes are
+ * checked, without a lockfile showing it: `.npmrc` / `.yarnrc.yml` (compared
+ * without comments and blank lines), a pyproject's `[tool.uv]` tables
+ * (compared as text), and Yarn v1's `.yarnrc`, `uv.toml`, and `pip.conf` /
+ * `pip.ini` (not read: any change counts).
  */
 export function resolutionConfigKind(path: string): "routing" | "pyproject" | "opaque" | null {
   if (ROUTING_CONFIG.test(path)) return "routing";
@@ -276,9 +264,10 @@ export function resolutionConfigKind(path: string): "routing" | "pyproject" | "o
 
 /**
  * Whether a resolution config file changed anything that matters between
- * the merge base and the head (null: absent). Routing config is the same
- * only when both sides read and route identically; an absent file routes
- * nothing.
+ * the merge base and the head (null: absent). Any setting may move bytes
+ * (a registry, a proxy, a CA, TLS or checksum checks, another config file to
+ * load), so for `.npmrc` / `.yarnrc.yml` every change but to comments and
+ * blank lines counts; an absent file and one of only comments are the same.
  */
 export function resolutionConfigChanged(
   path: string,
@@ -289,11 +278,53 @@ export function resolutionConfigChanged(
   if (kind === null) return false;
   if (kind === "opaque" || before === "too-large" || after === "too-large") return true;
   if (kind === "pyproject") return uvTables(before ?? "") !== uvTables(after ?? "");
-  return !sameRouting(
-    parseRoutingConfig(path, before ?? ""),
-    parseRoutingConfig(path, after ?? ""),
-  );
+  // A side outside the strict shape could hide a setting in what reads here
+  // as a comment line (a `#` line in a block scalar).
+  for (const text of [before, after]) {
+    if (text !== null && parseRoutingConfig(path, text) === null) return true;
+  }
+  const ini = !path.endsWith(".yml");
+  return settingLines(before ?? "", ini) !== settingLines(after ?? "", ini);
 }
+
+// The lines that are not blank and not whole-line comments: `#`, and `;` in
+// an ini file (in YAML `;x: y` is a key). A `#` line inside a YAML block or
+// multi-line scalar would be content; the caller refuses a file outside the
+// strict shape before comparing.
+function settingLines(text: string, ini: boolean): string {
+  const out: string[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trimEnd();
+    const start = line.trimStart();
+    if (start && !start.startsWith("#") && !(ini && start.startsWith(";"))) out.push(line);
+  }
+  return out.join("\n");
+}
+// Yarn Berry directories whose committed contents Yarn installs or runs
+// with nothing a lockfile diff binds: the zip cache (zero-install; Yarn checks
+// only its own checksum, which matches no registry digest), unplugged package
+// copies, the Plug'n'Play loader, and the Yarn release and plugins it runs.
+const BERRY_COMMITTED_DIR = /^(.*?(?:^|\/)\.yarn\/(?:cache|unplugged|releases|plugins)\/)/;
+const PNP_FILE = /(?:^|\/)\.pnp\.(?:c?js|loader\.mjs|data\.json)$/;
+// A Berry cache archive (`lodash-npm-4.17.21-6382451519-eb835a2e51.zip`)
+// under a custom `cacheFolder`.
+const BERRY_CACHE_ARCHIVE = /(?:^|\/)[^/]+-npm-[^/]+\.zip$/;
+
+/**
+ * The committed install input a changed path belongs to, reported once per
+ * directory (or file, for the PnP loader); null for any other path. npm,
+ * pnpm, and Yarn classic stores and offline mirrors are not here: they verify
+ * every tarball against the lockfile's integrity, which the review binds, and
+ * pointing them elsewhere is a config change that already counts.
+ */
+export function committedInstallInput(path: string): string | null {
+  const dir = BERRY_COMMITTED_DIR.exec(path);
+  if (dir) return dir[1];
+  if (PNP_FILE.test(path)) return path;
+  if (BERRY_CACHE_ARCHIVE.test(path)) return path.slice(0, path.lastIndexOf("/") + 1);
+  return null;
+}
+
 const TOML_HEADER = /^\s*\[/;
 
 // The text of a pyproject's `[tool]` and `[tool.uv…]` tables (and any dotted

@@ -29,7 +29,8 @@ export interface DependencyBump {
   // `publicMirrors` and pins strong hashes (npm: one `sha512-…` integrity; uv:
   // every `sha256:…` the lock records). The review stage diffs it as a public
   // pair only after `mirror-identity.ts` proves both sides equal the public
-  // registry's bytes. `fromHashes` is null for a package the PR adds.
+  // registry's bytes; a failed proof makes it a remote source
+  // (`unverified-pin`). `fromHashes` is null for a package the PR adds.
   mirror?: { fromHashes: readonly string[] | null; toHashes: readonly string[] };
   // Proven byte-identical to the public release through `mirror`; set by the
   // review stage, which then clears `privateSource` and `mirror`.
@@ -40,7 +41,8 @@ export interface DependencyBump {
   // stage diffs the public release only after `verifyPublicPin` proves they are
   // the public registry's. A failed proof makes the bump a remote source.
   // Absent when the format records no comparable pin (Yarn Berry, unhashed
-  // requirements).
+  // requirements). Empty when the format always writes one and this entry has
+  // none usable: the proof fails without a lookup.
   pinnedHashes?: readonly string[];
   // The lockfile kept this version and changed what it pins for it. There is
   // no previous version to diff (`fromVersion` is null), and the pin is proven
@@ -129,9 +131,9 @@ export type UnreviewedReason =
   | "timed-out"
   | "private-source"
   | "remote-source"
-  // A public bump whose pinned hashes `verifyPublicPin` could not match to the
-  // public registry's release. Like a remote source: nothing to diff and no
-  // publish time to wait out.
+  // A public or mirror bump whose pinned hashes the review stage could not
+  // match to the public registry's release. Like a remote source: nothing to
+  // diff and no publish time to wait out.
   | "unverified-pin";
 
 export interface BumpFinding {

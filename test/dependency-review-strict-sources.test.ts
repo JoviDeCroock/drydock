@@ -8,10 +8,12 @@ import {
   PUBLIC_ROUTE,
   readStrictYaml,
   routedBump,
+  unpinnedRequirementsChanged,
   type LockfileSnapshot,
   type NameRoute,
 } from "../server/lib/dependency-review/lockfiles";
 import {
+  committedInstallInput,
   configAncestors,
   npmNameRoute,
   parseNpmrc,
@@ -116,13 +118,43 @@ describe("F2: only a declared registry is private; any other host is remote", ()
     ]);
   });
 
+  const onPrivate = npmLock({
+    foo: {
+      version: "1.0.0",
+      resolved: `${PRIVATE}foo/-/foo-1.0.0.tgz`,
+      integrity: sha512("a"),
+    },
+  });
+
   test("under a declared private registry it is private, never remote", () => {
-    const [bump] = routed("npm", before, after(`${PRIVATE}foo/-/foo-1.0.1.tgz`), {
-      privateRegistries: [PRIVATE],
-    });
-    expect(bump).toEqual(expect.objectContaining({ privateSource: true }));
-    expect(bump).not.toHaveProperty("remoteSource");
-    expect(bump).not.toHaveProperty("pinnedHashes");
+    for (const base of [onPrivate, null]) {
+      const [bump] = routed("npm", base, after(`${PRIVATE}foo/-/foo-1.0.1.tgz`), {
+        privateRegistries: [PRIVATE],
+      });
+      expect(bump).toEqual(expect.objectContaining({ privateSource: true }));
+      expect(bump).not.toHaveProperty("remoteSource");
+      expect(bump).not.toHaveProperty("pinnedHashes");
+    }
+  });
+
+  test("a public package the PR moves onto a declared private registry is remote", () => {
+    const lodash = (version: string, resolved: string, seed: string) =>
+      npmLock({ lodash: { version, resolved, integrity: sha512(seed) } });
+    const [bump] = routed(
+      "npm",
+      lodash("4.17.20", "https://registry.npmjs.org/lodash/-/lodash-4.17.20.tgz", "a"),
+      lodash("4.17.99", `${PRIVATE}lodash/-/lodash-4.17.99.tgz`, "evil"),
+      { privateRegistries: [PRIVATE] },
+    );
+    expect(bump).toEqual(expect.objectContaining({ privateSource: true, remoteSource: true }));
+    // From a declared mirror too.
+    const [mirrored] = routed(
+      "npm",
+      lodash("4.17.20", `${MIRROR}lodash/-/lodash-4.17.20.tgz`, "a"),
+      lodash("4.17.99", `${PRIVATE}lodash/-/lodash-4.17.99.tgz`, "evil"),
+      { privateRegistries: [PRIVATE], publicMirrors: [MIRROR] },
+    );
+    expect(mirrored).toEqual(expect.objectContaining({ remoteSource: true }));
   });
 
   test("a declared prefix is matched on the canonical URL only", () => {
@@ -140,7 +172,7 @@ describe("F2: only a declared registry is private; any other host is remote", ()
 
   test("a non-registry tarball under a declared private registry is that registry's", () => {
     const url = `${PRIVATE}download/@corp/foo/1.0.1/abcdef`;
-    const [bump] = routed("npm", before, after(url), { privateRegistries: [PRIVATE] });
+    const [bump] = routed("npm", onPrivate, after(url), { privateRegistries: [PRIVATE] });
     expect(bump).not.toHaveProperty("remoteSource");
   });
 
@@ -204,29 +236,67 @@ describe("F3: a public entry is bound to what the lockfile pins", () => {
     expect(routed("npm", lock(`${sha1("a")} ${strong}`), lock(strong))).toEqual([]);
   });
 
-  test("a re-pin with no usable sha512 is still a re-pin, with nothing to prove", () => {
-    const lock = (integrity: string) => npmLock({ foo: { version: "1.0.0", integrity } });
-    const [sha1Only] = routed("npm", lock(sha1("a")), lock(sha1("b")));
-    expect(sha1Only).toEqual(expect.objectContaining({ repinned: true }));
-    expect(sha1Only).not.toHaveProperty("pinnedHashes");
-    // An unknown algorithm beside sha512 could be the one checked.
-    const [unknown] = routed(
-      "npm",
-      lock(sha512("a")),
-      lock(`${sha512("a")} sha3-${"A".repeat(86)}==`),
-    );
-    expect(unknown).toEqual(expect.objectContaining({ repinned: true }));
-    expect(unknown).not.toHaveProperty("pinnedHashes");
+  // Integrity values the PR could write so that no proof is attempted, while
+  // npm (ssri: the strongest algorithm it knows, `?opts` dropped) still
+  // installs whatever matches an attacker's sha512 or nothing at all.
+  const unusable = [
+    ["no integrity", undefined],
+    ["sha1 only", () => sha1("evil")],
+    ["sha512 beside md5", () => `${sha512("evil")} md5-${"A".repeat(22)}==`],
+    ["sha512 beside sha3_512", () => `${sha512("evil")} sha3_512-${"A".repeat(86)}==`],
+    ["sha512 with options", () => `${sha512("evil")}?opt`],
+    ["an oversized value", () => `${sha512("evil")} ${"sha512-x ".repeat(120)}`],
+  ] as const;
+
+  test.each(unusable)("a re-pin to %s must be proven, and cannot be", (_, integrity) => {
+    const lock = (value: string | undefined) =>
+      npmLock({ foo: { version: "1.0.0", ...(value === undefined ? {} : { integrity: value }) } });
+    expect(routed("npm", lock(sha512("real")), lock(integrity?.()))).toEqual([
+      expect.objectContaining({ fromVersion: null, repinned: true, pinnedHashes: [] }),
+    ]);
   });
 
-  test("a public version bump carries the target's sha512; a weak pin carries none", () => {
+  test.each(unusable)("a version bump to %s must be proven, and cannot be", (_, integrity) => {
+    const lock = (version: string, value: string | undefined) =>
+      npmLock({ foo: { version, ...(value === undefined ? {} : { integrity: value }) } });
+    const [bump] = routed("npm", lock("1.0.0", sha512("a")), lock("1.0.1", integrity?.()));
+    expect(bump).toEqual(expect.objectContaining({ fromVersion: "1.0.0", pinnedHashes: [] }));
+    expect(bump).not.toHaveProperty("privateSource");
+  });
+
+  test("a public version bump carries the target's sha512", () => {
     const lock = (version: string, integrity: string) => npmLock({ foo: { version, integrity } });
     expect(routed("npm", lock("1.0.0", sha512("a")), lock("1.0.1", sha512("b")))).toEqual([
       expect.objectContaining({ fromVersion: "1.0.0", pinnedHashes: [sha512("b")] }),
     ]);
-    const [weak] = routed("npm", lock("1.0.0", sha512("a")), lock("1.0.1", sha1("b")));
-    expect(weak).not.toHaveProperty("pinnedHashes");
-    expect(weak).not.toHaveProperty("privateSource");
+  });
+
+  test("pnpm, Yarn classic, and uv targets without a strong pin must be proven", () => {
+    const pnpmLock = (version: string, resolution: string) =>
+      pnpm([`  foo@${version}:`, `    resolution: ${resolution}`]);
+    expect(
+      routed(
+        "pnpm",
+        pnpmLock("1.0.0", `{integrity: ${sha512("a")}}`),
+        pnpmLock("1.0.1", "{tarball: https://registry.npmjs.org/foo/-/foo-1.0.1.tgz}"),
+      ),
+    ).toEqual([expect.objectContaining({ pinnedHashes: [] })]);
+    // Yarn classic without `integrity` checks the sha1 in the URL fragment.
+    const yarnLock = (version: string, integrity: string | null) =>
+      yarnV1([
+        "foo@^1.0.0:",
+        `  version "${version}"`,
+        `  resolved "https://registry.yarnpkg.com/foo/-/foo-${version}.tgz#${"0".repeat(40)}"`,
+        ...(integrity ? [`  integrity ${integrity}`] : []),
+      ]);
+    expect(routed("yarn", yarnLock("1.0.0", sha512("a")), yarnLock("1.0.1", null))).toEqual([
+      expect.objectContaining({ pinnedHashes: [] }),
+    ]);
+    const pypi = "https://pypi.org/simple";
+    const uvLock = (version: string, files: string[]) => uv(pypi, version, files);
+    expect(
+      routed("uv", uvLock("1.0.0", [sdist(pypiFile("a"), sha256("a"))]), uvLock("1.0.1", [])),
+    ).toEqual([expect.objectContaining({ pinnedHashes: [] })]);
   });
 
   test("pnpm and Yarn classic re-pins", () => {
@@ -313,10 +383,31 @@ describe("F3: a public entry is bound to what the lockfile pins", () => {
       null,
       `foo==1.0.0 --hash=sha256:${hex("a")} --hash=sha512:${"a".repeat(128)}\n`,
     );
-    expect(mixed).not.toHaveProperty("pinnedHashes");
+    // Hashed, but not with a digest PyPI publishes: nothing proves it.
+    expect(mixed).toEqual(expect.objectContaining({ pinnedHashes: [] }));
+    // A line that drops its hash at the same version is a re-pin to prove.
+    expect(routed("requirements", req("a"), "foo==1.0.0\n")).toEqual([
+      expect.objectContaining({ repinned: true, pinnedHashes: [] }),
+    ]);
+    // An unhashed file has no pin by design.
+    const [plain] = routed("requirements", "foo==0.9.0\n", "foo==1.0.0\n");
+    expect(plain).not.toHaveProperty("pinnedHashes");
   });
 
-  test("merged copies union pinned hashes; a copy without one drops the proof material", () => {
+  test("Yarn Berry: a checksum-only change (a cache key bump) is no change", () => {
+    const lock = (checksum: string) =>
+      berry([
+        '"foo@npm:^1.0.0":',
+        "  version: 1.0.0",
+        '  resolution: "foo@npm:1.0.0"',
+        `  checksum: ${checksum}`,
+        "  languageName: node",
+        "  linkType: hard",
+      ]);
+    expect(routed("yarn", lock("10c0/aaa"), lock("10c0/bbb"))).toEqual([]);
+  });
+
+  test("merged copies union pinned hashes; one that cannot be proven holds them all", () => {
     const bump: DependencyBump = {
       ecosystem: "npm",
       name: "foo",
@@ -329,10 +420,20 @@ describe("F3: a public entry is bound to what the lockfile pins", () => {
     const both = { ...bump };
     mergeBump(both, { ...bump, pinnedHashes: [sha512("b")] });
     expect(both.pinnedHashes).toEqual([sha512("a"), sha512("b")].sort());
+    const empty = { ...bump };
+    mergeBump(empty, { ...bump, pinnedHashes: [] });
+    expect(empty.pinnedHashes).toEqual([]);
+    const emptyFirst: DependencyBump = { ...bump, pinnedHashes: [] };
+    mergeBump(emptyFirst, bump);
+    expect(emptyFirst.pinnedHashes).toEqual([]);
+    // A copy in a format with no comparable pin (Berry) adds nothing to prove.
     const one = { ...bump };
-    const { pinnedHashes: _, ...unpinned } = bump;
-    mergeBump(one, unpinned);
-    expect(one).not.toHaveProperty("pinnedHashes");
+    const { pinnedHashes: _, ...rest } = bump;
+    const unpinned: DependencyBump = rest;
+    mergeBump(one, { ...unpinned });
+    expect(one.pinnedHashes).toEqual([sha512("a")]);
+    mergeBump(unpinned, { ...bump });
+    expect(unpinned.pinnedHashes).toEqual([sha512("a")]);
   });
 });
 
@@ -421,22 +522,67 @@ describe("F3b: registry config is read strictly", () => {
     expect(parseYarnrc(`"npmRegistryServer": ${EVIL}`)?.defaultUrls).toEqual([EVIL]);
   });
 
-  test("a config change counts unless both sides route identically", () => {
-    expect(resolutionConfigChanged(".npmrc", "save-exact=true", "save-exact=false")).toBe(false);
-    expect(resolutionConfigChanged(".npmrc", null, "engine-strict=true")).toBe(false);
+  test("any setting change in a config file counts; comments and blank lines do not", () => {
+    expect(resolutionConfigChanged(".npmrc", "save-exact=true", "save-exact=false")).toBe(true);
+    expect(resolutionConfigChanged(".npmrc", null, "engine-strict=true")).toBe(true);
     expect(resolutionConfigChanged("a/.npmrc", null, `registry=${EVIL}`)).toBe(true);
     expect(resolutionConfigChanged(".npmrc", `registry=${MIRROR}`, null)).toBe(true);
     expect(resolutionConfigChanged(".npmrc", "x=1", '"registry"=x')).toBe(true);
-    expect(resolutionConfigChanged(".npmrc", "registry=${R}", "registry=${R}")).toBe(true);
-    expect(resolutionConfigChanged("a/b/.yarnrc.yml", null, "enableTelemetry: false")).toBe(false);
-    expect(resolutionConfigChanged("a/b/.yarnrc.yml", null, `npmRegistryServer: ${EVIL}`)).toBe(
-      true,
-    );
     expect(resolutionConfigChanged(".npmrc", "too-large", "too-large")).toBe(true);
+    expect(
+      resolutionConfigChanged(
+        ".npmrc",
+        "# old\nsave-exact=true\n",
+        "; new comment\n\nsave-exact=true   \n  # indented\n",
+      ),
+    ).toBe(false);
+    expect(resolutionConfigChanged(".npmrc", null, "# only a comment\n")).toBe(false);
+    expect(
+      resolutionConfigChanged(
+        "a/b/.yarnrc.yml",
+        "# a\nnodeLinker: pnp\n",
+        "nodeLinker: pnp\n# b\n",
+      ),
+    ).toBe(false);
+    // In YAML a `;` line is a key, not a comment.
+    expect(resolutionConfigChanged(".yarnrc.yml", null, ";x: y\n")).toBe(true);
     for (const path of [".yarnrc", "uv.toml", "pip.conf", "x/pip.ini"]) {
       expect(resolutionConfigChanged(path, "a", "a"), path).toBe(true);
     }
     expect(resolutionConfigChanged("README.md", "a", "b")).toBe(false);
+  });
+
+  test.each([
+    [
+      ".yarnrc.yml",
+      null,
+      "httpsProxy: http://proxy.example:8080\nenableStrictSsl: false\nchecksumBehavior: ignore\n",
+    ],
+    [
+      ".yarnrc.yml",
+      "nodeLinker: pnp\n",
+      "nodeLinker: pnp\ncaFilePath: ./ca.pem\nunsafeHttpWhitelist:\n  - evil.example\n",
+    ],
+    [".yarnrc.yml", null, "networkSettings:\n  evil.example:\n    enableNetwork: true\n"],
+    [
+      ".npmrc",
+      "save-exact=true\n",
+      "save-exact=true\nhttps-proxy=http://proxy.example\nstrict-ssl=false\n",
+    ],
+    [".npmrc", null, "cafile=./ca.pem\nproxy=http://proxy.example\n"],
+    [".npmrc", null, "https-proxy=http://proxy.example\n"],
+    [".npmrc", null, "ca=-----BEGIN CERTIFICATE-----\n"],
+    [".npmrc", null, "userconfig=./other.npmrc\n"],
+    [".npmrc", null, "globalconfig=./other.npmrc\n"],
+  ])("%s gaining a byte-moving setting counts (%#)", (path, before, after) => {
+    expect(resolutionConfigChanged(path, before, after)).toBe(true);
+  });
+
+  test("a config file outside the strict shape counts even if only comments differ", () => {
+    const blockScalar = (comment: string) => `npmAuthToken: |\n  ${comment}\n`;
+    expect(resolutionConfigChanged(".yarnrc.yml", blockScalar("# a"), blockScalar("# b"))).toBe(
+      true,
+    );
   });
 
   test("a pyproject change counts only in its [tool.uv] tables", () => {
@@ -955,5 +1101,217 @@ describe("F10: npm lock entries npm installs are never dropped", () => {
     expect(
       parseLockfile("npm", npmLock(entries as Record<string, Record<string, unknown>>)).complete,
     ).toBe(false);
+  });
+});
+
+describe("R2-1: `inBundle` is honored only for what npm bundles", () => {
+  const lock = (foo: string, extra: Record<string, Record<string, unknown>> = {}) =>
+    npmLock({
+      parent: {
+        version: "1.0.0",
+        dependencies: { other: "^1.0.0", child: "^1.0.0" },
+        bundleDependencies: ["other"],
+      },
+      "parent/node_modules/other": { version: "1.0.0", inBundle: true },
+      "parent/node_modules/child": { version: "1.0.0", dependencies: { foo: "*" } },
+      "parent/node_modules/foo": { version: foo, inBundle: true },
+      ...extra,
+    });
+
+  test("a dependency of an unbundled package is fetched, so its change is a bump", () => {
+    expect(routed("npm", lock("1.0.0"), lock("2.0.0"))).toEqual([
+      expect.objectContaining({ name: "foo", fromVersion: "1.0.0", toVersion: "2.0.0" }),
+    ]);
+  });
+
+  test("a named bundle dependency, and what it requires inside the bundler, ship in the bundler", () => {
+    const bundled = (foo: string) =>
+      npmLock({
+        parent: { version: "1.0.0", bundleDependencies: ["other"] },
+        "parent/node_modules/other": {
+          version: "1.0.0",
+          inBundle: true,
+          dependencies: { mid: "*" },
+        },
+        "parent/node_modules/other/node_modules/mid": {
+          version: "1.0.0",
+          inBundle: true,
+          dependencies: { foo: "*" },
+        },
+        "parent/node_modules/foo": { version: foo, inBundle: true },
+      });
+    const snapshot = parseLockfile("npm", bundled("1.0.0"));
+    expect([...snapshot.packages.keys()]).toEqual(["npm:parent"]);
+    expect(routed("npm", bundled("1.0.0"), bundled("2.0.0"))).toEqual([]);
+  });
+
+  test("`bundleDependencies: true` bundles the package's declared dependencies only", () => {
+    const text = npmLock({
+      parent: { version: "1.0.0", dependencies: { other: "*" }, bundleDependencies: true },
+      "parent/node_modules/other": { version: "1.0.0", inBundle: true },
+      "parent/node_modules/foo": { version: "1.0.0", inBundle: true },
+    });
+    expect([...parseLockfile("npm", text).packages.keys()].sort()).toEqual([
+      "npm:foo",
+      "npm:parent",
+    ]);
+  });
+
+  test("a requirement that resolves outside the bundler is not in its bundle", () => {
+    const text = npmLock({
+      parent: { version: "1.0.0", bundleDependencies: ["other"] },
+      "parent/node_modules/other": { version: "1.0.0", inBundle: true, dependencies: { foo: "*" } },
+      foo: { version: "1.0.0" },
+      // Not on `other`'s resolution path, so not what it requires.
+      "parent/node_modules/child/node_modules/foo": { version: "2.0.0", inBundle: true },
+    });
+    expect(parseLockfile("npm", text).packages.get("npm:foo")?.sources.size).toBe(2);
+  });
+});
+
+describe("R2-4: requirement extras, markers, and install options are compared", () => {
+  const changed = (before: string, after: string) =>
+    unpinnedRequirementsChanged(
+      parseLockfile("requirements", before),
+      parseLockfile("requirements", after),
+    );
+
+  test("adding an extra to an unchanged pin is a change", () => {
+    expect(changed("requests==2.32.3\n", "requests[socks]==2.32.3\n")).toBe(true);
+    expect(
+      changed("requests[socks]==2.32.3\n", "requests[socks,use-chardet-on-py3]==2.32.3\n"),
+    ).toBe(true);
+  });
+
+  test("changing a marker is a change", () => {
+    expect(
+      changed('foo==1.0 ; python_version < "3.0"\n', 'foo==1.0 ; python_version >= "3.0"\n'),
+    ).toBe(true);
+    expect(changed('foo==1.0 ; python_version < "3.0"\n', "foo==1.0\n")).toBe(true);
+  });
+
+  test("changing a per-requirement install option is a change", () => {
+    expect(changed("foo==1.0\n", "foo==1.0 --config-settings=x=y\n")).toBe(true);
+  });
+
+  test("unchanged extras and markers stay quiet, however they are spelled", () => {
+    const line = 'Requests[SOCKS, Security]==2.32.3 ; python_version >= "3.8"\n';
+    expect(changed(line, line)).toBe(false);
+    expect(
+      changed(line, 'requests[security,socks]==2.32.3 ; python_version >= "3.8"\nbar==1.0\n'),
+    ).toBe(false);
+    expect(changed("foo[]==1.0\n", "foo==1.0\n")).toBe(false);
+  });
+
+  test("an unpinned line cannot stand in for a pin's extras", () => {
+    expect(changed("foo[x]==1.0\n", "foo==1.0\nfoo[x]\n")).toBe(true);
+  });
+});
+
+describe("R2-6: pnpm peer variants of one release are one entry", () => {
+  const integrity = (seed: string) => `{integrity: ${sha512(seed)}}`;
+  const v6 = (version: string, seeds: [string, string]) =>
+    [
+      "lockfileVersion: '6.0'",
+      "",
+      "packages:",
+      "",
+      `  /foo@${version}(react@17.0.0):`,
+      `    resolution: ${integrity(seeds[0])}`,
+      "    peerDependencies:",
+      "      react: '*'",
+      "",
+      `  /foo@${version}(react@18.0.0):`,
+      `    resolution: ${integrity(seeds[1])}`,
+      "    peerDependencies:",
+      "      react: '*'",
+    ].join("\n");
+  const v5 = (version: string, seeds: [string, string]) =>
+    [
+      "lockfileVersion: 5.4",
+      "",
+      "packages:",
+      "",
+      `  /foo/${version}_react@17.0.0:`,
+      `    resolution: ${integrity(seeds[0])}`,
+      "",
+      `  /foo/${version}_react@18.0.0:`,
+      `    resolution: ${integrity(seeds[1])}`,
+    ].join("\n");
+
+  test.each([
+    ["v6", v6],
+    ["v5", v5],
+  ])("%s: variants with one resolution read as the release", (_, lock) => {
+    const snapshot = parseLockfile("pnpm", lock("1.0.0", ["a", "a"]));
+    expect(snapshot.complete).toBe(true);
+    expect(kindsOf(snapshot, "npm:foo")).toEqual({ "1.0.0": "public" });
+    expect(routed("pnpm", lock("1.0.0", ["a", "a"]), lock("1.0.1", ["b", "b"]))).toEqual([
+      expect.objectContaining({
+        fromVersion: "1.0.0",
+        toVersion: "1.0.1",
+        pinnedHashes: [sha512("b")],
+      }),
+    ]);
+  });
+
+  test.each([
+    ["v6", v6],
+    ["v5", v5],
+  ])("%s: variants of one release with different pins are unread", (_, lock) => {
+    expect(parseLockfile("pnpm", lock("1.0.0", ["a", "evil"])).complete).toBe(false);
+  });
+
+  test("v6: a variant fetched from elsewhere is unread", () => {
+    const text = [
+      "lockfileVersion: '6.0'",
+      "packages:",
+      "  /foo@1.0.0(react@17.0.0):",
+      `    resolution: ${integrity("a")}`,
+      "  /foo@1.0.0(react@18.0.0):",
+      `    resolution: {integrity: ${sha512("a")}, tarball: https://evil.example/foo.tgz}`,
+    ].join("\n");
+    expect(parseLockfile("pnpm", text).complete).toBe(false);
+  });
+
+  test("v9: snapshot variants share their `packages` entry", () => {
+    const text = pnpm([
+      "  foo@1.0.0:",
+      `    resolution: ${integrity("a")}`,
+      "",
+      "snapshots:",
+      "",
+      "  foo@1.0.0(react@17.0.0): {}",
+      "",
+      "  foo@1.0.0(react@18.0.0): {}",
+    ]);
+    expect(parseLockfile("pnpm", text).complete).toBe(true);
+  });
+});
+
+describe("O2-1: committed package caches and loaders are install inputs", () => {
+  test.each([
+    [".yarn/cache/lodash-npm-4.17.21-6382451519-eb835a2e51.zip", ".yarn/cache/"],
+    ["app/.yarn/cache/x.zip", "app/.yarn/cache/"],
+    [".yarn/unplugged/esbuild-npm-0.20.0-abc/node_modules/esbuild/bin/esbuild", ".yarn/unplugged/"],
+    [".yarn/releases/yarn-4.5.0.cjs", ".yarn/releases/"],
+    [".yarn/plugins/@yarnpkg/plugin-x.cjs", ".yarn/plugins/"],
+    [".pnp.cjs", ".pnp.cjs"],
+    ["app/.pnp.loader.mjs", "app/.pnp.loader.mjs"],
+    [".pnp.data.json", ".pnp.data.json"],
+    ["vendor/yarn-cache/lodash-npm-4.17.21-6382451519-eb835a2e51.zip", "vendor/yarn-cache/"],
+  ])("%s is reported as %s", (path, input) => {
+    expect(committedInstallInput(path)).toBe(input);
+  });
+
+  test.each([
+    ".yarnrc.yml",
+    ".yarn/sdks/typescript/lib/tsserver.js",
+    ".yarn/patches/foo.patch",
+    "src/.yarn-cache.ts",
+    "docs/release.zip",
+    "vendor/foo-1.0.0.tgz",
+  ])("%s is not", (path) => {
+    expect(committedInstallInput(path)).toBeNull();
   });
 });

@@ -42,6 +42,8 @@ const V1_HEADER = "# yarn lockfile v1";
 export function parseYarnLock(text: string, manifestText: string | null): LockfileSnapshot {
   const builder = createSnapshotBuilder("npm");
   const v1 = hasV1Header(text);
+  // Berry's checksum is of Yarn's repacked archive, not the registry's bytes.
+  if (v1) builder.expectStrongPins();
   const entries = v1
     ? readV1Entries(text, builder.reserve)
     : readBerryEntries(text, builder.reserve);
@@ -56,6 +58,8 @@ export function parseYarnLock(text: string, manifestText: string | null): Lockfi
       builder.markIncomplete();
       continue;
     }
+    const workspace = v1 ? null : protocolOf(entry.fields.get("resolution") ?? "");
+    if (workspace?.startsWith("workspace:")) builder.addWorkspace(workspace.slice(10));
     if (!pkg) continue;
     recordPackage(builder, pkg);
     for (const descriptor of entry.descriptors) byDescriptor.set(descriptor, pkg.name);
@@ -354,9 +358,12 @@ function berryEntryPackage(entry: YarnEntry): YarnPackage | "invalid" | null {
   if (resolution === undefined) return "invalid";
   const pkg = berryPackage(resolution, entry.fields.get("version") ?? null);
   if (pkg === null || pkg === "invalid") return pkg;
-  // The checksum is of Yarn's repacked archive: it pins the entry but matches
-  // no registry digest.
-  return { ...pkg, pin: entry.fields.get("checksum") ?? null, hashes: null };
+  // The checksum is of Yarn's repacked archive and matches no registry
+  // digest, and a Yarn upgrade's cache key change rewrites every one. A
+  // registry release is bound by its route; only an off-registry source keeps
+  // the checksum as part of what identifies its bytes.
+  const checksum = pkg.source.kind === "public" ? null : (entry.fields.get("checksum") ?? null);
+  return { ...pkg, pin: checksum, hashes: null };
 }
 
 function v1Descriptor(

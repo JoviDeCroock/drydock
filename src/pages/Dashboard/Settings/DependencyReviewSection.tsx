@@ -225,10 +225,13 @@ function DependencyReviewForm({ model }: { model: InstanceType<typeof Dependency
           <Muted class="text-[12px] m-0">
             URL prefixes of registries that only proxy the public one, up to {MAX_PUBLIC_MIRRORS}.
             An update resolved under one is reviewed like a public update once its lockfile hashes
-            match the public registry's. Drydock sends the names and versions resolved from a mirror
-            to the public npm registry or PyPI. For lockfiles that record no URL (pnpm, Yarn Berry),
-            that is every name the repository routes to the mirror, so list scopes whose registry is
-            set outside the repository under private npm scopes.
+            match the public registry's; one whose hashes don't match is treated like a git or URL
+            source. Drydock sends the names and versions resolved from a mirror to the public npm
+            registry or PyPI. For pnpm lockfiles, which record no URL, that is every name the
+            repository routes to the mirror, so list scopes your organization hosts itself behind
+            the mirror, or whose registry is set outside the repository, under private npm scopes.
+            Yarn Berry entries from a mirror record no hash Drydock can compare, so they are treated
+            like a git or URL source.
           </Muted>
           <Field label="Private registries" for="dependencyReviewPrivateRegistries">
             <Input

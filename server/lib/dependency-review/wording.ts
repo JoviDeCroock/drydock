@@ -24,7 +24,8 @@ export const UNREVIEWED_TEXT: Record<UnreviewedReason, string> = {
   "timed-out": "the diff timed out",
   "private-source": "comes from a registry Drydock can't read",
   "remote-source": "comes from a git, URL, or tarball source Drydock can't diff",
-  "unverified-pin": "Drydock could not match its pinned hashes to the public registry's release",
+  "unverified-pin":
+    "Drydock could not match the hashes pinned for this update to the public registry's release",
 };
 
 // A lockfile that kept a version and changed what it pins for it. Read by the
@@ -104,7 +105,7 @@ function ageHoldText(
     return "a git, URL, or tarball source has no publish time, so it holds until approved";
   }
   if (verdict.unreviewed === "unverified-pin") {
-    return "without a matching public release there is no publish time to wait out, so it holds until approved";
+    return "it holds until approved; Re-run checks again if the registry was unreachable, and an npm package your organization hosts itself belongs under private npm scopes";
   }
   if (verdict.pastReviewLimit) {
     // An over-cap verdict already names the limit.

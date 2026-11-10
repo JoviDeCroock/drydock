@@ -7,6 +7,9 @@ export interface LockfileChange {
   bump: DependencyBump;
   from: LockfileSource | null;
   to: LockfileSource;
+  // The target should carry a strong pin: its format always writes one, or
+  // either side has one (a requirements line that has or dropped a `--hash`).
+  pinExpected: boolean;
 }
 
 // Pairs each version a lockfile gains with a version it had, per package.
@@ -68,6 +71,7 @@ export function diffLockfileChanges(
       const to = pkg.sources.get(toId)!;
       if (fromSource.kind !== "public" || to.kind !== "public") continue;
       if (samePins(fromSource.pins, to.pins)) continue;
+      const pinExpected = head.strongPins || hadPin(fromSource) || hadPin(to);
       changes.push({
         bump: {
           ecosystem: pkg.ecosystem,
@@ -80,6 +84,7 @@ export function diffLockfileChanges(
         },
         from: fromSource,
         to,
+        pinExpected,
       });
     }
     added.sort(compare);
@@ -116,6 +121,7 @@ export function diffLockfileChanges(
         },
         from: fromSource,
         to,
+        pinExpected: head.strongPins || hadPin(to) || (fromSource !== null && hadPin(fromSource)),
       });
     }
   }
@@ -142,6 +148,10 @@ export function sameRelease(ecosystem: DependencyEcosystem, a: string, b: string
 }
 
 type Compare = (a: string, b: string) => number;
+
+function hadPin(source: LockfileSource): boolean {
+  return source.pins.some((pin) => pin !== "");
+}
 
 function samePins(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((pin, i) => pin === b[i]);

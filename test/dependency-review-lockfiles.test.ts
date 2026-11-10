@@ -76,6 +76,8 @@ function snapshotOf(
   return {
     complete,
     unpinned: [],
+    workspaces: expect.any(Set) as Set<string>,
+    strongPins: expect.any(Boolean) as boolean,
     packages: new Map(
       Object.entries(packages).map(
         ([name, { versions, direct = false, privateSource = false, sources = {} }]) => [
@@ -243,6 +245,7 @@ describe("package-lock.json", () => {
       "node_modules/b": {
         version: "1.0.0",
         resolved: "git://host/b.git#fedcba",
+        dependencies: { inner: "^1.0.0" },
         bundleDependencies: true,
       },
       "node_modules/ws": { resolved: "packages/ws", link: true },
@@ -323,6 +326,8 @@ describe("package-lock.json", () => {
         packages: new Map(),
         complete: false,
         unpinned: [],
+        workspaces: new Set(),
+        strongPins: false,
       });
     }
   });
@@ -1125,7 +1130,13 @@ describe("requirements*.txt", () => {
     "--no-index",
   ])("another package source (%s) makes the snapshot incomplete", (option) => {
     const snapshot = parseLockfile("requirements", `internal==1.0\n${option}\n`);
-    expect(snapshot).toEqual({ packages: new Map(), complete: false, unpinned: [] });
+    expect(snapshot).toEqual({
+      packages: new Map(),
+      complete: false,
+      unpinned: [],
+      workspaces: new Set(),
+      strongPins: false,
+    });
   });
 
   test.each([
@@ -1149,6 +1160,8 @@ describe("hostile input", () => {
         packages: new Map(),
         complete: false,
         unpinned: [],
+        workspaces: new Set(),
+        strongPins: false,
       });
     }
   });

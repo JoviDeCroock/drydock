@@ -1,14 +1,17 @@
 // Replays real Dependabot/Renovate pull requests through the dependency review
 // stages to measure how often the check would hold, and what a cold diff costs.
 //
-// Collect mirrors `server/lib/dependency-review/collect.ts` over the public
-// GitHub API (the PR list, one compare per PR for its files and merge base,
-// lockfiles read at the merge base and head) and runs the production lockfile
-// parsers, `diffLockfileSnapshots`, and the `.npmrc` / `.yarnrc.yml` private
-// name rule. Review runs `loadPublicPackageDiff` itself, with the Worker
-// bindings replaced by local stand-ins: no KV, no colo cache, and a LOADER that
-// runs the same rendered sandbox module `npm-fp-sweep-harness.mjs` uses. Decide
-// calls the production policy functions through `verdictFor`.
+// Collect is the production `collectBumps` itself. Its GitHub reads (the PR
+// file listing, the merge-base compare, the contents API) are answered by the
+// cached fetch below from the same public data in another shape: one compare
+// per PR and raw.githubusercontent.com file reads. Review mirrors
+// `runReviewStage` (review-bumps.ts): the production `verifyPublicPin` /
+// `verifyMirrorBump` proofs, then `loadPublicPackageDiff` per unique pair run
+// one at a time so CPU can be attributed, then the publish-time listing.
+// Decide calls the production `decideBump` and the `job.ts` coverage rule
+// through `verdictFor` / `concludePull`. The Worker bindings are local
+// stand-ins: no KV, no colo cache, and a LOADER that runs the same rendered
+// sandbox module `npm-fp-sweep-harness.mjs` uses.
 //
 // Package bytes are hostile evidence: they are only parsed by Drydock's own
 // sandbox module as data, never extracted, installed, imported, or executed.
@@ -20,24 +23,26 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname as pathDirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { dependencyChangeKey } from "../../server/db/dependency-reviews";
+import { collectBumps } from "../../server/lib/dependency-review/collect";
+import { hasUnreadContent } from "../../server/lib/dependency-review/evidence";
 import {
-  diffLockfileSnapshots,
   lockfileKindForPath,
   parseLockfile,
   unpinnedRequirementsChanged,
 } from "../../server/lib/dependency-review/lockfiles";
+import {
+  verifyMirrorBump,
+  verifyPublicPin,
+} from "../../server/lib/dependency-review/mirror-identity";
 import {
   concludeDependencyReview,
   decideBump,
   extractBumpEvidence,
 } from "../../server/lib/dependency-review/policy";
 import {
-  collectCustomRegistries,
-  emptyCustomRegistries,
-  isPublicNpmName,
+  resolutionConfigChanged,
+  resolutionConfigKind,
 } from "../../server/lib/dependency-review/registry-config";
-import { hasUnreadContent } from "../../server/lib/dependency-review/evidence";
 import * as render from "../../server/lib/dependency-review/render";
 import * as reviewStage from "../../server/lib/dependency-review/review-bumps";
 import { DEFAULT_DEPENDENCY_REVIEW_POLICY } from "../../server/lib/dependency-review/types";
@@ -70,22 +75,20 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const CPU_FLAG_MS = 750;
 const SANDBOX_CPU_LIMIT_MS = 2_000;
 
-// Module-private in collect.ts / github.ts / policy.ts; copied so the replay
-// applies the same caps and file rules.
-const MAX_LOCKFILES = 20;
-const MAX_LOCKFILE_BYTES = 8 * 1024 * 1024;
 // Namespace reads so a renamed constant falls back instead of failing the import.
-const MAX_DIFFED_BUMPS = render.MAX_STORED_BUMPS ?? 500;
-const COLD_DIFFS_PER_PASS = reviewStage.MAX_COLD_DIFFS_PER_PASS ?? 40;
+const MAX_REVIEWED_BUMPS = render.MAX_STORED_BUMPS ?? 500;
+const COLD_DIFFS_PER_PASS = reviewStage.MAX_COLD_DIFFS_PER_PASS ?? 12;
+// github.ts's lockfile size cap, and collect.ts's file patterns, used here only
+// to say why a path the production collect reported went unread.
+const MAX_LOCKFILE_BYTES = 8 * 1024 * 1024;
 const UNPARSED_LOCKFILE =
   /(?:^|\/)(?:bun\.lockb?|poetry\.lock|Pipfile\.lock|pdm\.lock|pylock(?:\.[^/]+)?\.toml)$/;
 const OTHER_REQUIREMENTS = /\.txt$/;
 const NPM_MANIFEST = /(?:^|\/)package\.json$/;
 const PYPI_MANIFEST = /(?:^|\/)(?:pyproject\.toml|setup\.cfg|setup\.py|Pipfile|[^/]+\.in)$/;
-const NATIVE_FILE = /\.(?:node|dll|so|dylib|exe|wasm)$/i;
-const KIND_ECOSYSTEM = { npm: "npm", pnpm: "npm", yarn: "npm", uv: "pypi", requirements: "pypi" };
 // GitHub's compare lists at most 300 files.
 const COMPARE_FILE_LIMIT = 300;
+const REPLAY_POLICY = DEFAULT_DEPENDENCY_REVIEW_POLICY;
 
 export function loadReplayRepositories() {
   return JSON.parse(readFileSync(join(__dirname, "dependency-review-replay-repos.json"), "utf8"));
@@ -104,7 +107,57 @@ const http = {
   blockedHosts: new Set(),
   githubRemaining: null,
   networkFetches: 0,
+  // API paths no cache entry answered (fetched live, or refused when limited).
+  apiMisses: [],
 };
+
+// ---------------------------------------------------------------------------
+// GitHub reads production makes, answered from the replay's cached shapes.
+
+// PR number to the SHAs its compare is cached under, registered per PR before
+// the production collect runs.
+const replayPulls = new Map();
+const PULL_FILES = /^\/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/files$/;
+const CONTENTS = /^\/repos\/([^/]+)\/([^/]+)\/contents\/(.+)$/;
+const COMPARE = /^\/repos\/([^/]+)\/([^/]+)\/compare\/([^/]+)$/;
+
+function jsonResponse(value) {
+  return new Response(JSON.stringify(value), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+async function translateGithubRead(url) {
+  const path = url.pathname;
+  let match = PULL_FILES.exec(path);
+  if (match) {
+    const pr = replayPulls.get(
+      `${decodeURIComponent(match[1])}/${decodeURIComponent(match[2])}#${match[3]}`,
+    );
+    if (!pr) return null;
+    const compare = await githubJson(`/repos/${pr.repo}/compare/${pr.baseSha}...${pr.headSha}`);
+    if (!compare) return new Response("not found", { status: 404 });
+    // One page, no `Link`: collect reads it as a complete listing; the caller
+    // passes a changed-file count that marks a compare at its cap incomplete.
+    return jsonResponse(compare.files ?? []);
+  }
+  match = CONTENTS.exec(path);
+  if (match && url.searchParams.get("ref")) {
+    const repo = `${decodeURIComponent(match[1])}/${decodeURIComponent(match[2])}`;
+    const filePath = match[3].split("/").map(decodeURIComponent).join("/");
+    return rawFile(repo, url.searchParams.get("ref"), filePath);
+  }
+  // Production asks `?per_page=1` for the merge base; the cached compare is
+  // the same document.
+  match = COMPARE.exec(path);
+  if (match && url.search) {
+    const repo = `${decodeURIComponent(match[1])}/${decodeURIComponent(match[2])}`;
+    const compare = await githubJson(`/repos/${repo}/compare/${decodeURIComponent(match[3])}`);
+    return compare ? jsonResponse(compare) : new Response("not found", { status: 404 });
+  }
+  return null;
+}
 const realFetch = globalThis.fetch;
 
 function sweepTarballPath(url) {
@@ -146,6 +199,10 @@ function cachedResponse(status, contentType, body) {
 async function cachedFetch(input, init) {
   const request = new Request(input, init);
   const url = new URL(request.url);
+  if (url.hostname === "api.github.com") {
+    const translated = await translateGithubRead(url);
+    if (translated) return translated;
+  }
   if (url.protocol !== "https:" || !ALLOWED_HOSTS.has(url.hostname)) {
     throw new Error(`replay: refused egress to ${url.hostname}`);
   }
@@ -159,6 +216,7 @@ async function cachedFetch(input, init) {
   }
   const hit = cacheFile ? readHttpCache(cacheFile) : null;
   if (hit) return cachedResponse(hit.status, hit.contentType, hit.body);
+  if (url.hostname === "api.github.com") http.apiMisses.push(url.pathname);
   if (http.blockedHosts.has(url.hostname)) {
     throw new RateLimitedError(`${url.hostname} rate limit (cache miss)`);
   }
@@ -309,14 +367,15 @@ async function githubJson(path) {
   return response.json();
 }
 
-async function readRepositoryFile(repo, ref, path) {
+function rawFile(repo, ref, path) {
   const encoded = path.split("/").map(encodeURIComponent).join("/");
-  const response = await cachedFetch(
-    `https://raw.githubusercontent.com/${repo}/${ref}/${encoded}`,
-    {
-      headers: { accept: "*/*" },
-    },
-  );
+  return cachedFetch(`https://raw.githubusercontent.com/${repo}/${ref}/${encoded}`, {
+    headers: { accept: "*/*" },
+  });
+}
+
+async function readRepositoryFile(repo, ref, path) {
+  const response = await rawFile(repo, ref, path);
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`raw ${response.status} for ${path}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
@@ -353,132 +412,110 @@ function dirname(path) {
   return path.includes("/") ? path.slice(0, path.lastIndexOf("/") + 1) : "";
 }
 
-async function readLockfileText(repo, kind, path, ref) {
-  const text = await readRepositoryFile(repo, ref, path);
-  if (text === null || text === "too-large") return text;
-  if (kind !== "yarn") return { text, manifest: null };
-  const manifest = await readRepositoryFile(repo, ref, `${dirname(path)}package.json`);
-  return { text, manifest: typeof manifest === "string" ? manifest : null };
-}
-
-async function readCustomRegistries(repo, dir, headSha) {
-  const found = emptyCustomRegistries();
-  for (const base of new Set([dir, ""])) {
-    const [npmrc, yarnrc] = await Promise.all([
-      readRepositoryFile(repo, headSha, `${base}.npmrc`),
-      readRepositoryFile(repo, headSha, `${base}.yarnrc.yml`),
-    ]);
-    if (npmrc === "too-large" || yarnrc === "too-large") return { all: true, scopes: new Set() };
-    collectCustomRegistries(found, { npmrc, yarnrc });
-  }
-  return found;
-}
-
-// collect.ts `collectBumps`, with the compare API standing in for the PR file
-// listing plus merge-base call (one request instead of two or more).
+// The production collect stage over one PR. It reads GitHub through
+// `translateGithubRead`; only `review`, `repo`, and `token` of the context are
+// read, and the token never leaves (the cached fetch attaches its own).
 async function collectPull(pr) {
   const compare = await githubJson(`/repos/${pr.repo}/compare/${pr.baseSha}...${pr.headSha}`);
   if (!compare?.merge_base_commit?.sha) throw new Error("compare unavailable");
+  const files = compare.files ?? [];
+  const [owner, name] = pr.repo.split("/");
+  replayPulls.set(`${pr.repo}#${pr.number}`, pr);
+  const context = {
+    review: { id: "replay", organizationId: "replay", pullNumber: pr.number, headSha: pr.headSha },
+    repo: { owner, name },
+    token: "replay",
+  };
+  // A compare at its file cap may be cut short, like a pulls listing whose
+  // count exceeds what it returned.
+  const changedFiles = files.length >= COMPARE_FILE_LIMIT ? files.length + 1 : null;
+  const collected = await collectBumps(context, pr.baseSha, changedFiles, REPLAY_POLICY);
   const mergeBase = compare.merge_base_commit.sha;
-  const headSha = pr.headSha;
-  const files = (compare.files ?? []).map((file) => ({
-    filename: file.filename,
-    status: file.status,
-    previousFilename: file.previous_filename ?? null,
-  }));
-  const commits = compare.commits ?? [];
-  const headCommittedAt = commits.at(-1)?.commit?.committer?.date ?? null;
-  const listingComplete = files.length < COMPARE_FILE_LIMIT;
-  const changed = files.filter((file) => file.status !== "removed");
-  const lockfiles = [];
-  for (const file of changed) {
-    if (UNPARSED_LOCKFILE.test(file.filename)) continue;
-    const kind =
-      lockfileKindForPath(file.filename) ??
-      (OTHER_REQUIREMENTS.test(file.filename) ? "requirements" : null);
-    if (kind) lockfiles.push({ file, kind });
+  const unreadReasons = [];
+  for (const path of collected.unreadLockfiles) {
+    unreadReasons.push({ path, ...(await explainUnread(pr, mergeBase, files, path)) });
   }
-  // Why each lockfile went unread, so a parser that stops finishing shows up
-  // in the report instead of reading as a quiet sample.
-  const unread = [];
-  for (const file of changed) {
-    if (UNPARSED_LOCKFILE.test(file.filename)) unread.push([file.filename, "unparsed-format"]);
-  }
-  for (const { file } of lockfiles.slice(MAX_LOCKFILES)) unread.push([file.filename, "over-cap"]);
-  for (const file of files) {
-    if (
-      file.status === "removed" &&
-      (lockfileKindForPath(file.filename) || UNPARSED_LOCKFILE.test(file.filename))
-    ) {
-      unread.push([file.filename, "deleted"]);
-    }
-  }
-  const registries = new Map();
-  const byChange = new Map();
-  for (const { file, kind } of lockfiles.slice(0, MAX_LOCKFILES)) {
-    const beforePath = file.status === "added" ? null : (file.previousFilename ?? file.filename);
-    const [before, after] = await Promise.all([
-      beforePath ? readLockfileText(pr.repo, kind, beforePath, mergeBase) : null,
-      readLockfileText(pr.repo, kind, file.filename, headSha),
-    ]);
-    if (before === "too-large" || after === "too-large" || after === null) {
-      unread.push([file.filename, after === null ? "missing-at-head" : "too-large"]);
-      continue;
-    }
-    const baseSnapshot = before
-      ? parseLockfile(kind, before.text, { manifestText: before.manifest })
-      : null;
-    const headSnapshot = parseLockfile(kind, after.text, { manifestText: after.manifest });
-    if (!headSnapshot.complete || (baseSnapshot && !baseSnapshot.complete)) {
-      unread.push([file.filename, "parse-incomplete"]);
-      continue;
-    }
-    if (unpinnedRequirementsChanged(baseSnapshot, headSnapshot)) {
-      unread.push([file.filename, "unpinned-requirements"]);
-    }
-    let custom = null;
-    if (KIND_ECOSYSTEM[kind] === "npm") {
-      const dir = dirname(file.filename);
-      if (!registries.has(dir)) registries.set(dir, readCustomRegistries(pr.repo, dir, headSha));
-      custom = await registries.get(dir);
-    }
-    for (const found of diffLockfileSnapshots(baseSnapshot, headSnapshot, file.filename)) {
-      const bump =
-        custom && !isPublicNpmName(custom, found.name) ? { ...found, privateSource: true } : found;
-      const key = dependencyChangeKey(bump);
-      const existing = byChange.get(key);
-      if (existing) existing.direct ||= bump.direct;
-      else byChange.set(key, { ...bump });
-    }
-  }
-  const bumps = [...byChange.values()].sort(
-    (a, b) => Number(b.direct) - Number(a.direct) || a.name.localeCompare(b.name),
-  );
   return {
     ...pr,
     mergeBase,
-    headCommittedAt,
+    headCommittedAt: (compare.commits ?? []).at(-1)?.commit?.committer?.date ?? null,
     changedFiles: files.length,
-    listingComplete,
-    lockfiles: lockfiles.map(({ file }) => file.filename),
-    unreadLockfiles: unread.map(([path]) => path),
-    unreadReasons: unread.map(([path, reason]) => ({ path, reason })),
-    // Manifest coverage (collect.ts `unreadManifests`) is not replayed; these
-    // are the changed manifests it would have looked at.
-    changedManifests: changed
+    listingComplete: collected.listingComplete,
+    lockfiles: files
       .map((file) => file.filename)
-      .filter((path) => NPM_MANIFEST.test(path) || PYPI_MANIFEST.test(path)),
-    bumps: bumps.map((bump) => ({
-      ecosystem: bump.ecosystem,
-      name: bump.name,
-      fromVersion: bump.fromVersion,
-      toVersion: bump.toVersion,
-      direct: bump.direct,
-      lockfilePath: bump.lockfilePath,
-      ...(bump.privateSource ? { privateSource: true } : {}),
-      ...(bump.remoteSource ? { remoteSource: true } : {}),
+      .filter((path) => lockfileKindForPath(path) || UNPARSED_LOCKFILE.test(path)),
+    unreadLockfiles: collected.unreadLockfiles,
+    unreadReasons,
+    bumps: collected.bumps.map((bump) => ({
+      ...bump,
+      format: lockfileKindForPath(bump.lockfilePath) ?? "requirements",
     })),
   };
+}
+
+/**
+ * Why the production collect reported `path` unread. collect.ts returns only
+ * paths, so this re-derives the reason from the same files: a format it
+ * doesn't parse, resolution config, a manifest no lockfile covers, or a
+ * lockfile that is deleted, too large, unpinned, or that the strict parsers
+ * did not finish (`parse-incomplete`, which on a real lockfile is a parser
+ * regression to look at).
+ */
+async function explainUnread(pr, mergeBase, files, path) {
+  const file = files.find((entry) => entry.filename === path);
+  if (UNPARSED_LOCKFILE.test(path)) return { reason: "unparsed-format" };
+  const configKind = resolutionConfigKind(path);
+  if (configKind === "routing" || configKind === "opaque") {
+    return { reason: file ? "resolution-config-changed" : "resolution-config-unreadable" };
+  }
+  if (configKind === "pyproject" && file) {
+    const [before, after] = await Promise.all([
+      file.status === "added" ? null : readRepositoryFile(pr.repo, mergeBase, path),
+      file.status === "removed" ? null : readRepositoryFile(pr.repo, pr.headSha, path),
+    ]);
+    if (file.status === "renamed" || resolutionConfigChanged(path, before, after)) {
+      return { reason: "resolution-config-changed" };
+    }
+  }
+  const kind = lockfileKindForPath(path) ?? (OTHER_REQUIREMENTS.test(path) ? "requirements" : null);
+  if (kind && file) {
+    if (file.status === "removed") return { reason: "lockfile-deleted", kind };
+    const read = async (ref, at) => {
+      const text = await readRepositoryFile(pr.repo, ref, at);
+      if (typeof text !== "string" || kind !== "yarn") return { text, manifest: null };
+      const manifest = await readRepositoryFile(pr.repo, ref, `${dirname(at)}package.json`);
+      return { text, manifest: typeof manifest === "string" ? manifest : null };
+    };
+    const beforePath = file.status === "added" ? null : (file.previous_filename ?? path);
+    const [before, after] = await Promise.all([
+      beforePath ? read(mergeBase, beforePath) : { text: null, manifest: null },
+      read(pr.headSha, path),
+    ]);
+    if (after.text === null) return { reason: "lockfile-missing-at-head", kind };
+    if (before.text === "too-large" || after.text === "too-large") {
+      return { reason: "lockfile-too-large", kind };
+    }
+    const base =
+      before.text === null
+        ? null
+        : parseLockfile(kind, before.text, { manifestText: before.manifest });
+    const head = parseLockfile(kind, after.text, { manifestText: after.manifest });
+    const sides = [!head.complete && "head", base && !base.complete && "merge base"].filter(
+      Boolean,
+    );
+    if (sides.length > 0) {
+      return {
+        reason: "parse-incomplete",
+        kind,
+        sides,
+        bytes: { head: after.text.length, base: before.text?.length ?? null },
+      };
+    }
+    if (unpinnedRequirementsChanged(base, head)) return { reason: "unpinned-requirements", kind };
+    return { reason: "lockfile-over-cap-or-unexplained", kind };
+  }
+  if (NPM_MANIFEST.test(path) || PYPI_MANIFEST.test(path)) return { reason: "manifest-uncovered" };
+  return { reason: "other" };
 }
 
 // ---------------------------------------------------------------------------
@@ -503,10 +540,6 @@ function readJsonGz(file) {
 function writeJsonGz(file, value) {
   mkdirSync(pathDirname(file), { recursive: true });
   writeFileSync(file, gzipSync(Buffer.from(JSON.stringify(value), "utf8")));
-}
-
-function isNativeEntry(entry) {
-  return entry.flags.some((flag) => flag.startsWith("native-")) || NATIVE_FILE.test(entry.path);
 }
 
 // review-bumps.ts `diffInput` + `diffFailure` (module-private), timed: the
@@ -542,17 +575,7 @@ async function coldDiff(bump) {
     });
     const evidence = extractBumpEvidence(diff);
     await Promise.allSettled(pending);
-    const nativeBinariesChanged = diff.diff.filter(
-      (entry) => entry.status === "modified" && isNativeEntry(entry),
-    ).length;
-    result = {
-      status: "served",
-      evidence,
-      // The evidence field once production computes it; until then, the same
-      // count from the diff entries.
-      nativeBinariesChanged: evidence.nativeBinariesChanged ?? nativeBinariesChanged,
-      files: diff.toFiles.length,
-    };
+    result = { status: "served", evidence, files: diff.toFiles.length };
   } catch (err) {
     await Promise.allSettled(pending);
     if (err instanceof PublicDiffError && err.status === 404) result = { status: "not-found" };
@@ -585,6 +608,83 @@ async function diffFor(bump, deadline) {
   // A failure may be transient; a rerun tries it again.
   if (result.status !== "failed") writeJsonGz(file, result);
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Proofs and outcomes, as `runReviewStage` makes them. `proofPending`,
+// `resolveBump`, and `settledOutcome` are module-private in review-bumps.ts and
+// copied here without the progress store; the proofs themselves are the
+// production functions, reading the public registry through the cached fetch.
+
+const proofs = new Map();
+
+function proofKey(bump) {
+  const hashes = bump.mirror
+    ? `${bump.mirror.fromHashes?.join(",") ?? ""}>${bump.mirror.toHashes.join(",")}`
+    : (bump.pinnedHashes ?? []).join(",");
+  return `${bump.mirror ? "mirror" : "pin"}|${bump.ecosystem}|${bump.name}|${bump.fromVersion}|${bump.toVersion}|${hashes}`;
+}
+
+function runProof(bump) {
+  const key = proofKey(bump);
+  if (!proofs.has(key)) {
+    const env = { LOADER: loader };
+    const ctx = replayContext([]);
+    const proof = bump.mirror ? verifyMirrorBump(env, ctx, bump) : verifyPublicPin(env, ctx, bump);
+    proofs.set(
+      key,
+      proof.catch(() => false),
+    );
+  }
+  return proofs.get(key);
+}
+
+function proofPending(bump) {
+  if (bump.mirror) return true;
+  return Boolean(bump.pinnedHashes) && !bump.privateSource;
+}
+
+// null: a proof not yet made either way.
+function resolveBump(bump, verified) {
+  if (bump.mirror) {
+    if (verified === undefined) return null;
+    if (!verified) return bump;
+    const { privateSource: _private, mirror: _mirror, remoteSource: _remote, ...rest } = bump;
+    return { ...rest, viaMirror: true };
+  }
+  if (bump.pinnedHashes && !bump.privateSource) {
+    if (verified === undefined) return null;
+    if (verified) {
+      const { pinnedHashes: _pinned, ...rest } = bump;
+      return rest;
+    }
+    return { ...bump, privateSource: true, remoteSource: true };
+  }
+  return bump;
+}
+
+// Every pass completed: no outcome is left pending, so `pastReviewLimit` only
+// marks bumps past the per-PR review limit.
+function settledOutcome(entry, bump, diff) {
+  const { original } = entry;
+  if (!entry.reviewable) {
+    return {
+      kind: "unreviewed",
+      reason: original.remoteSource ? "remote-source" : "private-source",
+    };
+  }
+  if (!entry.inReview) {
+    return original.fromVersion === null && !original.mirror && !original.pinnedHashes
+      ? { kind: "new-package", pastReviewLimit: true }
+      : { kind: "unreviewed", reason: "over-cap", pastReviewLimit: true };
+  }
+  if (bump.privateSource) {
+    return { kind: "unreviewed", reason: bump.mirror ? "private-source" : "unverified-pin" };
+  }
+  if (bump.fromVersion === null) return { kind: "new-package" };
+  if (diff.status === "served") return { kind: "diffed", evidence: diff.evidence };
+  if (diff.status === "not-replayed") return null;
+  return { kind: "unreviewed", reason: diff.status };
 }
 
 // ---------------------------------------------------------------------------
@@ -645,6 +745,38 @@ async function mapLimit(items, limit, fn) {
   return results;
 }
 
+function outcomeStatus(outcome) {
+  if (outcome.kind === "diffed") return "served";
+  return outcome.kind === "new-package" ? "new-package" : outcome.reason;
+}
+
+// One bump as the dataset records it: the collected fields, the pin and its
+// proof, the settled outcome, the evidence, and the cold-diff cost.
+function recordBump(entry, result) {
+  const { original, resolved } = entry;
+  const outcome = settledOutcome(entry, resolved, result ?? { status: "none" }) ?? {
+    kind: "unreviewed",
+    reason: "not-replayed",
+  };
+  const { pinnedHashes, mirror, ...fields } = original;
+  const proof = mirror ? "mirror" : pinnedHashes && !original.privateSource ? "pin" : null;
+  return {
+    ...fields,
+    pin: {
+      hashes: (pinnedHashes ?? mirror?.toHashes ?? []).length,
+      proof,
+      proven: proof && entry.inReview ? entry.verified === true : null,
+    },
+    // A failed pin proof makes the bump a remote source; its name is then
+    // never sent to a registry again.
+    ...(resolved?.privateSource && !original.privateSource ? { resolvedPrivate: true } : {}),
+    outcome,
+    diff: { status: outcomeStatus(outcome), ...(result?.error ? { error: result.error } : {}) },
+    ...(outcome.kind === "diffed" ? { evidence: outcome.evidence } : {}),
+    ...(result?.cost ? { cost: result.cost } : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Run.
 
@@ -682,21 +814,38 @@ export async function runReplay({ repositories, prsPerRepo, budgetMs, token, log
     for (const host of http.blockedHosts) {
       stops.push(`${host} rate limit reached; later cache misses there skipped`);
     }
+    if (http.apiMisses.length > 0) {
+      stops.push(`${http.apiMisses.length} GitHub API reads were not in the cache`);
+    }
 
-    // Review plan as review-bumps.ts: diffable bumps in collect order (direct
-    // first) up to the per-review cap.
+    // Entries in collect order (direct first), as `runReviewStage` builds them:
+    // only the first `MAX_STORED_BUMPS` reviewable bumps get proofs, diffs,
+    // and publish times.
+    for (const pr of prs) {
+      let reviewable = 0;
+      pr.entries = pr.bumps.map((original) => {
+        const isReviewable = !original.privateSource || Boolean(original.mirror);
+        const inReview = isReviewable && reviewable < MAX_REVIEWED_BUMPS;
+        if (isReviewable) reviewable += 1;
+        return { original, reviewable: isReviewable, inReview };
+      });
+    }
+    const toProve = prs.flatMap((pr) =>
+      pr.entries.filter((entry) => entry.inReview && proofPending(entry.original)),
+    );
+    log(`proving ${toProve.length} pinned or mirrored bumps`);
+    await mapLimit(toProve, 8, async (entry) => {
+      entry.verified = await runProof(entry.original);
+    });
+
     const unique = new Map();
     for (const pr of prs) {
-      let diffable = 0;
-      for (const bump of pr.bumps) {
-        if (bump.privateSource)
-          bump.diff = { status: bump.remoteSource ? "remote-source" : "private-source" };
-        else if (bump.fromVersion === null) bump.diff = { status: "new-package" };
-        else if (++diffable > MAX_DIFFED_BUMPS) bump.diff = { status: "over-cap" };
-        else {
-          const key = pairKey(bump, getPublicDiffAdapter(bump.ecosystem));
-          if (!unique.has(key)) unique.set(key, bump);
-        }
+      for (const entry of pr.entries) {
+        entry.resolved = resolveBump(entry.original, entry.verified);
+        const bump = entry.resolved;
+        if (!entry.inReview || !bump || bump.privateSource || bump.fromVersion === null) continue;
+        entry.pairKey = pairKey(bump, getPublicDiffAdapter(bump.ecosystem));
+        if (!unique.has(entry.pairKey)) unique.set(entry.pairKey, bump);
       }
     }
     const pairs = [...unique.entries()];
@@ -706,35 +855,30 @@ export async function runReplay({ repositories, prsPerRepo, budgetMs, token, log
     for (const [key, bump] of pairs) {
       results.set(key, await diffFor(bump, deadline));
       done += 1;
-      if (done % 25 === 0 || done === pairs.length) log(`diffs ${done}/${pairs.length}`);
+      if (done % 100 === 0 || done === pairs.length) log(`diffs ${done}/${pairs.length}`);
     }
     if (Date.now() > deadline) stops.push("time budget reached during diffs; rerun to resume");
+
     for (const pr of prs) {
-      for (const bump of pr.bumps) {
-        if (bump.diff) continue;
-        const result = results.get(pairKey(bump, getPublicDiffAdapter(bump.ecosystem)));
-        bump.diff = { status: result.status, ...(result.error ? { error: result.error } : {}) };
-        if (result.status === "served") {
-          bump.evidence = {
-            ...result.evidence,
-            nativeBinariesChanged: result.nativeBinariesChanged,
-          };
-        }
-        if (result.cost) bump.cost = result.cost;
-      }
+      pr.bumps = pr.entries.map((entry) => recordBump(entry, results.get(entry.pairKey)));
+      delete pr.entries;
     }
 
-    const allBumps = prs.flatMap((pr) => pr.bumps);
-    log(`publish times for ${allBumps.length} bumps`);
-    await mapLimit(allBumps, 8, async (bump) => {
-      if (Date.now() > deadline && !bump.privateSource) {
-        const key = `${bump.ecosystem}|${bump.name}|${bump.toVersion}`;
-        if (!publishTimes.has(key)) {
-          bump.publish = { publishedAt: null, lookup: "not-replayed" };
-          return;
-        }
+    const lookups = prs.flatMap((pr) => pr.bumps);
+    log(`publish times for ${lookups.length} bumps`);
+    await mapLimit(lookups, 8, async (bump) => {
+      if (bump.outcome.pastReviewLimit) {
+        bump.publish = { publishedAt: null, lookup: "past-review-limit" };
+        return;
       }
-      bump.publish = await publishTimeFor(bump);
+      const key = `${bump.ecosystem}|${bump.name}|${bump.toVersion}`;
+      if (Date.now() > deadline && !bump.privateSource && !publishTimes.has(key)) {
+        bump.publish = { publishedAt: null, lookup: "not-replayed" };
+        return;
+      }
+      bump.publish = await publishTimeFor(
+        bump.resolvedPrivate ? { ...bump, privateSource: true } : bump,
+      );
     });
   });
 
@@ -746,6 +890,7 @@ export async function runReplay({ repositories, prsPerRepo, budgetMs, token, log
     repositories: repositories.map(({ repo }) => repo),
     listed,
     stops,
+    apiMisses: [...new Set(http.apiMisses)],
     skipped,
     prs,
   };
@@ -765,17 +910,12 @@ export async function runReplay({ repositories, prsPerRepo, budgetMs, token, log
  */
 function verdictFor(bump, policy, nowMs) {
   const publishedAt = bump.publish?.publishedAt ?? null;
-  const status = bump.diff.status;
-  const outcome =
-    status === "served"
-      ? { kind: "diffed", evidence: bump.evidence, publishedAt }
-      : status === "new-package"
-        ? { kind: "new-package", publishedAt }
-        : { kind: "unreviewed", reason: status, publishedAt };
-  return decideBump(outcome, policy, nowMs);
+  return decideBump({ ...bump.outcome, publishedAt }, policy, nowMs);
 }
 
-// job.ts `runReview`'s conclusion, without approvals.
+// job.ts's conclusion, without approvals: unread coverage (an unread lockfile,
+// manifest, or resolution config, or a cut-short listing) holds whenever the
+// age fallback is on or `holdOnUnreviewed` is (`heldOnCoverage`).
 function concludePull(pr, policy, nowMs) {
   const reviewed = pr.bumps.map((bump) => ({
     bump,
@@ -784,9 +924,10 @@ function concludePull(pr, policy, nowMs) {
   }));
   let conclusion = concludeDependencyReview(reviewed);
   const partial = pr.unreadLockfiles.length > 0 || !pr.listingComplete;
-  const partialHold = partial && policy.holdOnUnreviewed && conclusion !== "held";
-  if (partialHold) conclusion = "held";
-  return { conclusion, reviewed, partialHold };
+  const heldOnCoverage =
+    partial && (policy.holdOnUnreviewed || policy.unreadMinimumAgeDays !== null);
+  if (heldOnCoverage && conclusion !== "held") conclusion = "held";
+  return { conclusion, reviewed, heldOnCoverage };
 }
 
 function strictPolicy() {
@@ -836,15 +977,20 @@ function isReplayed(pr) {
 function evaluateVariant(prs, policy, clock) {
   const rows = prs.map((pr) => {
     const nowMs = clock(pr);
-    const { conclusion, reviewed, partialHold } = concludePull(pr, policy, nowMs);
+    const { conclusion, reviewed, heldOnCoverage } = concludePull(pr, policy, nowMs);
     const holds = reviewed.filter(({ verdict }) => verdict.status === "hold");
     const reasons = new Set(holds.flatMap(({ verdict }) => verdict.reasons));
-    if (partialHold) reasons.add("unread-lockfile");
+    const triggers = new Set(holds.flatMap(({ verdict }) => holdTriggers(verdict)));
+    if (heldOnCoverage) {
+      reasons.add("unread-coverage");
+      triggers.add("unread-coverage");
+    }
+    const unreadOptions = { nativeAddedHeld: policy.holdOnNativeBinaries };
     const unvouched = reviewed.filter(
       ({ verdict }) =>
         verdict.status === "unreviewed" ||
         verdict.status === "new-package" ||
-        (verdict.status === "clear" && hasUnreadContent(verdict.evidence)),
+        (verdict.status === "clear" && hasUnreadContent(verdict.evidence, unreadOptions)),
     ).length;
     const ageOnly = conclusion === "held" && [...reasons].every((reason) => reason === "too-new");
     let passesInHours = null;
@@ -854,13 +1000,32 @@ function evaluateVariant(prs, policy, clock) {
         ? (Math.max(...times.map((time) => Date.parse(time))) - nowMs) / 3_600_000
         : Infinity;
     }
-    return { pr, conclusion, holds: holds.length, reasons, unvouched, ageOnly, passesInHours };
+    return {
+      pr,
+      conclusion,
+      holds: holds.length,
+      reasons,
+      triggers,
+      bumpTriggers: holds.flatMap(({ verdict }) => holdTriggers(verdict)),
+      heldOnCoverage,
+      coverageOnly: heldOnCoverage && holds.length === 0,
+      unvouched,
+      ageOnly,
+      passesInHours,
+    };
   });
   const withBumps = rows.filter((row) => row.pr.bumps.length > 0);
   const held = rows.filter((row) => row.conclusion === "held");
   const reasonCounts = {};
+  const triggerCounts = {};
   for (const row of held) {
     for (const reason of row.reasons) reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
+    for (const trigger of row.triggers) triggerCounts[trigger] = (triggerCounts[trigger] ?? 0) + 1;
+  }
+  const bumpTriggers = {};
+  for (const row of rows) {
+    for (const trigger of row.bumpTriggers)
+      bumpTriggers[trigger] = (bumpTriggers[trigger] ?? 0) + 1;
   }
   const ageWaits = rows.filter((row) => row.ageOnly).map((row) => row.passesInHours);
   return {
@@ -871,6 +1036,10 @@ function evaluateVariant(prs, policy, clock) {
     passUnvouched: rows.filter((row) => row.conclusion !== "held" && row.unvouched > 0).length,
     holdsPerHeld: spread(held.map((row) => row.holds)),
     reasonCounts,
+    triggerCounts,
+    bumpTriggers,
+    coverageOnly: rows.filter((row) => row.conclusion === "held" && row.coverageOnly).length,
+    heldOnCoverage: rows.filter((row) => row.heldOnCoverage).length,
     ageOnly: {
       prs: ageWaits.length,
       untilApproved: ageWaits.filter((hours) => hours === Infinity).length,
@@ -878,6 +1047,21 @@ function evaluateVariant(prs, policy, clock) {
     },
     rows,
   };
+}
+
+// What put a held bump on hold, finer than `verdict.reasons`: an age hold is
+// split by what left the bump unvouched (an unread diff, a new package, or the
+// unreviewed reason such as `unverified-pin`), and a strict `unreviewed` hold
+// keeps its reason.
+function holdTriggers(verdict) {
+  return verdict.reasons.map((reason) => {
+    if (reason === "too-new") {
+      if (verdict.unreviewed) return `too-new:${verdict.unreviewed}`;
+      return verdict.evidence ? "too-new:unread-content" : "too-new:new-package";
+    }
+    if (reason === "unreviewed") return `unreviewed:${verdict.unreviewed}`;
+    return reason;
+  });
 }
 
 const createdClock = (pr) => Date.parse(pr.createdAt);
@@ -959,8 +1143,8 @@ function summarizeReplay(dataset) {
     repos,
     bumpsPerPr: spread(withBumps.map((pr) => pr.bumps.length)),
     reviewablePerPr: spread(withBumps.map((pr) => reviewable(pr))),
-    over40Reviewable: withBumps.filter((pr) => reviewable(pr) > COLD_DIFFS_PER_PASS).length,
-    over500: withBumps.filter((pr) => pr.bumps.length > MAX_DIFFED_BUMPS).length,
+    overPassReviewable: withBumps.filter((pr) => reviewable(pr) > COLD_DIFFS_PER_PASS).length,
+    over500: withBumps.filter((pr) => pr.bumps.length > MAX_REVIEWED_BUMPS).length,
     ecosystems: {
       npm: bumps.filter(({ bump }) => bump.ecosystem === "npm").length,
       pypi: bumps.filter(({ bump }) => bump.ecosystem === "pypi").length,
@@ -976,10 +1160,63 @@ function summarizeReplay(dataset) {
     unreadLockfilePrs: complete.filter((pr) => pr.unreadLockfiles.length > 0).length,
     unreadReasons: countBy(complete.flatMap((pr) => pr.unreadReasons.map((entry) => entry.reason))),
     incompleteListings: complete.filter((pr) => !pr.listingComplete).length,
-    manifestOnlyPrs: complete.filter(
-      (pr) => pr.lockfiles.length === 0 && pr.changedManifests.length > 0,
-    ).length,
+    pins: pinCounts(bumps.map(({ bump }) => bump)),
+    repinned: bumps.filter(({ bump }) => bump.repinned).length,
+    unverifiedPins: bumps.filter(({ bump }) => bump.outcome?.reason === "unverified-pin").length,
+    coverageOnly: Object.fromEntries(
+      Object.entries(variants).map(([name, variant]) => [
+        name,
+        variant.rows
+          .filter((row) => row.conclusion === "held" && row.coverageOnly)
+          .map((row) => ({
+            pr: `${row.pr.repo}#${row.pr.number}`,
+            listingComplete: row.pr.listingComplete,
+            unread: row.pr.unreadReasons,
+          })),
+      ]),
+    ),
+    parseIncomplete: complete.flatMap((pr) =>
+      pr.unreadReasons
+        .filter((entry) => entry.reason === "parse-incomplete")
+        .map((entry) => ({ pr: `${pr.repo}#${pr.number}`, ...entry })),
+    ),
   };
+}
+
+// Per lockfile format: bumps with no pin, a public pin proven or not against
+// the public registry, a mirror proof, and pins on a private source (never
+// proven: the name is not sent to a public registry).
+function pinCounts(bumps) {
+  const counts = {};
+  for (const bump of bumps) {
+    const row = (counts[bump.format] ??= {
+      bumps: 0,
+      noPin: 0,
+      pinned: 0,
+      proven: 0,
+      failed: 0,
+      pastLimit: 0,
+      mirror: 0,
+      mirrorProven: 0,
+      privatePinned: 0,
+    });
+    row.bumps += 1;
+    const pin = bump.pin ?? { hashes: 0, proof: null, proven: null };
+    if (pin.proof === "pin") {
+      row.pinned += 1;
+      if (pin.proven === true) row.proven += 1;
+      else if (pin.proven === false) row.failed += 1;
+      else row.pastLimit += 1;
+    } else if (pin.proof === "mirror") {
+      row.mirror += 1;
+      if (pin.proven === true) row.mirrorProven += 1;
+    } else if (pin.hashes > 0) {
+      row.privatePinned += 1;
+    } else {
+      row.noPin += 1;
+    }
+  }
+  return counts;
 }
 
 // ---------------------------------------------------------------------------
@@ -1024,6 +1261,65 @@ function renderReport(dataset, summary) {
       `| ${reason} | ${names.map((name) => summary.variants[name].reasonCounts[reason] ?? 0).join(" | ")} |`,
     );
   }
+  const triggers = [
+    ...new Set(
+      names.flatMap((name) => [
+        ...Object.keys(summary.variants[name].triggerCounts),
+        ...Object.keys(summary.variants[name].bumpTriggers),
+      ]),
+    ),
+  ].sort();
+  lines.push(
+    ``,
+    `## Hold triggers (held PRs / held bumps)`,
+    ``,
+    `\`too-new:*\` splits the age fallback by what left the bump unvouched: \`unread-content\` (a diff with unread files or an unheld added native binary), \`new-package\`, or the unreviewed reason (\`unverified-pin\`, \`not-found\`, \`over-cap\`, ...). \`unread-coverage\` is the \`job.ts\` rule: an unread lockfile, changed resolution config, uncovered manifest, or cut-short listing holds the PR when \`unreadMinimumAgeDays\` is set or \`holdOnUnreviewed\` is on. \`coverage only\` counts held PRs with no held bump.`,
+    ``,
+    `| Trigger | ${names.join(" | ")} |`,
+    `| --- | ${names.map(() => "---").join(" | ")} |`,
+  );
+  for (const trigger of triggers) {
+    lines.push(
+      `| ${trigger} | ${names
+        .map((name) => {
+          const v = summary.variants[name];
+          return `${v.triggerCounts[trigger] ?? 0} / ${v.bumpTriggers[trigger] ?? 0}`;
+        })
+        .join(" | ")} |`,
+    );
+  }
+  lines.push(
+    `| coverage only (PRs) | ${names.map((name) => summary.variants[name].coverageOnly).join(" | ")} |`,
+  );
+  lines.push(``, `## Pin proofs (bumps, by lockfile format)`, ``);
+  lines.push(
+    `A public bump that pins hashes is diffed only after \`verifyPublicPin\` proves a pinned hash is the public release's; a failed proof is \`unverified-pin\`. Re-pins (same version, new hash): ${summary.repinned}. Bumps settled as \`unverified-pin\`: ${summary.unverifiedPins}.`,
+    ``,
+    `| Format | bumps | no pin | public pin | proven | failed | past review limit | mirror | mirror proven | pinned, private source |`,
+    `| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |`,
+  );
+  for (const [format, c] of Object.entries(summary.pins).sort()) {
+    lines.push(
+      `| ${format} | ${c.bumps} | ${c.noPin} | ${c.pinned} | ${c.proven} | ${c.failed} | ${c.pastLimit} | ${c.mirror} | ${c.mirrorProven} | ${c.privatePinned} |`,
+    );
+  }
+  lines.push(``, `## PRs held only by unread coverage under \`proposed\``, ``);
+  const coverageOnly = summary.coverageOnly.proposed;
+  if (coverageOnly.length === 0) lines.push(`None.`);
+  for (const entry of coverageOnly) {
+    const files = entry.unread.map(
+      (item) => `\`${item.path}\` (${item.reason}${item.kind ? `, ${item.kind}` : ""})`,
+    );
+    if (!entry.listingComplete) files.push("cut-short file listing");
+    lines.push(`- ${entry.pr}: ${files.join(", ")}`);
+  }
+  lines.push(``, `## Lockfiles the strict parsers call incomplete`, ``);
+  if (summary.parseIncomplete.length === 0) lines.push(`None.`);
+  for (const entry of summary.parseIncomplete) {
+    lines.push(
+      `- ${entry.pr} \`${entry.path}\` (${entry.kind}): incomplete at ${entry.sides.join(" and ")}; ${entry.bytes.head} bytes at head, ${entry.bytes.base ?? "–"} at the merge base`,
+    );
+  }
   lines.push(``, `## Per repository (held PRs)`, ``);
   lines.push(
     `| Repository | PRs | with bumps | bumps | ${names.join(" | ")} |`,
@@ -1042,8 +1338,8 @@ function renderReport(dataset, summary) {
     ``,
     `- All bumps, median / p90 / max: ${trio(summary.bumpsPerPr)}`,
     `- Reviewable (public, with a previous version), median / p90 / max: ${trio(summary.reviewablePerPr)}`,
-    `- PRs over ${COLD_DIFFS_PER_PASS} reviewable bumps (the old per-review cap; now cold diffs per pass, so more than one pass when cold): ${summary.over40Reviewable} (${pct(summary.over40Reviewable, summary.bumpsPerPr.n)})`,
-    `- PRs over ${MAX_DIFFED_BUMPS} bumps (diffed per review across passes): ${summary.over500} (${pct(summary.over500, summary.bumpsPerPr.n)})`,
+    `- PRs over ${COLD_DIFFS_PER_PASS} reviewable bumps (cold diffs per pass, so more than one pass when the cache is cold): ${summary.overPassReviewable} (${pct(summary.overPassReviewable, summary.bumpsPerPr.n)})`,
+    `- PRs over ${MAX_REVIEWED_BUMPS} bumps (the review limit; later bumps are \`pastReviewLimit\`): ${summary.over500} (${pct(summary.over500, summary.bumpsPerPr.n)})`,
     ``,
     `## Target age at PR creation`,
     ``,
@@ -1076,7 +1372,6 @@ function renderReport(dataset, summary) {
         .map(([reason, count]) => `${reason} ${count}`)
         .join(", ") || "none"
     }${summary.unreadReasons["parse-incomplete"] ? ". Any parse-incomplete on a well-known repository's lockfile more likely means the lockfile layer failed at run time than a malformed file; check the parsers before reading the numbers." : ""}`,
-    `- PRs changing a manifest but no parsed lockfile (manifest coverage is not replayed, so these pass here): ${summary.manifestOnlyPrs}`,
   );
   const failures = dataset.prs
     .flatMap((pr) => pr.bumps)
@@ -1104,8 +1399,9 @@ function renderReport(dataset, summary) {
     `- PRs replayed: ${summary.complete}; incomplete (budget): ${summary.incomplete}; skipped: ${dataset.skipped.length}`,
     `- PR creation dates: ${summary.dateRange ? `${summary.dateRange[0]} to ${summary.dateRange[1]}` : "n/a"}`,
     `- Run stops: ${dataset.stops.length ? dataset.stops.join("; ") : "none"}`,
-    `- The PR file list and merge base come from one compare call per PR (at most ${COMPARE_FILE_LIMIT} files), lockfiles from raw.githubusercontent.com at the merge base and head. Production lists files through the pulls API (up to 3,000) and reads contents through the contents API.`,
-    `- Manifest coverage (\`unreadManifests\`), approvals, mirror proofs, the per-pass budgets (eight minutes, ${COLD_DIFFS_PER_PASS} cold diffs), and the KV cache are not replayed: every pair up to the ${MAX_DIFFED_BUMPS}-bump cap is diffed once, cold, as if every pass completed.`,
+    `- GitHub API reads missing from the cache: ${dataset.apiMisses?.length ? dataset.apiMisses.slice(0, 20).join(", ") : "none"}`,
+    `- Collection is the production \`collectBumps\` (lockfile diff, routing, pins, re-pins, resolution config, manifest coverage). Its GitHub reads are answered from one cached compare call per PR (at most ${COMPARE_FILE_LIMIT} files; a compare at the cap counts as a cut-short listing) and raw.githubusercontent.com reads at the merge base and head. Production lists files through the pulls API (up to 3,000) and reads through the contents API.`,
+    `- Pin proofs are the production \`verifyPublicPin\` / \`verifyMirrorBump\` over anonymous public metadata. Approvals, the per-pass budgets (eight minutes, ${COLD_DIFFS_PER_PASS} cold diffs), and the KV cache are not replayed: every pair up to the ${MAX_REVIEWED_BUMPS}-bump review limit is diffed once, cold, as if every pass completed.`,
     `- Publish times come from today's registry metadata; a version unpublished or yanked since reads as unknown.`,
   );
   if (dataset.skipped.length) {

@@ -80,12 +80,26 @@ export function routedBump(
   const bump: DependencyBump = rest;
   const sides = change.from ? [change.from, change.to] : [change.to];
   const places = sides.map((source) => placeOf(bump, source, route, policy));
+  // The PR writes the head's URL, so a release it moves off the public
+  // registry (or a mirror) onto a declared private registry is not the
+  // organization's own package: the exemption needs the base on it already,
+  // or a package new to the lockfile.
+  if (
+    places.length === 2 &&
+    places[1] === "private" &&
+    PLACE_RANK[places[0]] < PLACE_RANK.private
+  ) {
+    places[1] = "remote";
+  }
   let place = places.reduce(worse);
   const secret = privateScope(bump, policy);
   if (secret && (place === "public" || place === "mirror")) place = "private";
   if (place === "public") {
     const hashes = change.to.hashes;
-    return hashes && !change.to.mixed ? { ...bump, pinnedHashes: hashes } : bump;
+    if (hashes && !change.to.mixed) return { ...bump, pinnedHashes: hashes };
+    // Expected and unusable (missing, weak, beside an unknown algorithm,
+    // malformed): an empty list, which no proof satisfies.
+    return change.pinExpected ? { ...bump, pinnedHashes: [] } : bump;
   }
   if (place === "mirror") {
     const candidate = mirrorCandidate(bump, change, route, policy);
@@ -251,9 +265,11 @@ function underPrefix(url: string, prefixes: readonly string[], role: "index" | "
 
 /**
  * Folds a bump into one already collected for the same change (another
- * lockfile, or another copy). Mirror hashes and pinned hashes are unioned,
- * since every one must match the public registry; a change only one of them
- * pins comparably keeps no proof material and stays unproven.
+ * lockfile, or another copy). Mirror hashes are unioned, since every one must
+ * match the public registry; a change only one of them pins comparably keeps
+ * no mirror proof and stays unproven. Pinned hashes are unioned too; one copy
+ * that expected a pin and has none (`[]`) leaves nothing provable, and a copy
+ * whose format has no comparable pin adds nothing to prove.
  */
 export function mergeBump(existing: DependencyBump, bump: DependencyBump): void {
   existing.direct ||= bump.direct;
@@ -269,9 +285,12 @@ export function mergeBump(existing: DependencyBump, bump: DependencyBump): void 
   } else {
     delete existing.mirror;
   }
-  if (existing.pinnedHashes && bump.pinnedHashes && !existing.privateSource) {
-    existing.pinnedHashes = union(existing.pinnedHashes, bump.pinnedHashes)!;
-  } else {
+  const pinned = [existing.pinnedHashes, bump.pinnedHashes].filter((list) => list !== undefined);
+  if (existing.privateSource || pinned.length === 0) {
     delete existing.pinnedHashes;
+  } else if (pinned.some((list) => list.length === 0)) {
+    existing.pinnedHashes = [];
+  } else {
+    existing.pinnedHashes = pinned.reduce((a, b) => union(a, b)!);
   }
 }

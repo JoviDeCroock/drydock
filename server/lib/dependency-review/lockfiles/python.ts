@@ -63,6 +63,7 @@ interface UvPackage {
  */
 export function parseUvLock(text: string): LockfileSnapshot {
   const builder = createSnapshotBuilder("pypi");
+  builder.expectStrongPins();
   const packages: UvPackage[] = [];
   let current: UvPackage | null = null;
   let inPackageTable = false;
@@ -125,6 +126,9 @@ export function parseUvLock(text: string): LockfileSnapshot {
     const hashes = pkg.filesClean && pkg.files > 0 ? [...new Set(pkg.hashes)].sort() : null;
     const pin = filePin(pkg, hashes);
     const { kind, value } = pkg.source;
+    if (kind === "editable" || kind === "virtual" || kind === "directory") {
+      builder.addWorkspace(value);
+    }
     if (kind === "editable" || kind === "virtual") {
       for (const name of pkg.dependsOn) builder.markDirect(name);
     } else if (kind === "registry") {
@@ -319,7 +323,8 @@ function filePin(pkg: UvPackage, hashes: string[] | null): string | null {
   return `lock entry sha256:${pkg.block.digest("hex")}`;
 }
 
-const PIN = /^([A-Za-z0-9][\w.-]*)(?:\[[^\]]*\])? ?== ?([\w.+!-]+)(?: ?;.*)?$/;
+// `name[extras]==version ; marker`: name, extras, version, marker.
+const PIN = /^([A-Za-z0-9][\w.-]*)(?:\[([^\]]*)\])? ?== ?([\w.+!-]+)(?: ?;(.*))?$/;
 // pip substitutes `${NAME}` from the environment before it splits a line, so
 // the value may hold options of its own.
 const PIP_ENV_VAR = /\$\{[A-Z0-9_]+\}/;
@@ -488,13 +493,15 @@ export function parseRequirements(text: string): LockfileSnapshot {
     // On a requirement line pip ignores file-wide options; they are not a
     // shape this reads.
     const hashes: string[] = [];
+    const installOptions: string[] = [];
     for (const [name, value] of options) {
       const role = PIP_OPTIONS[name].role;
-      if (role === "hash") {
+      if (role === "requirement") installOptions.push(`--${name}=${value ?? ""}`);
+      else if (role === "hash") {
         const m = PIP_HASH.exec(value ?? "");
         if (!m) return incompleteSnapshot();
         hashes.push(`${m[1]}:${m[2].toLowerCase()}`);
-      } else if (role !== "requirement") {
+      } else {
         return incompleteSnapshot();
       }
     }
@@ -504,11 +511,20 @@ export function parseRequirements(text: string): LockfileSnapshot {
       unpinned.push(line);
       continue;
     }
-    const key = m[1].toLowerCase().replace(/[-_.]+/g, "-");
+    const key = normalizedName(m[1]);
     const pinned = pins.get(key);
-    if (pinned !== undefined && pinned.version !== m[2]) return incompleteSnapshot();
+    if (pinned !== undefined && pinned.version !== m[3]) return incompleteSnapshot();
     if (pinned === undefined && !builder.reserve()) break;
-    const pin = pinned ?? { version: m[2], hashes: new Set(), unhashed: false };
+    // Extras, a marker, and install options change what installing the pin
+    // does (the extra's dependencies, whether it installs at all, how it
+    // builds) without changing its version, so they are compared as text like
+    // an unpinned line; a pin with none of them adds nothing there.
+    const qualifier = pinQualifier(key, m[2], m[4], installOptions);
+    if (qualifier !== null) {
+      if (!builder.reserve()) break;
+      unpinned.push(qualifier);
+    }
+    const pin = pinned ?? { version: m[3], hashes: new Set(), unhashed: false };
     for (const hash of hashes) pin.hashes.add(hash);
     if (hashes.length === 0) pin.unhashed = true;
     pins.set(key, pin);
@@ -528,6 +544,33 @@ export function parseRequirements(text: string): LockfileSnapshot {
     builder.markDirect(name);
   }
   return builder.finish(unpinned.sort());
+}
+
+function normalizedName(name: string): string {
+  return name.toLowerCase().replace(/[-_.]+/g, "-");
+}
+
+// `name[a,b] ; marker --option=value` with extras normalized and sorted,
+// the marker as written (a marker string may hold spaces), and options
+// sorted; null when there is
+// none of them. The leading tab keeps it apart from every unpinned line, whose
+// whitespace `pipLines` has collapsed to single spaces.
+function pinQualifier(
+  name: string,
+  extras: string | undefined,
+  marker: string | undefined,
+  options: string[],
+): string | null {
+  const names = (extras ?? "")
+    .split(",")
+    .map((extra) => normalizedName(extra.trim()))
+    .filter(Boolean);
+  const condition = (marker ?? "").trim();
+  if (names.length === 0 && !condition && options.length === 0) return null;
+  const parts = [`\t${name}[${[...new Set(names)].sort().join(",")}]`];
+  if (condition) parts.push(`; ${condition}`);
+  parts.push(...options.sort());
+  return parts.join(" ");
 }
 
 // Python's `splitlines` breaks lines on `\r`, `\v`, `\f`, 0x1c-0x1e, 0x85,

@@ -1,6 +1,7 @@
 import { and, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { bumpIdentityKey, changeKey, changeSource } from "../lib/dependency-review/identity";
 import { parseDependencyReviewPolicy } from "../lib/dependency-review/policy";
+import { emptyProgress } from "../lib/dependency-review/progress";
 import type {
   DependencyBump,
   DependencyReviewConclusion,
@@ -111,8 +112,6 @@ export interface DependencyReviewRecord {
   conclusion: DependencyReviewConclusion | null;
   bumpCount: number;
   heldCount: number;
-  // The claim counter (`claimDependencyReviewAttempt`).
-  attempt: number;
   approvedByLogin: string | null;
   approvedAt: Date | null;
   createdAt: Date;
@@ -134,7 +133,6 @@ const RECORD_COLUMNS = {
   conclusion: dependencyReviews.conclusion,
   bumpCount: dependencyReviews.bumpCount,
   heldCount: dependencyReviews.heldCount,
-  attempt: dependencyReviews.attempt,
   approvedByLogin: dependencyReviews.approvedByLogin,
   approvedAt: dependencyReviews.approvedAt,
   createdAt: dependencyReviews.createdAt,
@@ -290,9 +288,14 @@ export async function claimDependencyReviewAttempt(
       status: "running",
       attempt: sql`${dependencyReviews.attempt} + 1`,
       // SET reads the row's old values, so this tests the status being left.
-      progressJson: restart
-        ? null
-        : sql`CASE WHEN ${dependencyReviews.status} IN ('queued', 'running') THEN ${dependencyReviews.progressJson} ELSE NULL END`,
+      // A recheck's fresh progress names the run it rechecks, from the claim
+      // on, so a redelivery after any failure in its pass can resume it.
+      progressJson:
+        options.recheckOfRun !== undefined
+          ? JSON.stringify({ ...emptyProgress(now.getTime()), recheckOf: options.recheckOfRun })
+          : restart
+            ? null
+            : sql`CASE WHEN ${dependencyReviews.status} IN ('queued', 'running') THEN ${dependencyReviews.progressJson} ELSE NULL END`,
       updatedAt: now,
     })
     .where(

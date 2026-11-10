@@ -31,7 +31,8 @@ export function changeSource(
   if (bump.mirror) {
     return `mirror:${digest([[...(bump.mirror.fromHashes ?? [])].sort(), [...bump.mirror.toHashes].sort()])}`;
   }
-  if (bump.pinnedHashes) return `pin:${digest([...bump.pinnedHashes].sort())}`;
+  // Defined, even empty: an entry that should pin and doesn't is its own change.
+  if (bump.pinnedHashes !== undefined) return `pin:${digest([...bump.pinnedHashes].sort())}`;
   if (bump.remoteSource) return "remote";
   if (bump.privateSource) return "private";
   return "public";

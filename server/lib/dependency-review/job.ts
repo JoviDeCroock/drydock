@@ -25,8 +25,14 @@ import { cancelSupersededReview, ensureCheckRun, publishResult, reportProgress }
 import { collectBumps } from "./collect";
 import type { DependencyReviewJobInput, ReviewContext } from "./context";
 import { DependencyReviewGithubError, fetchPullRequest, updateCheckRun } from "./github";
-import { concludeDependencyReview, decideBump } from "./policy";
 import {
+  collectionPolicy,
+  collectionPolicyKey,
+  concludeDependencyReview,
+  decideBump,
+} from "./policy";
+import {
+  bumpProgressKey,
   DependencyReviewStalePassError,
   parseProgress,
   ProgressWriter,
@@ -37,7 +43,7 @@ import { ageRecheckAt, recheckApplies, recheckEarly, sendAgeRecheck } from "./re
 import { MAX_STORED_BUMPS } from "./render";
 import { PASS_BUDGET_MS, runReviewStage } from "./review-bumps";
 import { postSkippedCheck } from "./skip";
-import type { ReviewedBump } from "./types";
+import type { DependencyBump, ReviewedBump } from "./types";
 
 // 500 stored bumps at 12 cold diffs a pass need 42; the rest is slack for
 // passes cut short. A pass that survives at the bound publishes what is left
@@ -92,17 +98,24 @@ export async function executeDependencyReviewJob(
   const review = await getDependencyReview(db, input.organizationId, input.reviewId);
   if (!review) return;
   let recheck = input.recheck;
+  // A redelivered recheck whose own pass was released for a retry or killed
+  // mid-pass resumes that attempt, claiming only as a continuation does
+  // (queued, or running past its lease), so it never restarts a review that
+  // has since failed or been superseded, nor one another trigger restarted.
+  let resumesRecheck = false;
   if (recheck) {
     if (recheckApplies(review, recheck)) {
       if (recheckEarly(recheck, Date.now())) {
         await sendAgeRecheck(env, review, recheck, Date.now());
         return;
       }
-    } else if (review.status === "queued" || review.status === "running") {
-      // A redelivery of a recheck whose pass was released for a retry or
-      // killed mid-pass: the review now carries that recheck's run, so the
-      // message resumes it like any redelivery instead of stranding it.
+    } else if (
+      (review.status === "queued" || review.status === "running") &&
+      parseProgress(await readDependencyReviewProgress(db, review.id), Date.now()).recheckOf ===
+        recheck.checkRunId
+    ) {
       recheck = undefined;
+      resumesRecheck = true;
     } else {
       return;
     }
@@ -149,7 +162,9 @@ export async function executeDependencyReviewJob(
     review.id,
     recheck
       ? { recheckOfRun: recheck.checkRunId }
-      : { rerun: input.rerun, continuation: input.continuation },
+      : resumesRecheck
+        ? { continuation: true }
+        : { rerun: input.rerun, continuation: input.continuation },
   );
   if (attempt === null) {
     if (recheck) return;
@@ -239,18 +254,21 @@ async function runReview(
   }
 
   const settings = await getDependencyReviewSettings(db, review.organizationId);
-  // The head is fixed, so what the first pass collected still holds; a pass
-  // reads the lockfiles again only when the mirror list changed or the
-  // collection was too large to keep.
-  const mirrors = settings.policy.publicMirrors;
+  // The head is fixed, so what the first pass collected still holds while the
+  // policy inputs collection reads are unchanged. A change to any of them (a
+  // registry no longer trusted, a scope now private) re-collects, and stored
+  // outcomes for bumps the new collection no longer has are dropped: a proof
+  // still pending for one of them must never run.
+  const policyKey = collectionPolicyKey(settings.policy);
   const kept = progress.collected;
   const collected =
-    kept && kept.publicMirrors.join("\n") === mirrors.join("\n")
+    kept && kept.policyKey === policyKey
       ? kept
-      : await collectBumps(context, pr.baseSha, pr.changedFiles, settings.policy);
+      : await collectBumps(context, pr.baseSha, pr.changedFiles, collectionPolicy(settings.policy));
   if (collected !== kept) {
+    if (kept) progress.bumps = keepProgressFor(progress.bumps, collected.bumps);
     progress.collected = storableCollection({
-      publicMirrors: mirrors,
+      policyKey,
       bumps: collected.bumps,
       unreadLockfiles: collected.unreadLockfiles,
       listingComplete: collected.listingComplete,
@@ -360,6 +378,18 @@ async function runReview(
     // Across every pass of this attempt, not just the final one.
     durationMs: Date.now() - progress.startedAt,
   });
+}
+
+function keepProgressFor(
+  stored: DependencyReviewProgress["bumps"],
+  bumps: readonly DependencyBump[],
+): DependencyReviewProgress["bumps"] {
+  const kept: DependencyReviewProgress["bumps"] = {};
+  for (const bump of bumps) {
+    const key = bumpProgressKey(bump);
+    if (stored[key]) kept[key] = stored[key];
+  }
+  return kept;
 }
 
 // `MAX_STORED_BUMPS` bounds what is persisted per review, holds first. Approve

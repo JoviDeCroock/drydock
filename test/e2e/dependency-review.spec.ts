@@ -273,6 +273,43 @@ test("updates allowed by policy are not described as clear", async ({ page }) =>
   expect(errors).toEqual([]);
 });
 
+test("an aged release that adds an unheld native binary is listed as unread, never clear", async ({
+  page,
+}) => {
+  await installMocks(page, [], {
+    review: () => ({ ...REVIEW, conclusion: "clear", heldCount: 0, bumpCount: 1 }),
+    bumps: () => [
+      {
+        bump: { ...BUMPS[1].bump, name: "gains-a-binary" },
+        verdict: {
+          status: "clear",
+          evidence: {
+            ...EVIDENCE,
+            releaseRisk: "low",
+            installScriptsAdded: 0,
+            dependenciesAdded: 0,
+            nativeBinariesAdded: 1,
+            findings: [],
+            findingCount: 0,
+          },
+        },
+        approved: false,
+      },
+    ],
+  });
+  await page.goto(`/dashboard/dependency-reviews/dr_1?org=${ORG}`);
+
+  await expect(
+    page.getByText(
+      "No updates are held. 1 update passed under this organization's policy without a full read.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Passed with unread changes 1" })).toBeVisible();
+  await expect(page.getByText("Adds 1 native binary no rule reads.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Clear/ })).toHaveCount(0);
+  await expect(page.getByText("The update is clear.")).toHaveCount(0);
+});
+
 test("a fully reviewed update can be described as clear", async ({ page }) => {
   await installMocks(page, [], {
     review: () => ({ ...REVIEW, conclusion: "clear", heldCount: 0, bumpCount: 1 }),

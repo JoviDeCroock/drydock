@@ -23,10 +23,12 @@ import type { BumpOutcome, DependencyBump, DependencyReviewPolicy } from "./type
 
 // Per pass, against the queue consumer's 30 s CPU limit, which the Worker
 // can't observe. A cold diff parses two tarballs in a sandbox isolate but runs
-// the rules in this one, and the rules are the cost: over 362 real pairs
-// (replay harness, local Node) cold-diff CPU had a median of 268 ms, p90
-// 1.8 s, max 15.5 s, and a mean near 0.94 s on a 163-bump lockfile PR. Twelve
-// keeps the mean near 11 s with room for one 15 s outlier. A cached pair is
+// the rules in this one, and the rules are the cost. Measured on local Node,
+// not Workers CPU (`pnpm run eval:dependency-review-replay`): over 1,483 real
+// pairs the median was 238 ms and p90 1.7 s, with a long tail (about one pair
+// in five over 750 ms, the worst far past any pass). Twelve keeps a typical
+// pass well under the limit; a pair that takes its pass down anyway is given
+// up on (`MAX_COLD_DIFF_STARTS`). A cached pair is
 // one KV read and costs none of this budget; cached reads still parse a
 // payload each, so they get their own bound (not measured). Registry lookups
 // (mirror and pin proofs, publish times) share a third.
@@ -99,7 +101,9 @@ export async function runReviewStage(
     const mirror = Boolean(entry.original.mirror);
     const record = (verified: boolean) =>
       writer.record(entry.key, mirror ? { mirrorVerified: verified } : { pinVerified: verified });
-    if (!egress) return record(false);
+    // A defined but empty pin (the format always writes one, this entry has
+    // none usable) proves nothing; with no egress nothing can be proven.
+    if (!egress || !hasPins(entry.original)) return record(false);
     if (!lookupAllowed()) return;
     lookups += 1;
     let verified = false;
@@ -240,18 +244,34 @@ export async function runReviewStage(
 
 function proofPending(bump: DependencyBump, progress: StoredBumpProgress): boolean {
   if (bump.mirror) return progress.mirrorVerified === undefined;
-  return Boolean(bump.pinnedHashes) && !bump.privateSource && progress.pinVerified === undefined;
+  return needsPinProof(bump) && progress.pinVerified === undefined;
+}
+
+// A defined `pinnedHashes`, empty included, means the bump must be proven: an
+// empty list is a pin the format should have written and this entry lacks.
+function needsPinProof(bump: DependencyBump): boolean {
+  return bump.pinnedHashes !== undefined && !bump.privateSource;
+}
+
+function hasPins(bump: DependencyBump): boolean {
+  const hashes = bump.mirror ? bump.mirror.toHashes : bump.pinnedHashes;
+  return (
+    (hashes?.length ?? 0) > 0 && (!bump.mirror?.fromHashes || bump.mirror.fromHashes.length > 0)
+  );
 }
 
 // null: a proof not yet made either way.
 function resolveBump(bump: DependencyBump, progress: StoredBumpProgress): DependencyBump | null {
   if (bump.mirror) {
     if (progress.mirrorVerified === undefined) return null;
-    if (!progress.mirrorVerified) return bump;
+    // Not the public release's bytes, or not provable: the organization
+    // declared this URL a mirror of the public registry, not its own, so the
+    // entry is a remote source like a failed public pin, never exempt.
+    if (!progress.mirrorVerified) return { ...bump, remoteSource: true };
     const { privateSource: _private, mirror: _mirror, remoteSource: _remote, ...rest } = bump;
     return { ...rest, viaMirror: true };
   }
-  if (bump.pinnedHashes && !bump.privateSource) {
+  if (needsPinProof(bump)) {
     if (progress.pinVerified === undefined) return null;
     if (progress.pinVerified) {
       const { pinnedHashes: _pinned, ...rest } = bump;
@@ -279,13 +299,13 @@ function settledOutcome(
   }
   if (!entry.inReview) {
     // A public package the PR adds needs no proof or diff to be what it is.
-    return original.fromVersion === null && !original.mirror && !original.pinnedHashes
+    return original.fromVersion === null && !original.mirror && original.pinnedHashes === undefined
       ? { kind: "new-package", pastReviewLimit: true }
       : { kind: "unreviewed", reason: "over-cap", pastReviewLimit: true };
   }
   if (bump === null) return null;
   if (bump.privateSource) {
-    return { kind: "unreviewed", reason: bump.mirror ? "private-source" : "unverified-pin" };
+    return { kind: "unreviewed", reason: "unverified-pin" };
   }
   if (bump.fromVersion === null) return { kind: "new-package" };
   if (progress.evidence) return { kind: "diffed", evidence: progress.evidence };

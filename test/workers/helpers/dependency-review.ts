@@ -1,5 +1,5 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { vi } from "vitest";
 import { createDb } from "../../../server/db/client";
 import { saveDependencyReviewSettings } from "../../../server/db/dependency-reviews";
@@ -115,7 +115,18 @@ export async function seedDependencyReviewOrg(options: SeedDependencyReviewOrgOp
 
 // ── Lockfile and diff fixtures ───────────────────────────────────────────────
 
+// The sha512 a fixture release is pinned to, in the lockfile and (for a
+// release `seedNpmDiff` publishes) in the public packument.
+export function fixtureIntegrity(name: string, version: string): string {
+  return `sha512-${createHash("sha512").update(`${name}@${version}`).digest("base64")}`;
+}
+
+// Releases the registry double publishes, by name: every one a fixture
+// lockfile names.
+const publishedReleases = new Map<string, Set<string>>();
+
 // package-lock.json v3 whose root declares every entry, so each is direct.
+// Every entry pins its fixture sha512, as npm writes one for every release.
 export function npmLockfile(packages: Record<string, string>): string {
   const lock: Record<string, unknown> = {
     "": {
@@ -125,7 +136,9 @@ export function npmLockfile(packages: Record<string, string>): string {
     },
   };
   for (const [name, version] of Object.entries(packages)) {
-    lock[`node_modules/${name}`] = { version };
+    lock[`node_modules/${name}`] = { version, integrity: fixtureIntegrity(name, version) };
+    const versions = publishedReleases.get(name) ?? new Set();
+    publishedReleases.set(name, versions.add(version));
   }
   return JSON.stringify({ name: "app", lockfileVersion: 3, requires: true, packages: lock });
 }
@@ -181,6 +194,30 @@ export async function seedNpmDiff(fixture: NpmDiffFixture): Promise<void> {
     toVersion: fixture.to,
   });
   await writePublicDiffCache(env, key, npmDiffPayload(fixture));
+}
+
+// The packument of a fixture package: every release a fixture lockfile named,
+// with its fixture integrity, so a lockfile pin to it is proven.
+function packument(name: string): Response | null {
+  const versions = publishedReleases.get(name);
+  if (!versions) return null;
+  return Response.json({
+    name,
+    "dist-tags": {},
+    versions: Object.fromEntries(
+      [...versions].map((version) => [
+        version,
+        {
+          name,
+          version,
+          dist: {
+            tarball: `${PUBLIC_NPM_REGISTRY}/${name}/-/${name}-${version}.tgz`,
+            integrity: fixtureIntegrity(name, version),
+          },
+        },
+      ]),
+    ),
+  });
 }
 
 export function uniquePackageName(label: string): string {
@@ -248,7 +285,8 @@ export function fakePullRequest(overrides: Partial<FakePullRequest> = {}): FakeP
 
 /**
  * Replaces global fetch with a GitHub API double for one pull request. Public
- * registries answer 404 (an uncached diff reads as "not found"); every other
+ * registries answer 404 (an uncached diff reads as "not found"), except the
+ * npm packument of a package a fixture lockfile names; every other
  * host is recorded in `unexpected` instead of throwing, because a thrown fetch
  * would surface only as a swallowed "diff failed".
  */
@@ -274,7 +312,11 @@ export function stubGithubApi(pr: FakePullRequest) {
     });
 
     if (url.host === "registry.npmjs.org" || url.host === "pypi.org") {
-      return new Response("not found", { status: 404 });
+      const metadata =
+        url.host === "registry.npmjs.org"
+          ? packument(decodeURIComponent(url.pathname.slice(1)))
+          : null;
+      return metadata ?? new Response("not found", { status: 404 });
     }
     if (url.host !== "api.github.com") {
       unexpected.push(request.url);

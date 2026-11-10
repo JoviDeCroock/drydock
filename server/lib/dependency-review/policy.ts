@@ -262,6 +262,31 @@ function unchecked(
 }
 
 /**
+ * Every policy field bump collection reads: which registries are mirrors,
+ * which are the organization's own, and which npm scopes never leave it.
+ * `collectBumps` takes only this, so a field classification starts reading
+ * must be added here, and with it to `collectionPolicyKey`, which decides
+ * whether a stored collection still holds.
+ */
+export type CollectionPolicy = Pick<
+  DependencyReviewPolicy,
+  "publicMirrors" | "privateRegistries" | "privateScopes"
+>;
+
+export function collectionPolicy(policy: CollectionPolicy): CollectionPolicy {
+  return {
+    publicMirrors: policy.publicMirrors ?? [],
+    privateRegistries: policy.privateRegistries ?? [],
+    privateScopes: policy.privateScopes ?? [],
+  };
+}
+
+/** Equal for two policies exactly when collection would classify every bump alike. */
+export function collectionPolicyKey(policy: CollectionPolicy): string {
+  return JSON.stringify(collectionPolicy(policy));
+}
+
+/**
  * The check's outcome. Any hold nobody approved keeps the check blocking;
  * `approved` means every hold was approved, which reads differently from a
  * PR where nothing needed approval.

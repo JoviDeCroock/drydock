@@ -167,7 +167,7 @@ The public report's closing block states only where the reviewed bytes came from
 
 ## Dependency reviews
 
-`/dashboard/dependency-reviews` lists the organization's dependency reviews; `/dashboard/dependency-reviews/:id` shows one, grouped as the check run is (Held, Approved, Not reviewed, New packages, Clear). The detail page reads `?org=` like scan detail because the check run's details link carries it.
+`/dashboard/dependency-reviews` lists the organization's dependency reviews; `/dashboard/dependency-reviews/:id` shows one, grouped as the check run is (Held, Approved, Not reviewed, New packages, Same version, new pin, Passed with unread changes, Clear). An age hold names what went unread and when it passes, in the reader's local time, or why it holds until approved. The detail page reads `?org=` like scan detail because the check run's details link carries it.
 
 | State | Detail page |
 | --- | --- |
@@ -175,11 +175,13 @@ The public report's closing block states only where the reviewed bytes came from
 | Held, not approvable | The detail response's `approvable` is the approval handler's own `listsEveryHold` (`server/lib/dependency-review/approvable.ts`): no Approve link; the alert says to split the PR. |
 | Held on coverage only | No update count; Approve is secondary, and the alert says it accepts the unread changes and that making them readable gets them reviewed. |
 | Failed | Secondary `Re-run on GitHub ↗`; the alert names the App-permission cause. |
-| No holds | Not reviewed and New packages groups say why they passed; the headline counts them. An incomplete review says so and suggests smaller PRs. |
+| No holds | Not reviewed, New packages, Same version, new pin, and Passed with unread changes groups say why they passed; the headline counts them as passed without a full read and says clear only when every update was read in full. An incomplete review says so and suggests smaller PRs. |
 | Running | `Alert tone="info"` that the page refreshes when the review is ready. |
 | Superseded / stale | Superseded is a muted line: the commit was no longer the head of an open PR when Drydock ran. A held review with a newer review on the same PR (`newerReviewId`) gets an info alert linking it and no Approve, since GitHub refuses approvals off the head. |
 
 The list stacks rows below `sm` (repo and state, then author, short head SHA, count, time); counts show only for finished reviews. A list for an organization with review on and no GitHub App shows a warn alert with the install link instead of the empty state. In settings, App permissions appear only in that missing-App alert, extra bot logins fold under a disclosure (open when set) and state the write-access check they skip, and an unsaved enable toggle is marked beside it.
+
+In the settings policy card, **Minimum age for unread updates** is a days field below the switches (empty is off) with an inline error for a value outside 1–90. Mirrors, private registries, and private npm scopes fold under **Registries other than public npm and PyPI** (open when one is set); the mirror hint states that Drydock sends the names and versions resolved from a mirror to the public registry, and the private-registry hint that those updates are exempt from the minimum age.
 
 While a review is queued or running, both pages poll on the running-scan cadence (`src/models/background-poll.ts`) and offer Resume refresh once it stalls; the settings page does not poll. Reason wording comes from `server/lib/dependency-review/wording.ts`, shared with the check run. The settings section is `src/pages/Dashboard/Settings/DependencyReviewSection.tsx`, shown with the header link only when the organization list says `dependencyReview` ([dependency-review.md](./dependency-review.md)).
 
