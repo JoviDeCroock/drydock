@@ -177,7 +177,7 @@ Alert on any condition over a rolling five-minute window:
 | `fallback` | Above 2% |
 | Terminal failures | Above 0.5% |
 | Completed agent steps (`SUM(double3)`) | Above 80% of current documented text-generation allocation |
-| Kimi steps | Above 60% of current model-specific allocation |
+| Fallback-model steps | Above 60% of current model-specific allocation |
 | Oldest pending scan | More than two minutes old |
 | Numeric provider RPM allocations | Keep in Cloudflare alert configuration; limits can change |
 

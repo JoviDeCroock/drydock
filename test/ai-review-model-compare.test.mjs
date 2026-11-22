@@ -18,8 +18,8 @@ import {
 } from "./eval/ai-review-live-harness.mjs";
 import { AI_MODEL_CANDIDATES, AI_REVIEWER_VERSION } from "../server/lib/ai-review/index.ts";
 
-const KIMI = "@cf/moonshotai/kimi-k2.7-code";
-const GLM = "@cf/zai-org/glm-5.3-flash";
+const GLM = "@cf/zai-org/glm-5.3";
+const DEEPSEEK = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
 const QWEN_NO_CACHE = "@cf/qwen/qwen3.8-27b";
 
 function usage(overrides = {}) {
@@ -44,33 +44,33 @@ describe("model pricing table", () => {
 
 describe("estimateCost", () => {
   test("bills cached input at the cached rate", () => {
-    // 20k fresh @ $0.95/M + 80k cached @ $0.19/M + 3k out @ $4.00/M
-    expect(estimateCost(KIMI, usage())).toBeCloseTo(0.019 + 0.0152 + 0.012, 6);
+    // 20k fresh @ $1.40/M + 80k cached @ $0.26/M + 3k out @ $4.40/M
+    expect(estimateCost(GLM, usage())).toBeCloseTo(0.028 + 0.0208 + 0.0132, 6);
   });
 
   test("bills the whole prefix at full rate when no cached tier is published", () => {
     // The trap this harness exists to catch: qwen3.8-27b's $0.45/M input looks
-    // cheaper than kimi's $0.95/M, but with no cache tier the agent loop
-    // re-bills every step at full rate and it ends up more expensive.
+    // close to DeepSeek's $0.30/M, but with no cache tier the agent loop
+    // re-bills every step at full rate and it ends up several times the cost.
     const qwen = estimateCost(QWEN_NO_CACHE, usage());
-    const kimi = estimateCost(KIMI, usage());
+    const deepseek = estimateCost(DEEPSEEK, usage());
     expect(qwen).toBeCloseTo(100_000 * (0.45 / 1e6) + 3_000 * (3.2 / 1e6), 6);
-    expect(qwen).toBeGreaterThan(kimi);
+    expect(qwen).toBeGreaterThan(deepseek * 5);
   });
 
-  test("prices GLM 5.3 Flash below Kimi for an identical loop", () => {
-    expect(estimateCost(GLM, usage())).toBeLessThan(estimateCost(KIMI, usage()));
+  test("prices DeepSeek V4.1 Flash below GLM 5.3 for an identical loop", () => {
+    expect(estimateCost(DEEPSEEK, usage())).toBeLessThan(estimateCost(GLM, usage()));
   });
 
   test("never counts more cached tokens than billed input", () => {
-    const cost = estimateCost(KIMI, usage({ inputTokens: 1_000, cachedInputTokens: 50_000 }));
+    const cost = estimateCost(GLM, usage({ inputTokens: 1_000, cachedInputTokens: 50_000 }));
     expect(cost).toBeGreaterThan(0);
-    expect(cost).toBeCloseTo(1_000 * (0.19 / 1e6) + 3_000 * (4.0 / 1e6), 6);
+    expect(cost).toBeCloseTo(1_000 * (0.26 / 1e6) + 3_000 * (4.4 / 1e6), 6);
   });
 
   test("returns null for an unpriced model or missing usage", () => {
     expect(estimateCost("@cf/unknown/model", usage())).toBeNull();
-    expect(estimateCost(KIMI, null)).toBeNull();
+    expect(estimateCost(GLM, null)).toBeNull();
   });
 });
 
@@ -152,7 +152,7 @@ function review(overrides = {}) {
     summary: "s",
     findings: [],
     requiresManualReview: true,
-    model: KIMI,
+    model: GLM,
     reviewerVersion: AI_REVIEWER_VERSION,
     ...overrides,
   };
@@ -302,7 +302,7 @@ describe("scoreRun", () => {
         steps: 6,
       },
     });
-    const summary = summarizeModel(KIMI, [run]);
+    const summary = summarizeModel(GLM, [run]);
 
     expect(run.usageAvailable).toBe(false);
     expect(summary.costCoverage).toBe(0);
@@ -329,7 +329,7 @@ describe("summarizeModel", () => {
   ];
 
   test("reports completion, catch, and false-positive rates separately", () => {
-    const summary = summarizeModel(KIMI, runs);
+    const summary = summarizeModel(GLM, runs);
     expect(summary.completionRate).toBeCloseTo(2 / 3, 6);
     expect(summary.invalidRate).toBeCloseTo(1 / 3, 6);
     expect(summary.productCoverageRate).toBeCloseTo(1 / 2, 6);
@@ -337,19 +337,19 @@ describe("summarizeModel", () => {
   });
 
   test("reports cached input share over the whole run, not per case", () => {
-    expect(summarizeModel(KIMI, runs).cachedInputShare).toBeCloseTo(160_000 / 200_000, 6);
+    expect(summarizeModel(GLM, runs).cachedInputShare).toBeCloseTo(160_000 / 200_000, 6);
   });
 
   test("excludes runs without usage from cost coverage and token averages", () => {
-    const summary = summarizeModel(KIMI, runs);
+    const summary = summarizeModel(GLM, runs);
     expect(summary.costCoverage).toBeCloseTo(2 / 3, 6);
     expect(summary.avgInputTokens).toBe(100_000);
     expect(summary.avgOutputTokens).toBe(3_000);
-    expect(summary.avgCostUsd).toBeCloseTo(estimateCost(KIMI, usage()), 6);
+    expect(summary.avgCostUsd).toBeCloseTo(estimateCost(GLM, usage()), 6);
   });
 
   test("leaves rates null rather than inventing a denominator", () => {
-    const summary = summarizeModel(KIMI, [runs[0]]);
+    const summary = summarizeModel(GLM, [runs[0]]);
     expect(summary.falsePositiveRate).toBeNull();
     expect(summary.productCoverageRate).toBe(1);
   });
@@ -359,18 +359,16 @@ describe("renderMarkdown", () => {
   const base = {
     generatedAt: "2026-08-19T00:00:00.000Z",
     reviewerVersion: AI_REVIEWER_VERSION,
-    models: [KIMI],
+    models: [GLM],
     caseCount: 2,
     skipped: [{ id: "atpm-x", ecosystem: "atpm", reason: "no staged AI review" }],
     truncated: 0,
-    byModel: [
-      summarizeModel(KIMI, [scoreRun(maliciousCase, { review: review(), usage: usage() })]),
-    ],
+    byModel: [summarizeModel(GLM, [scoreRun(maliciousCase, { review: review(), usage: usage() })])],
   };
 
   test("renders a comparison row per model", () => {
     const markdown = renderMarkdown(base);
-    expect(markdown).toContain(KIMI);
+    expect(markdown).toContain(GLM);
     expect(markdown).toContain("Expectation misses: none.");
     expect(markdown).toContain("skipped (no staged AI review): 1");
   });
@@ -381,7 +379,7 @@ describe("renderMarkdown", () => {
   });
 
   test("lists misses with their fixture id", () => {
-    const missed = summarizeModel(KIMI, [
+    const missed = summarizeModel(GLM, [
       scoreRun(maliciousCase, {
         review: review({
           risk: "low",
@@ -450,7 +448,7 @@ describe("runAiReviewModelComparison", () => {
     const result = await runAiReviewModelComparison({
       accountId: "acct",
       apiKey: "key",
-      models: [KIMI, GLM],
+      models: [GLM, DEEPSEEK],
       corpus: twoCaseCorpus,
       analyze: stubAnalyze((model, options) => {
         seen.push([model, options.scanId]);
@@ -459,12 +457,12 @@ describe("runAiReviewModelComparison", () => {
     });
 
     expect(seen).toEqual([
-      [KIMI, "ai-review-live-case-a"],
-      [KIMI, "ai-review-live-case-b"],
       [GLM, "ai-review-live-case-a"],
       [GLM, "ai-review-live-case-b"],
+      [DEEPSEEK, "ai-review-live-case-a"],
+      [DEEPSEEK, "ai-review-live-case-b"],
     ]);
-    expect(result.byModel.map((entry) => entry.model)).toEqual([KIMI, GLM]);
+    expect(result.byModel.map((entry) => entry.model)).toEqual([GLM, DEEPSEEK]);
     expect(result.caseCount).toBe(2);
     expect(result.truncated).toBe(0);
   });
@@ -473,18 +471,18 @@ describe("runAiReviewModelComparison", () => {
     const result = await runAiReviewModelComparison({
       accountId: "acct",
       apiKey: "key",
-      models: [KIMI, GLM],
+      models: [GLM, DEEPSEEK],
       corpus: twoCaseCorpus,
       // Both models escalate everything: right on the malicious case, a false
       // positive on the benign one.
       analyze: stubAnalyze(() => ({})),
     });
 
-    const [kimi, glm] = result.byModel;
-    expect(kimi.productCoverageRate).toBe(1);
-    expect(kimi.falsePositiveRate).toBe(1);
+    const [glm, deepseek] = result.byModel;
     expect(glm.productCoverageRate).toBe(1);
-    expect(glm.totalCostUsd).toBeLessThan(kimi.totalCostUsd);
+    expect(glm.falsePositiveRate).toBe(1);
+    expect(deepseek.productCoverageRate).toBe(1);
+    expect(deepseek.totalCostUsd).toBeLessThan(glm.totalCostUsd);
   });
 
   test("reports how many fixtures a limit dropped", async () => {
@@ -492,7 +490,7 @@ describe("runAiReviewModelComparison", () => {
     const result = await runAiReviewModelComparison({
       accountId: "acct",
       apiKey: "key",
-      models: [KIMI],
+      models: [GLM],
       corpus: twoCaseCorpus,
       limit: 1,
       analyze: stubAnalyze(() => ({})),
@@ -510,7 +508,7 @@ describe("runAiReviewModelComparison", () => {
     const result = await runAiReviewModelComparison({
       accountId: "acct",
       apiKey: "key",
-      models: [GLM],
+      models: [DEEPSEEK],
       corpus: twoCaseCorpus,
       offset: 1,
       analyze: stubAnalyze((_model, options) => {
@@ -530,7 +528,7 @@ describe("runAiReviewModelComparison", () => {
     const result = await runAiReviewModelComparison({
       accountId: "acct",
       apiKey: "key",
-      models: [GLM],
+      models: [DEEPSEEK],
       corpus: twoCaseCorpus,
       caseIds: ["case-b", "case-a"],
       direct: true,
@@ -552,7 +550,7 @@ describe("runAiReviewModelComparison", () => {
       runAiReviewModelComparison({
         accountId: "acct",
         apiKey: "key",
-        models: [GLM],
+        models: [DEEPSEEK],
         corpus: twoCaseCorpus,
         caseIds: ["missing"],
         analyze: stubAnalyze(() => ({})),
@@ -565,7 +563,7 @@ describe("runAiReviewModelComparison", () => {
     const result = await runAiReviewModelComparison({
       accountId: "acct",
       apiKey: "key",
-      models: [KIMI],
+      models: [GLM],
       corpus: twoCaseCorpus,
       analyze: async (_env, _models, options) => {
         if (options.scanId.endsWith("case-a")) throw new TypeError("provider payload");
@@ -594,7 +592,7 @@ describe("runAiReviewModelComparison", () => {
     await expect(
       runAiReviewModelComparison({
         corpus: twoCaseCorpus,
-        models: [KIMI, KIMI],
+        models: [GLM, GLM],
         analyze: async () => {},
       }),
     ).rejects.toThrow(/duplicate model/);

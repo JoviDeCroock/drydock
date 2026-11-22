@@ -32,8 +32,10 @@ export type { AiReview, AiReviewResult, SelectiveAiReviewOptions } from "./types
 export { displayedAiResult } from "./types";
 export { AI_REVIEWER_VERSION } from "./contract";
 
-// Reviewer model order: GLM handles every release with explicit high reasoning;
-// Kimi remains the operational fallback when GLM cannot complete a valid run.
+// Reviewer model order: DeepSeek V4.1 Flash handles every release; GLM 5.3 is
+// the operational fallback when DeepSeek cannot complete a valid run. Both run
+// at explicit high reasoning: GLM 5.3 otherwise defaults to `max`, which spends
+// the loop's output budget on reasoning.
 //
 // Every candidate must survive this loop's shape, not just answer a prompt: up
 // to MAX_AGENT_STEPS re-sends of a prefix that grows to the evidence cap. That
@@ -47,14 +49,16 @@ export { AI_REVIEWER_VERSION } from "./contract";
 // docs/ai-review-eval.md's live comparison before changing them; model routing
 // changes require bumping
 // AI_REVIEWER_VERSION with it.
-export const AI_MODEL = "@cf/zai-org/glm-5.3-flash";
-export const AI_FALLBACK_MODEL = "@cf/moonshotai/kimi-k2.7-code";
+export const AI_MODEL = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+export const AI_FALLBACK_MODEL = "@cf/zai-org/glm-5.3";
 export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL] as const;
 export const AI_REASONING_EFFORT = "high" as const;
 const AI_REVIEW_AGENT_NAME = "drydock-release-reviewer";
 
 export function aiReviewReasoningEffort(model: string): typeof AI_REASONING_EFFORT | undefined {
-  return model === AI_MODEL ? AI_REASONING_EFFORT : undefined;
+  return (AI_MODEL_CANDIDATES as readonly string[]).includes(model)
+    ? AI_REASONING_EFFORT
+    : undefined;
 }
 
 // The Agent SDK automatically copies `aiGatewayLogId` from a Workers AI
@@ -298,11 +302,14 @@ export async function analyzeWithAi(
       } catch (err) {
         const outcome = classifyAiAttemptError(err);
         const retryableServerError = outcome === "error" && isRetryableAiServerError(err);
+        const retiredModel = outcome === "error" && isRetiredAiModelError(err);
         const shouldRetry =
           (outcome === "capacity" || retryableServerError) &&
           attempt < AI_REVIEW_MAX_CAPACITY_ATTEMPTS;
         const shouldFallback =
-          !shouldRetry && (outcome !== "error" || retryableServerError) && hasFallback;
+          !shouldRetry &&
+          (outcome !== "error" || retryableServerError || retiredModel) &&
+          hasFallback;
         recordAiReviewAttempt(env, options, {
           model: candidateModel,
           attempt,
@@ -434,6 +441,25 @@ function isRetryableAiServerError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const statusCode = numericErrorField((err as Record<string, unknown>).statusCode);
   return statusCode !== undefined && statusCode >= 500;
+}
+
+// Workers AI rejects a deprecated model with internal code 5028 (as a 4xx), so
+// it reads as a plain `error`. Retrying cannot help, but the next candidate can:
+// on 2026-11-20 a catalog deprecation removed the primary and every review
+// stopped before reaching the fallback.
+const RETIRED_AI_MODEL_CODE = 5028;
+const RETIRED_AI_MODEL_PATTERN = /\b5028\b|model has been deprecated/i;
+
+function isRetiredAiModelError(err: unknown): boolean {
+  const fields = err && typeof err === "object" ? (err as Record<string, unknown>) : null;
+  const data =
+    fields?.data && typeof fields.data === "object"
+      ? (fields.data as Record<string, unknown>)
+      : null;
+  if (numericErrorField(data?.workersAIErrorCode ?? fields?.code) === RETIRED_AI_MODEL_CODE) {
+    return true;
+  }
+  return RETIRED_AI_MODEL_PATTERN.test(errorMessage(err));
 }
 
 function sleep(ms: number): Promise<void> {

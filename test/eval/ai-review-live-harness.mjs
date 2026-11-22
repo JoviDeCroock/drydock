@@ -68,15 +68,15 @@ import { loadCorpus } from "./harness.mjs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Workers AI list prices, USD per million tokens, from
-// https://developers.cloudflare.com/workers-ai/platform/pricing/ (checked
-// 2026-08-27). `cachedInput: null` means the model has no cached-input tier
+// https://developers.cloudflare.com/workers-ai/platform/pricing/ (routed rows
+// checked 2026-11-22, others 2026-08-27). `cachedInput: null` means the model has no cached-input tier
 // published — every step of the agent loop re-bills the whole prefix at the
 // full input rate, which is why a low `input` price is not a low cost.
 // Refresh these alongside any routing change; a stale table silently reorders
 // the comparison.
 export const MODEL_PRICING = {
-  "@cf/zai-org/glm-5.3-flash": { input: 0.15, output: 0.5, cachedInput: 0.03 },
-  "@cf/moonshotai/kimi-k2.7-code": { input: 0.95, output: 4.0, cachedInput: 0.19 },
+  "@cf/deepseek-ai/deepseek-v4.1-flash-1017": { input: 0.3, output: 1.2, cachedInput: 0.006 },
+  "@cf/zai-org/glm-5.3": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "@cf/deepseek-ai/deepseek-v4-pro-0813": { input: 1.32, output: 3.96, cachedInput: 0.044 },
   "@cf/zai-org/glm-5.2": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "@cf/qwen/qwen3.8-27b": { input: 0.45, output: 3.2, cachedInput: null },

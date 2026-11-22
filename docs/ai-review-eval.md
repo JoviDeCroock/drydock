@@ -25,7 +25,7 @@ The advisory reviewer combines a versioned evidence contract, private runtime tr
 | `AI_REVIEW_BOUNDS` | `server/lib/ai-review/contract.ts` | Shared per-field schema, prompt, and repair limits; `assessmentsCount` bounds deterministic assessments. |
 | `AI_FINDING_CATEGORIES` | `server/lib/ai-review/contract.ts` | Finding metadata; missing/unknown categories normalize to `other`. |
 | `MAX_AGENT_STEPS` | `server/lib/ai-review/contract.ts` | 100 steps; final step forces `submit_review`. |
-| `SUBMIT_CONTEXT_TOKENS` | `server/lib/ai-review/contract.ts` | Forces submission with room for another step below the smallest candidate window (Kimi: 262,144 tokens); lower this guard when lowering that window. |
+| `SUBMIT_CONTEXT_TOKENS` | `server/lib/ai-review/contract.ts` | Forces submission with room for another step below the smallest candidate window (DeepSeek V4.1 Flash and GLM 5.3: 1,048,576 tokens); also bounds per-review cost; lower this guard when lowering that window. |
 | `CONTEXT_CHARS_PER_TOKEN` | `server/lib/ai-review/contract.ts` | Estimates prompt tokens when provider input usage is absent. |
 | `MAX_TOTAL_TOOL_RESPONSE_CHARS` | `server/lib/ai-review/contract.ts` | Total package evidence budget, including coverage read. |
 | `COVERAGE_READ_CHARS` | `server/lib/ai-review/contract.ts` | Initial required-first coverage read budget. |
@@ -82,16 +82,16 @@ AI cannot downgrade deterministic findings: deterministic scoring runs first and
 
 | Candidate | Constant and owner | Configuration |
 | --- | --- | --- |
-| First | `AI_MODEL` in `server/lib/ai-review/index.ts` | GLM 5.3 Flash; `AI_REASONING_EFFORT`: high. |
-| Fallback | `AI_FALLBACK_MODEL` in `server/lib/ai-review/index.ts` | Kimi K2.7 Code; provider-default reasoning. |
+| First | `AI_MODEL` in `server/lib/ai-review/index.ts` | DeepSeek V4.1 Flash (`@cf/deepseek-ai/deepseek-v4.1-flash-1017`); `AI_REASONING_EFFORT`: high. |
+| Fallback | `AI_FALLBACK_MODEL` in `server/lib/ai-review/index.ts` | GLM 5.3 (`@cf/zai-org/glm-5.3`); `AI_REASONING_EFFORT`: high (its provider default is `max`). |
 
 1. Selection → Fixed before execution; model output never changes order. (`selectModelCandidates` in `server/lib/ai-review/index.ts`).
 2. Capacity/provider 5xx → One jittered retry. (`AI_REVIEW_MAX_CAPACITY_ATTEMPTS` in `server/lib/ai-review/index.ts`).
-3. 429, timeout, invalid completed run → Move directly to next candidate; do not rerun the same model. (`server/lib/ai-review/index.ts`).
+3. 429, timeout, retired model (Workers AI 5028), invalid completed run → Move directly to next candidate; do not rerun the same model. (`server/lib/ai-review/index.ts`).
 4. Context guard or last step → Offer only forced `submit_review`; missing usage falls back to prompt-length estimate. (`server/lib/ai-review/index.ts`).
 5. AI Gateway → Pin attempts to one and disable payload collection per request, including live harness; never layer Gateway retries or inference-step dynamic routing over the loop. (`server/lib/ai-review/gateway.ts`).
 6. Scan queue → One scan per batch, concurrency ten. (`wrangler.jsonc`).
-7. Sustained capacity → Keep aggregate text-generation below 80% of documented pool limit and Kimi below 60% of its model limit; lower concurrency or separate AI capacity queue before saturation. (Operator policy).
+7. Sustained capacity → Keep aggregate text-generation below 80% of documented pool limit and the fallback below 60% of its model limit; lower concurrency or separate AI capacity queue before saturation. (Operator policy).
 
 ### Traces and feedback
 
@@ -157,6 +157,7 @@ See [product analytics](./product-analytics.md) for positional slots and [securi
 | Required evidence missing | Early submit | Bounded rejection with unread paths | Continue normal reads or search infeasible remainders. |
 | Hosted fixture invocation throws | Transport/harness error | Explicit `harness_error`; paid comparison continues | Inspect error/completion rates without dropping denominator. |
 | Recorded contract stale | Behavioral change without new adjudicated outputs | Gate fails or reports current contract unrecorded | Regenerate/redact/adjudicate; never relabel history. |
+| Model retired from the catalog | Workers AI deprecation (5028; GLM 5.3 Flash and Kimi K2.7 Code on 2026-11-20) | Next candidate; `unavailable` when none remain | Replace the retired candidate and bump `AI_REVIEWER_VERSION`. |
 | Trace payload absent | Deliberate privacy controls | Metadata-only debugging | Use harness/recorded output; preserve controls. |
 
 ## Change checklist
