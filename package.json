@@ -61,7 +61,7 @@
     "better-auth": "^1.7.7",
     "diff": "^9.0.0",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.13.13",
+    "hono": "^4.13.16",
     "hoofd": "^1.7.3",
     "multiformats": "14.0.5",
     "preact": "^11.0.0",

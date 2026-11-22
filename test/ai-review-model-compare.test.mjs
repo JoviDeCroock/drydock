@@ -18,7 +18,7 @@ import {
 } from "./eval/ai-review-live-harness.mjs";
 import { AI_MODEL_CANDIDATES, AI_REVIEWER_VERSION } from "../server/lib/ai-review/index.ts";
 
-const GLM = "@cf/zai-org/glm-5.3";
+const INKLING = "@cf/thinkingmachines/inkling-2-small";
 const DEEPSEEK = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
 const QWEN_NO_CACHE = "@cf/qwen/qwen3.8-27b";
 
@@ -44,8 +44,8 @@ describe("model pricing table", () => {
 
 describe("estimateCost", () => {
   test("bills cached input at the cached rate", () => {
-    // 20k fresh @ $1.40/M + 80k cached @ $0.26/M + 3k out @ $4.40/M
-    expect(estimateCost(GLM, usage())).toBeCloseTo(0.028 + 0.0208 + 0.0132, 6);
+    // 20k fresh @ $0.30/M + 80k cached @ $0.10/M + 3k out @ $1.00/M
+    expect(estimateCost(INKLING, usage())).toBeCloseTo(0.006 + 0.008 + 0.003, 6);
   });
 
   test("bills the whole prefix at full rate when no cached tier is published", () => {
@@ -58,19 +58,19 @@ describe("estimateCost", () => {
     expect(qwen).toBeGreaterThan(deepseek * 5);
   });
 
-  test("prices DeepSeek V4.1 Flash below GLM 5.3 for an identical loop", () => {
-    expect(estimateCost(DEEPSEEK, usage())).toBeLessThan(estimateCost(GLM, usage()));
+  test("prices DeepSeek V4.1 Flash below Inkling 2 Small for an identical loop", () => {
+    expect(estimateCost(DEEPSEEK, usage())).toBeLessThan(estimateCost(INKLING, usage()));
   });
 
   test("never counts more cached tokens than billed input", () => {
-    const cost = estimateCost(GLM, usage({ inputTokens: 1_000, cachedInputTokens: 50_000 }));
+    const cost = estimateCost(INKLING, usage({ inputTokens: 1_000, cachedInputTokens: 50_000 }));
     expect(cost).toBeGreaterThan(0);
-    expect(cost).toBeCloseTo(1_000 * (0.26 / 1e6) + 3_000 * (4.4 / 1e6), 6);
+    expect(cost).toBeCloseTo(1_000 * (0.1 / 1e6) + 3_000 * (1.0 / 1e6), 6);
   });
 
   test("returns null for an unpriced model or missing usage", () => {
     expect(estimateCost("@cf/unknown/model", usage())).toBeNull();
-    expect(estimateCost(GLM, null)).toBeNull();
+    expect(estimateCost(INKLING, null)).toBeNull();
   });
 });
 
@@ -152,7 +152,7 @@ function review(overrides = {}) {
     summary: "s",
     findings: [],
     requiresManualReview: true,
-    model: GLM,
+    model: INKLING,
     reviewerVersion: AI_REVIEWER_VERSION,
     ...overrides,
   };
@@ -302,7 +302,7 @@ describe("scoreRun", () => {
         steps: 6,
       },
     });
-    const summary = summarizeModel(GLM, [run]);
+    const summary = summarizeModel(INKLING, [run]);
 
     expect(run.usageAvailable).toBe(false);
     expect(summary.costCoverage).toBe(0);
@@ -329,7 +329,7 @@ describe("summarizeModel", () => {
   ];
 
   test("reports completion, catch, and false-positive rates separately", () => {
-    const summary = summarizeModel(GLM, runs);
+    const summary = summarizeModel(INKLING, runs);
     expect(summary.completionRate).toBeCloseTo(2 / 3, 6);
     expect(summary.invalidRate).toBeCloseTo(1 / 3, 6);
     expect(summary.productCoverageRate).toBeCloseTo(1 / 2, 6);
@@ -337,19 +337,19 @@ describe("summarizeModel", () => {
   });
 
   test("reports cached input share over the whole run, not per case", () => {
-    expect(summarizeModel(GLM, runs).cachedInputShare).toBeCloseTo(160_000 / 200_000, 6);
+    expect(summarizeModel(INKLING, runs).cachedInputShare).toBeCloseTo(160_000 / 200_000, 6);
   });
 
   test("excludes runs without usage from cost coverage and token averages", () => {
-    const summary = summarizeModel(GLM, runs);
+    const summary = summarizeModel(INKLING, runs);
     expect(summary.costCoverage).toBeCloseTo(2 / 3, 6);
     expect(summary.avgInputTokens).toBe(100_000);
     expect(summary.avgOutputTokens).toBe(3_000);
-    expect(summary.avgCostUsd).toBeCloseTo(estimateCost(GLM, usage()), 6);
+    expect(summary.avgCostUsd).toBeCloseTo(estimateCost(INKLING, usage()), 6);
   });
 
   test("leaves rates null rather than inventing a denominator", () => {
-    const summary = summarizeModel(GLM, [runs[0]]);
+    const summary = summarizeModel(INKLING, [runs[0]]);
     expect(summary.falsePositiveRate).toBeNull();
     expect(summary.productCoverageRate).toBe(1);
   });
@@ -359,16 +359,18 @@ describe("renderMarkdown", () => {
   const base = {
     generatedAt: "2026-08-19T00:00:00.000Z",
     reviewerVersion: AI_REVIEWER_VERSION,
-    models: [GLM],
+    models: [INKLING],
     caseCount: 2,
     skipped: [{ id: "atpm-x", ecosystem: "atpm", reason: "no staged AI review" }],
     truncated: 0,
-    byModel: [summarizeModel(GLM, [scoreRun(maliciousCase, { review: review(), usage: usage() })])],
+    byModel: [
+      summarizeModel(INKLING, [scoreRun(maliciousCase, { review: review(), usage: usage() })]),
+    ],
   };
 
   test("renders a comparison row per model", () => {
     const markdown = renderMarkdown(base);
-    expect(markdown).toContain(GLM);
+    expect(markdown).toContain(INKLING);
     expect(markdown).toContain("Expectation misses: none.");
     expect(markdown).toContain("skipped (no staged AI review): 1");
   });
@@ -379,7 +381,7 @@ describe("renderMarkdown", () => {
   });
 
   test("lists misses with their fixture id", () => {
-    const missed = summarizeModel(GLM, [
+    const missed = summarizeModel(INKLING, [
       scoreRun(maliciousCase, {
         review: review({
           risk: "low",
@@ -448,7 +450,7 @@ describe("runAiReviewModelComparison", () => {
     const result = await runAiReviewModelComparison({
       accountId: "acct",
       apiKey: "key",
-      models: [GLM, DEEPSEEK],
+      models: [INKLING, DEEPSEEK],
       corpus: twoCaseCorpus,
       analyze: stubAnalyze((model, options) => {
         seen.push([model, options.scanId]);
@@ -457,12 +459,12 @@ describe("runAiReviewModelComparison", () => {
     });
 
     expect(seen).toEqual([
-      [GLM, "ai-review-live-case-a"],
-      [GLM, "ai-review-live-case-b"],
+      [INKLING, "ai-review-live-case-a"],
+      [INKLING, "ai-review-live-case-b"],
       [DEEPSEEK, "ai-review-live-case-a"],
       [DEEPSEEK, "ai-review-live-case-b"],
     ]);
-    expect(result.byModel.map((entry) => entry.model)).toEqual([GLM, DEEPSEEK]);
+    expect(result.byModel.map((entry) => entry.model)).toEqual([INKLING, DEEPSEEK]);
     expect(result.caseCount).toBe(2);
     expect(result.truncated).toBe(0);
   });
@@ -471,18 +473,18 @@ describe("runAiReviewModelComparison", () => {
     const result = await runAiReviewModelComparison({
       accountId: "acct",
       apiKey: "key",
-      models: [GLM, DEEPSEEK],
+      models: [INKLING, DEEPSEEK],
       corpus: twoCaseCorpus,
       // Both models escalate everything: right on the malicious case, a false
       // positive on the benign one.
       analyze: stubAnalyze(() => ({})),
     });
 
-    const [glm, deepseek] = result.byModel;
-    expect(glm.productCoverageRate).toBe(1);
-    expect(glm.falsePositiveRate).toBe(1);
+    const [inkling, deepseek] = result.byModel;
+    expect(inkling.productCoverageRate).toBe(1);
+    expect(inkling.falsePositiveRate).toBe(1);
     expect(deepseek.productCoverageRate).toBe(1);
-    expect(deepseek.totalCostUsd).toBeLessThan(glm.totalCostUsd);
+    expect(deepseek.totalCostUsd).toBeLessThan(inkling.totalCostUsd);
   });
 
   test("reports how many fixtures a limit dropped", async () => {
@@ -490,7 +492,7 @@ describe("runAiReviewModelComparison", () => {
     const result = await runAiReviewModelComparison({
       accountId: "acct",
       apiKey: "key",
-      models: [GLM],
+      models: [INKLING],
       corpus: twoCaseCorpus,
       limit: 1,
       analyze: stubAnalyze(() => ({})),
@@ -563,7 +565,7 @@ describe("runAiReviewModelComparison", () => {
     const result = await runAiReviewModelComparison({
       accountId: "acct",
       apiKey: "key",
-      models: [GLM],
+      models: [INKLING],
       corpus: twoCaseCorpus,
       analyze: async (_env, _models, options) => {
         if (options.scanId.endsWith("case-a")) throw new TypeError("provider payload");
@@ -592,7 +594,7 @@ describe("runAiReviewModelComparison", () => {
     await expect(
       runAiReviewModelComparison({
         corpus: twoCaseCorpus,
-        models: [GLM, GLM],
+        models: [INKLING, INKLING],
         analyze: async () => {},
       }),
     ).rejects.toThrow(/duplicate model/);

@@ -25,7 +25,7 @@ The advisory reviewer combines a versioned evidence contract, private runtime tr
 | `AI_REVIEW_BOUNDS` | `server/lib/ai-review/contract.ts` | Shared per-field schema, prompt, and repair limits; `assessmentsCount` bounds deterministic assessments. |
 | `AI_FINDING_CATEGORIES` | `server/lib/ai-review/contract.ts` | Finding metadata; missing/unknown categories normalize to `other`. |
 | `MAX_AGENT_STEPS` | `server/lib/ai-review/contract.ts` | 100 steps; final step forces `submit_review`. |
-| `SUBMIT_CONTEXT_TOKENS` | `server/lib/ai-review/contract.ts` | Forces submission with room for another step below the smallest candidate window (DeepSeek V4.1 Flash and GLM 5.3: 1,048,576 tokens); also bounds per-review cost; lower this guard when lowering that window. |
+| `SUBMIT_CONTEXT_TOKENS` | `server/lib/ai-review/contract.ts` | Forces submission with room for another step below the smallest candidate window (DeepSeek V4.1 Flash and Inkling 2 Small: 1,048,576 tokens); also bounds per-review cost; lower this guard when lowering that window. |
 | `CONTEXT_CHARS_PER_TOKEN` | `server/lib/ai-review/contract.ts` | Estimates prompt tokens when provider input usage is absent. |
 | `MAX_TOTAL_TOOL_RESPONSE_CHARS` | `server/lib/ai-review/contract.ts` | Total package evidence budget, including coverage read. |
 | `COVERAGE_READ_CHARS` | `server/lib/ai-review/contract.ts` | Initial required-first coverage read budget. |
@@ -83,7 +83,7 @@ AI cannot downgrade deterministic findings: deterministic scoring runs first and
 | Candidate | Constant and owner | Configuration |
 | --- | --- | --- |
 | First | `AI_MODEL` in `server/lib/ai-review/index.ts` | DeepSeek V4.1 Flash (`@cf/deepseek-ai/deepseek-v4.1-flash-1017`); `AI_REASONING_EFFORT`: high. |
-| Fallback | `AI_FALLBACK_MODEL` in `server/lib/ai-review/index.ts` | GLM 5.3 (`@cf/zai-org/glm-5.3`); `AI_REASONING_EFFORT`: high (its provider default is `max`). |
+| Fallback | `AI_FALLBACK_MODEL` in `server/lib/ai-review/index.ts` | Inkling 2 Small (`@cf/thinkingmachines/inkling-2-small`); `AI_REASONING_EFFORT`: high; different vendor from the first candidate. |
 
 1. Selection → Fixed before execution; model output never changes order. (`selectModelCandidates` in `server/lib/ai-review/index.ts`).
 2. Capacity/provider 5xx → One jittered retry. (`AI_REVIEW_MAX_CAPACITY_ATTEMPTS` in `server/lib/ai-review/index.ts`).

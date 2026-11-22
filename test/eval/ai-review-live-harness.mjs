@@ -76,7 +76,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // the comparison.
 export const MODEL_PRICING = {
   "@cf/deepseek-ai/deepseek-v4.1-flash-1017": { input: 0.3, output: 1.2, cachedInput: 0.006 },
-  "@cf/zai-org/glm-5.3": { input: 1.4, output: 4.4, cachedInput: 0.26 },
+  "@cf/thinkingmachines/inkling-2-small": { input: 0.3, output: 1.0, cachedInput: 0.1 },
   "@cf/deepseek-ai/deepseek-v4-pro-0813": { input: 1.32, output: 3.96, cachedInput: 0.044 },
   "@cf/zai-org/glm-5.2": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "@cf/qwen/qwen3.8-27b": { input: 0.45, output: 3.2, cachedInput: null },
