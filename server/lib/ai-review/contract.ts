@@ -183,7 +183,7 @@ export function buildReviewerSystemPrompt(ecosystem: string | undefined): string
 // context guard below are what bound a run.
 export const MAX_AGENT_STEPS = 100;
 // Once a step's input passes this, the next step may only submit_review. It sits
-// well under the smallest candidate window (DeepSeek V4.1 Flash and GLM 5.3,
+// well under the smallest candidate window (DeepSeek V4.1 Flash and Inkling 2 Small,
 // 1,048,576 tokens each) with room for one more step's tool result and
 // reasoning, so a long run ends in a review instead of a context-overflow error
 // that would degrade it to `unavailable`. It also bounds per-review cost, so it

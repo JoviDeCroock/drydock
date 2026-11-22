@@ -32,10 +32,10 @@ export type { AiReview, AiReviewResult, SelectiveAiReviewOptions } from "./types
 export { displayedAiResult } from "./types";
 export { AI_REVIEWER_VERSION } from "./contract";
 
-// Reviewer model order: DeepSeek V4.1 Flash handles every release; GLM 5.3 is
-// the operational fallback when DeepSeek cannot complete a valid run. Both run
-// at explicit high reasoning: GLM 5.3 otherwise defaults to `max`, which spends
-// the loop's output budget on reasoning.
+// Reviewer model order: DeepSeek V4.1 Flash handles every release; Inkling 2
+// Small (a different vendor, so one provider's outage or retirement cannot take
+// out both) is the operational fallback when DeepSeek cannot complete a valid
+// run. Both run at explicit high reasoning.
 //
 // Every candidate must survive this loop's shape, not just answer a prompt: up
 // to MAX_AGENT_STEPS re-sends of a prefix that grows to the evidence cap. That
@@ -50,7 +50,7 @@ export { AI_REVIEWER_VERSION } from "./contract";
 // changes require bumping
 // AI_REVIEWER_VERSION with it.
 export const AI_MODEL = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
-export const AI_FALLBACK_MODEL = "@cf/zai-org/glm-5.3";
+export const AI_FALLBACK_MODEL = "@cf/thinkingmachines/inkling-2-small";
 export const AI_MODEL_CANDIDATES = [AI_MODEL, AI_FALLBACK_MODEL] as const;
 export const AI_REASONING_EFFORT = "high" as const;
 const AI_REVIEW_AGENT_NAME = "drydock-release-reviewer";

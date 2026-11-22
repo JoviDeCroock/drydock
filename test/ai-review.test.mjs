@@ -197,7 +197,7 @@ describe("AI review prompt selection", () => {
 describe("ai review orchestration", () => {
   test("pins the reviewer model order", () => {
     expect(AI_MODEL).toBe("@cf/deepseek-ai/deepseek-v4.1-flash-1017");
-    expect(AI_FALLBACK_MODEL).toBe("@cf/zai-org/glm-5.3");
+    expect(AI_FALLBACK_MODEL).toBe("@cf/thinkingmachines/inkling-2-small");
     expect(AI_MODEL_CANDIDATES).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
     expect(AI_REASONING_EFFORT).toBe("high");
     expect(aiReviewReasoningEffort(AI_MODEL)).toBe("high");
