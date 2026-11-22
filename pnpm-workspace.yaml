@@ -5,6 +5,11 @@
 # those constants from the package root.
 overrides:
   kysely: ^0.28.17
+  # @modelcontextprotocol/sdk (via agents) permits hono and @hono/node-server releases
+  # with the mount/router/csrf/validator and path/ECONNRESET advisories fixed in
+  # hono 4.13.16 and @hono/node-server 2.1.6.
+  hono: ^4.13.16
+  "@hono/node-server": ^2.1.6
   # @esbuild-kit is deprecated and still pins an esbuild version with GHSA-67mh-4wv8-2f99.
   "@esbuild-kit/core-utils>esbuild": 0.25.12
   # Vite's PostCSS range otherwise resolves to versions with source-map path traversal advisories.
