@@ -8,7 +8,7 @@ Publisher setup inspects an installed repository and prepares an independently r
 | --- | --- | --- | --- |
 | Settings → Integrations → GitHub App → Prepare a release workflow | `src/features/publisher-setup/PublisherSetup.tsx` | Organization owner/admin | `test/workers/publisher-setup-jobs.test.ts` |
 | Setup checks for coding agents | `src/features/publisher-setup/agent-summary.ts` | Maintainer copies session-bound checks | `test/publisher-setup-agent-summary.test.ts` |
-| Model: GLM 5.3 Flash (`AI_MODEL`) | `server/lib/ai-review/index.ts` | Setup agents | `test/publisher-setup-agent.test.ts` |
+| Model: DeepSeek V4.1 Flash (`AI_MODEL`) | `server/lib/ai-review/index.ts` | Setup agents | `test/publisher-setup-agent.test.ts` |
 | Inspection and PR writes | `server/lib/github-app/setup-api.ts` | Authorized job | `test/publisher-setup.test.ts` |
 | Investigation, implementation, judge | `server/lib/github-app/setup-agent.ts` | Durable job; native function tools | `test/publisher-setup-agent.test.ts` |
 | Private workspace | `server/lib/github-app/setup-agent-tools.ts` | Drafter; judge read-only | `test/publisher-setup-agent-tools.test.ts` |
@@ -159,7 +159,7 @@ Static checks cannot prove arbitrary script semantics; judge and maintainer revi
 Owner: `server/lib/github-app/setup-jobs.ts` and `server/lib/github-app/setup-api.ts`.
 
 1. Durable turn: Load private state; model/tools run on local copy; save transcript/workspace atomically before checkpoint. Failed call cannot persist half a turn.
-2. Native context: Preserve GLM reasoning bytes/order in expected native field across tool turns; never mix with visible assistant text.
+2. Native context: Preserve model reasoning bytes/order in expected native field across tool turns; never mix with visible assistant text.
 3. Workflow: Parameters/results contain opaque job IDs and completion metadata only; never source/conversations.
 4. Storage: Organization-scoped private R2: source, proposed files, transcripts, tools, feedback, verdicts. D1: request/authorization metadata, safe status/failure codes and expiry.
 5. Deletion: Account/organization deletion and scheduled retention sweep remove private data; late writes cannot revive revoked/expired/deleted jobs.

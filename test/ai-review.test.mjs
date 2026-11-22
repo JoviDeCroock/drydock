@@ -196,18 +196,19 @@ describe("AI review prompt selection", () => {
 
 describe("ai review orchestration", () => {
   test("pins the reviewer model order", () => {
-    expect(AI_MODEL).toBe("@cf/zai-org/glm-5.3-flash");
-    expect(AI_FALLBACK_MODEL).toBe("@cf/moonshotai/kimi-k2.7-code");
+    expect(AI_MODEL).toBe("@cf/deepseek-ai/deepseek-v4.1-flash-1017");
+    expect(AI_FALLBACK_MODEL).toBe("@cf/zai-org/glm-5.3");
     expect(AI_MODEL_CANDIDATES).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
     expect(AI_REASONING_EFFORT).toBe("high");
     expect(aiReviewReasoningEffort(AI_MODEL)).toBe("high");
-    expect(aiReviewReasoningEffort(AI_FALLBACK_MODEL)).toBeUndefined();
+    expect(aiReviewReasoningEffort(AI_FALLBACK_MODEL)).toBe("high");
+    expect(aiReviewReasoningEffort("@cf/test/other")).toBeUndefined();
   });
-  test("uses GLM first for a clean low-signal release", () => {
+  test("uses the primary reviewer first for a clean low-signal release", () => {
     expect(selectModelCandidates(BASE_OPTIONS)).toEqual([AI_MODEL, AI_FALLBACK_MODEL]);
   });
 
-  test("keeps GLM first when deterministic findings are present", () => {
+  test("keeps the primary reviewer first when deterministic findings are present", () => {
     const options = {
       ...BASE_OPTIONS,
       ruleFindings: [aiFinding("high", "package.json")],
@@ -225,7 +226,7 @@ describe("ai review orchestration", () => {
     expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
-  test("keeps GLM first when lifecycle scripts change", () => {
+  test("keeps the primary reviewer first when lifecycle scripts change", () => {
     const options = {
       ...BASE_OPTIONS,
       packageJsonDiff: {
@@ -246,7 +247,7 @@ describe("ai review orchestration", () => {
     expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
-  test("keeps GLM first when dependencies change", () => {
+  test("keeps the primary reviewer first when dependencies change", () => {
     const options = {
       ...BASE_OPTIONS,
       packageJsonDiff: {
@@ -267,7 +268,7 @@ describe("ai review orchestration", () => {
     expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
-  test("keeps GLM first when entrypoints change", () => {
+  test("keeps the primary reviewer first when entrypoints change", () => {
     const options = {
       ...BASE_OPTIONS,
       packageJsonDiff: {
@@ -288,7 +289,7 @@ describe("ai review orchestration", () => {
     expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
-  test("keeps GLM first when no previous version is available", () => {
+  test("keeps the primary reviewer first when no previous version is available", () => {
     const options = {
       ...BASE_OPTIONS,
       previousVersionAvailable: false,
@@ -306,7 +307,7 @@ describe("ai review orchestration", () => {
     expect(selectModelCandidates(options)).toEqual(AI_MODEL_CANDIDATES);
   });
 
-  test("uses GLM first for a medium-signal release", () => {
+  test("uses the primary reviewer first for a medium-signal release", () => {
     const options = {
       ...BASE_OPTIONS,
       ruleFindings: [aiFinding("medium", "src/index.js")],
@@ -524,7 +525,7 @@ describe("ai review orchestration", () => {
     ]);
   });
 
-  test("keeps GLM first for medium-severity obfuscation", () => {
+  test("keeps the primary reviewer first for medium-severity obfuscation", () => {
     const options = {
       ...BASE_OPTIONS,
       ruleFindings: [{ ...aiFinding("medium", "src/index.js"), obfuscated: true }],
@@ -716,6 +717,55 @@ describe("ai review orchestration", () => {
 
     expect(calls.get("primary-reviewer")).toBe(1);
     expect(calls.get("fallback-reviewer")).toBe(1);
+    expect(ai.model).toBe("fallback-reviewer");
+  });
+
+  test.each([
+    [
+      "typed",
+      Object.assign(new Error("binding failed"), {
+        statusCode: 400,
+        data: { workersAIErrorCode: 5028 },
+      }),
+    ],
+    [
+      "REST-shaped",
+      Object.assign(
+        new Error(
+          'Workers AI API error (400 Bad Request): {"errors":[{"code":5028,"message":"AiError: Model has been deprecated: @cf/x was deprecated on 2026-11-20."}]}',
+        ),
+        { statusCode: 400 },
+      ),
+    ],
+  ])("a %s retired-model error moves directly to the fallback model", async (_shape, error) => {
+    const calls = new Map();
+    const modelFactory = (model) =>
+      mockModel(async () => {
+        calls.set(model, (calls.get(model) ?? 0) + 1);
+        if (model === "primary-reviewer") throw error;
+        return generateResult(
+          [
+            {
+              type: "tool-call",
+              toolCallId: "submit-1",
+              toolName: "submit_review",
+              input: JSON.stringify(VALID_REVIEW),
+            },
+          ],
+          "tool-calls",
+        );
+      });
+
+    const { review: ai } = await analyzeWithAi(
+      {},
+      ["primary-reviewer", "fallback-reviewer"],
+      BASE_OPTIONS,
+      modelFactory,
+    );
+
+    expect(calls.get("primary-reviewer")).toBe(1);
+    expect(calls.get("fallback-reviewer")).toBe(1);
+    expect(ai.status).toBe("complete");
     expect(ai.model).toBe("fallback-reviewer");
   });
 

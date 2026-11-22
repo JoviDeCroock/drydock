@@ -191,7 +191,7 @@ async function setupAgentModel(env: Cloudflare.Env, cacheSessionId: string, agen
   const binding = {
     run: (model: string, input: unknown, options?: Parameters<typeof isolated.run>[2]) => {
       if (!isRecord(input)) return isolated.run(model, input, options);
-      // Provider v4 emits `reasoning`; GLM's template reads `reasoning_content`.
+      // Provider v4 emits `reasoning`; DeepSeek and GLM templates read `reasoning_content`.
       // Preserve the exact bytes/order without mixing private context into visible text.
       const messages = Array.isArray(input.messages)
         ? input.messages.map((message: unknown) => {
@@ -212,9 +212,9 @@ async function setupAgentModel(env: Cloudflare.Env, cacheSessionId: string, agen
   return createWorkersAI({ binding, gateway: { id: AI_GATEWAY_ID } })(AI_MODEL, {
     extraHeaders: { ...AI_GATEWAY_POLICY_HEADERS, "cf-aig-skip-cache": "true" },
     sessionAffinity: await sha256Hex(`publisher-setup:${cacheSessionId}:${agent}:${AI_MODEL}`),
-    // The handoff only summarizes evidence already in context. At high or medium effort GLM
-    // spent the whole output budget (or the call timeout) reasoning and never emitted the plan;
-    // it ignores enable_thinking, so effort is the only lever.
+    // The handoff only summarizes evidence already in context. At high or medium effort GLM 5.3
+    // Flash spent the whole output budget (or the call timeout) reasoning and never emitted the
+    // plan; it ignored enable_thinking, so effort is the only portable lever.
     reasoning_effort: agent === "handoff" ? "low" : "high",
     chat_template_kwargs: { clear_thinking: false },
   });
@@ -358,7 +358,7 @@ Current server work budget for this phase (supersedes earlier budget messages; d
       usage: { input: result.usage.inputTokens, output: result.usage.outputTokens },
     });
   }
-  // GLM occasionally reasons until the output cap without calling a tool. One such turn is
+  // Reasoning models occasionally reason until the output cap without calling a tool. One such turn is
   // charged and retried with a correction instead of ending a long job.
   const overran =
     result.finishReason === "length" &&

@@ -127,7 +127,7 @@ function clip(value: string, max: number): string {
 }
 
 /**
- * Model-written prose with a hard limit. GLM cannot hit a character limit: with the exact
+ * Model-written prose with a hard limit. GLM 5.3 Flash could not hit a character limit: with the exact
  * overshoot in the error it still trimmed ~50 characters per retry and once spent 18 turns
  * resubmitting. This text is only presented, so the server shortens it instead of refusing.
  */
