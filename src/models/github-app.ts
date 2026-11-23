@@ -28,6 +28,8 @@ export const GATE_STALE_REVIEW_MESSAGES: Record<string, string> = {
     "The workflow run was re-run after this review, so approving it would release bytes nobody reviewed.",
   artifacts_changed:
     "The run's artifacts changed after this review, so approving it would release bytes nobody reviewed.",
+  tag_moved:
+    "The release tag was moved or deleted after this review, so it no longer names the commit that was reviewed.",
   review_unbound:
     "This review did not record which run attempt and artifacts it covered, so it cannot be approved.",
 };

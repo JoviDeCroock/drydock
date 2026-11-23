@@ -22,6 +22,9 @@ export const INCIDENT_CASE_PATHS = [
 
 export type IncidentCasePath = (typeof INCIDENT_CASE_PATHS)[number];
 
+/** Incident write-ups with no live diff pair (the releases left the registry). */
+export const INCIDENT_REPLAY_PATHS = ["/incidents/trusted-publishing-november-2026"] as const;
+
 /**
  * Packages whose version-less diff page is listed in the sitemap.
  *

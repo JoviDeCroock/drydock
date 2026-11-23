@@ -45,6 +45,11 @@ export interface ScanPipelineOptions extends ScanInput {
    * and the reviewed artifact bytes were downloaded from that run.
    */
   gateContext?: WorkflowGateIntent;
+  /**
+   * Release-process findings the workflow-gate job read from GitHub about the
+   * gated run's commit and tag (`server/lib/workflow-gates/release-source.ts`).
+   */
+  gateReleaseFindings?: Finding[];
   // Adapters parse their own input shape off this object (e.g. the PyPI adapter
   // reads `manifest`/`artifacts`), so allow extra keys to flow through untyped.
   [key: string]: unknown;
@@ -109,7 +114,13 @@ export async function runScanPipeline<TInput, TBroker extends AdapterBroker>(
             throw new ScanPreconditionError("staged_release_identity_changed");
           }
         }
-        return collectReleaseFingerprintFindings(db, identity, resolved, adapter.id);
+        const fingerprint = await collectReleaseFingerprintFindings(
+          db,
+          identity,
+          resolved,
+          adapter.id,
+        );
+        return [...fingerprint, ...(input.gateReleaseFindings ?? [])];
       },
     );
     const aiFindings = await maybeRunAiReview({

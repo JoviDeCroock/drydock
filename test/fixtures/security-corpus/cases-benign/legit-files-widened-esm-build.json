@@ -1,0 +1,74 @@
+{
+  "id": "legit-files-widened-esm-build",
+  "title": "Release widens files to publish a new ESM build the exports map loads (benign hard-negative)",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-build-infrastructure",
+  "source": "synthetic",
+  "intent": "Adding a published build directory that a declared entrypoint loads is routine. package-json.files-widened may note it at low, but the release must stay below medium.",
+  "previousPackageJson": {
+    "name": "csv-lite",
+    "version": "2.1.0",
+    "main": "dist/index.js",
+    "files": ["dist"]
+  },
+  "stagedPackageJson": {
+    "name": "csv-lite",
+    "version": "2.2.0",
+    "main": "dist/index.js",
+    "exports": {
+      ".": {
+        "import": "./esm/index.mjs",
+        "require": "./dist/index.js"
+      }
+    },
+    "files": ["dist", "esm"]
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 77,
+      "sha256": "6bc030276c065385f4a79b4a5f12b61e6eb31e761aa4ab11387092347846dec7",
+      "flags": [],
+      "textSample": "{\"name\":\"csv-lite\",\"version\":\"2.1.0\",\"main\":\"dist/index.js\",\"files\":[\"dist\"]}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 92,
+      "sha256": "7bd1b4280c428081279306c9323f6438694af2c9e2c2ec5d2cfdacf503ef2899",
+      "flags": [],
+      "textSample": "'use strict';\nexports.parse = function parse(input) {\n  return String(input).split(',');\n};\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 156,
+      "sha256": "30971bce9801b7b903c35b24bf68f6593631be03026a390f234054f209414b30",
+      "flags": [],
+      "textSample": "{\"name\":\"csv-lite\",\"version\":\"2.2.0\",\"main\":\"dist/index.js\",\"exports\":{\".\":{\"import\":\"./esm/index.mjs\",\"require\":\"./dist/index.js\"}},\"files\":[\"dist\",\"esm\"]}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 92,
+      "sha256": "7bd1b4280c428081279306c9323f6438694af2c9e2c2ec5d2cfdacf503ef2899",
+      "flags": [],
+      "textSample": "'use strict';\nexports.parse = function parse(input) {\n  return String(input).split(',');\n};\n"
+    },
+    {
+      "path": "esm/index.mjs",
+      "size": 68,
+      "sha256": "6558222bde89f01097310da983be2db792270bcbc9a361cc8f1b4315f5457490",
+      "flags": [],
+      "textSample": "export function parse(input) {\n  return String(input).split(',');\n}\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": [
+    {
+      "ruleId": "package-json.files-widened",
+      "severity": "low",
+      "file": "package.json"
+    }
+  ]
+}

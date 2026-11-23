@@ -19,6 +19,7 @@ import {
   packageDiffIndexSeo,
   packageDiffSeo,
   privacyPageSeo,
+  trustedPublishingReplaySeo,
 } from "../src/lib/seo";
 import { SITE_URL } from "../src/lib/seo-metadata";
 
@@ -26,6 +27,7 @@ const PUBLIC_ARTICLE_PATHS = [
   ...DISCOVERY_GUIDE_PATHS,
   ...INCIDENT_CASE_PATHS,
   incidentBenchmarkSeo.path,
+  trustedPublishingReplaySeo.path,
 ];
 
 describe("isPrerenderedRoute", () => {

@@ -383,6 +383,9 @@ function isReleaseScopedFinding(finding: {
     finding.ruleId === DETERMINISTIC_RULE_IDS.dependencyMajorBump ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffCredentialFileAdded ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.diffLargeNewFile ||
+    // Compares the baseline manifest's files field, so it is a delta by
+    // construction; the "files" key line itself often does not change.
+    finding.ruleId === DETERMINISTIC_RULE_IDS.packageJsonFilesWidened ||
     finding.ruleId === DETERMINISTIC_RULE_IDS.tarSuspiciousEntry,
   );
 }

@@ -117,7 +117,7 @@ The complete deterministic ruleset across all ecosystems. Scoring roles are decl
 
 `test/detection-rule-coverage.test.mjs` checks this table against the registries: IDs must match exactly, every rule needs a corpus fixture asserting it (or an exception in that test naming the unit-test layer), and fixtures may only assert registered IDs.
 
-Current exceptions: `stage.metadata-mismatch`, `stage.tarball-digest-mismatch` (`test/staged-artifact-integrity.test.mjs`), `release.source-drift` (`test/release-fingerprint.test.ts`), `vscode.metadata-mismatch`, `vscode.extension-dependency` (`test/vscode.test.mjs`).
+Current exceptions: `stage.metadata-mismatch`, `stage.tarball-digest-mismatch` (`test/staged-artifact-integrity.test.mjs`), `release.source-drift` (`test/release-fingerprint.test.ts`), `release.unprotected-commit`, `release.tag-mismatch` (`test/workflow-gate-release-source.test.ts`), `vscode.metadata-mismatch`, `vscode.extension-dependency` (`test/vscode.test.mjs`).
 
 | Rule | Registry | Scored as | Standing danger |
 | --- | --- | --- | --- |
@@ -155,12 +155,15 @@ Current exceptions: `stage.metadata-mismatch`, `stage.tarball-digest-mismatch` (
 | `install-script.lifecycle` | deterministic | anchor | yes |
 | `install-script.preinstall` | deterministic | anchor | yes |
 | `package-json.entrypoint-missing` | deterministic | anchor | no |
+| `package-json.files-widened` | deterministic | anchor | no |
 | `package-json.parse-failed` | deterministic | anchor | no |
 | `propagation.package-mutation` | deterministic | anchor | yes |
 | `propagation.registry-publish` | deterministic | anchor | yes |
 | `release.provenance-dropped` | deterministic | anchor | no |
 | `release.provenance-publisher-changed` | deterministic | anchor | no |
 | `release.source-drift` | deterministic | anchor | no |
+| `release.tag-mismatch` | deterministic | anchor | no |
+| `release.unprotected-commit` | deterministic | anchor | no |
 | `stage.metadata-mismatch` | deterministic | anchor | no |
 | `stage.tarball-digest-mismatch` | deterministic | anchor | no |
 | `tar.suspicious-entry` | deterministic | anchor | yes |

@@ -32,6 +32,7 @@ import {
 } from "./workflow-gates/prepare";
 import { combineRisk, type RiskLevel } from "./review";
 import { runScanPipeline } from "./scan/pipeline";
+import { type GateReleaseSource, releaseSourceFindings } from "./workflow-gates/release-source";
 import { classifyScanError, type WorkflowGateQueueMessage } from "./scan/job";
 
 // A release whose changed (release-delta) findings reach these levels is
@@ -257,7 +258,12 @@ export async function executeWorkflowGateJob(
     await discardGateScans(db, gate.id, organizationId, env.ARTIFACTS);
     reviewed = await reviewGatePackages(
       { env, executionCtx, db },
-      { gate, ownerUserId, packages: prepared.packages },
+      {
+        gate,
+        ownerUserId,
+        packages: prepared.packages,
+        releaseSource: prepared.releaseSource,
+      },
     );
   } catch (err) {
     // A per-package scan failed. Release the claim so a retry re-runs the whole
@@ -444,11 +450,18 @@ const GATE_PACKAGE_SCAN_CONCURRENCY = 3;
  */
 async function reviewGatePackages(
   ctx: { env: Cloudflare.Env; executionCtx: ExecutionContext; db: AppDb },
-  args: { gate: WorkflowGateRecord; ownerUserId: string; packages: PreparedGatePackage[] },
+  args: {
+    gate: WorkflowGateRecord;
+    ownerUserId: string;
+    packages: PreparedGatePackage[];
+    releaseSource: GateReleaseSource | null;
+  },
 ): Promise<ReviewedPackage[]> {
   const { env, executionCtx, db } = ctx;
   const { gate, ownerUserId, packages } = args;
   const organizationId = gate.organizationId;
+  // One run, one commit: every package in the batch carries the same findings.
+  const gateReleaseFindings = releaseSourceFindings(args.releaseSource);
 
   return mapWithConcurrency(packages, GATE_PACKAGE_SCAN_CONCURRENCY, async (pkg) => {
     const { candidate, packageAdapter } = pkg;
@@ -495,6 +508,9 @@ async function reviewGatePackages(
             environment: gate.environment,
           },
           ...candidate.pipelineInput,
+          // After the adapter input, so nothing derived from package bytes can
+          // replace what GitHub reported about the run.
+          gateReleaseFindings,
         },
       );
       return {

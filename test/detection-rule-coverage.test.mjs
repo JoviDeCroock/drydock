@@ -41,6 +41,10 @@ const CORPUS_COVERAGE_EXCEPTIONS = new Map([
   // Compares the release against the repository fingerprint; covered by
   // test/release-fingerprint.test.ts.
   ["release.source-drift", "release fingerprint comparison"],
+  // Read from GitHub about the gated run's commit and tag; covered by
+  // test/workflow-gate-release-source.test.ts.
+  ["release.unprotected-commit", "workflow-gate release source"],
+  ["release.tag-mismatch", "workflow-gate release source"],
   // Compare marketplace metadata and extension manifests outside the vsix
   // artifact fixtures; covered by test/vscode.test.mjs.
   ["vscode.metadata-mismatch", "marketplace metadata comparison"],

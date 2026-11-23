@@ -183,6 +183,11 @@ interface ScenarioOpts {
   // non-2xx makes the decision POST throw so the failure path can be exercised.
   decisionStatus?: number;
   runAttempt?: number;
+  /**
+   * GitHub answers for the release-source reads, keyed by path (and query)
+   * under the repository; each wins over the default run stub.
+   */
+  releaseSource?: Record<string, unknown>;
 }
 
 async function buildScenario(runId: number, opts: ScenarioOpts) {
@@ -228,6 +233,11 @@ async function buildScenario(runId: number, opts: ScenarioOpts) {
         token: "ghs_install_token",
         expires_at: "2099-01-01T00:00:00Z",
       });
+    }
+    const url = new URL(request.url);
+    const sourceKey = `${url.pathname.replace(/^\/repos\/[^/]+\/[^/]+/, "")}${url.search}`;
+    if (opts.releaseSource && Object.hasOwn(opts.releaseSource, sourceKey)) {
+      return Response.json(opts.releaseSource[sourceKey]);
     }
     const run = githubRunResponse(request, opts.runAttempt);
     if (run) return run;
@@ -570,6 +580,65 @@ describe("executeWorkflowGateJob", () => {
     });
     expect(persisted?.findings).toContainEqual(
       expect.objectContaining({ ruleId: "pypi.record-mismatch", severity: "high" }),
+    );
+  });
+
+  test("adds release-source findings when the run's tag no longer names the built commit", async () => {
+    const seeded = await seedGateForTest({
+      installationExternalId: "9290",
+      repositoryId: 72090,
+      runId: 17171,
+    });
+    const built = "d".repeat(40);
+    const moved = "e".repeat(40);
+    const mainTip = "f".repeat(40);
+    await buildScenario(17171, {
+      digestMatches: true,
+      releaseSource: {
+        "/actions/runs/17171": {
+          id: 17171,
+          run_attempt: 1,
+          head_sha: built,
+          head_branch: "v1.2.0",
+          event: "release",
+        },
+        "/git/ref/tags/v1.2.0": { object: { type: "commit", sha: moved } },
+        "": { default_branch: "main" },
+        "/branches?protected=true&per_page=11": [{ name: "main", commit: { sha: mainTip } }],
+        [`/compare/${mainTip}...${built}?per_page=1&page=2`]: { status: "diverged" },
+      },
+    });
+    const loaderMock = buildPypiLoader();
+    const ctx = buildCtxWithGateway();
+    const sandboxEnv = buildEnv(buildConfigBindings(), loaderMock.binding);
+    const db = createDb(env.DB);
+
+    await executeWorkflowGateJob(
+      sandboxEnv,
+      ctx,
+      { kind: "workflow_gate", organizationId: seeded.organizationId, gateId: seeded.gateId },
+      db,
+    );
+
+    const gate = await getGateForOrganization(db, seeded.organizationId, seeded.gateId);
+    expect(gate?.status).toBe("pending");
+    expect(gate?.reviewBinding?.releaseTag).toEqual({ name: "v1.2.0", commitSha: moved });
+    const reviewed = await gateEventMetadata(
+      seeded.organizationId,
+      seeded.gateId,
+      "github_workflow_gate.reviewed",
+    );
+    expect(reviewed?.recommendation).toBe("rejected");
+    const persisted = await getScan(db, gate!.scanId!, seeded.organizationId, env.ARTIFACTS);
+    expect(persisted?.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          ruleId: "release.tag-mismatch",
+          severity: "high",
+          file: "<release-process>",
+        }),
+        expect.objectContaining({ ruleId: "release.unprotected-commit", severity: "medium" }),
+      ]),
     );
   });
 

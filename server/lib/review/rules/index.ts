@@ -3,7 +3,7 @@ import type { DiffEntry } from "../diff";
 import type { PackageJsonDiff, PackageJsonSummary } from "../serialize";
 import type { FileRecord, Finding } from "../types";
 import { buildRuleContext, type DeterministicFindingOptions } from "./context";
-import { metadataFindings } from "./metadata";
+import { filesWidenedFindings, metadataFindings } from "./metadata";
 import { scriptFindings } from "./scripts";
 import { keyMaterialFindings } from "./key-material";
 import { binaryFindings } from "./binaries";
@@ -18,7 +18,7 @@ import { tarEntryFindings, type TarEntryFindingOptions } from "./tar-entries";
 // way that should invalidate cached scan reports. Stored alongside each finding
 // so historical reports can be traced back to the ruleset that produced them.
 // Lives here (not in a family module) because versioning spans every family.
-export const DETERMINISTIC_RULES_VERSION = "1.60.0";
+export const DETERMINISTIC_RULES_VERSION = "1.61.0";
 
 export { DETERMINISTIC_RULE_IDS, deterministicRuleIds } from "./rule-ids";
 export { safeJson } from "./helpers";
@@ -40,6 +40,7 @@ export function deterministicFindings(
     const ctx = buildRuleContext(files, diff, packageJsonSummary, options);
     return stampVersion([
       ...metadataFindings(ctx),
+      ...filesWidenedFindings(ctx),
       ...scriptFindings(ctx),
       ...keyMaterialFindings(ctx),
       ...binaryFindings(ctx),

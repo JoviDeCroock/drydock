@@ -22,6 +22,7 @@ export {
   packageDiffIndexSeo,
   packageDiffSeo,
   privacyPageSeo,
+  trustedPublishingReplaySeo,
 } from "./seo-metadata";
 export type { DiscoveryGuidePath, IncidentCasePath, PageSeoMetadata } from "./seo-metadata";
 

@@ -342,6 +342,7 @@ export async function claimGateReviewStart(
         artifactName: binding.artifactName,
         artifactNamePrefix: binding.artifactNamePrefix,
         artifacts: binding.artifacts,
+        ...(binding.releaseTag ? { releaseTag: binding.releaseTag } : {}),
       },
       updatedAt: now,
     })
