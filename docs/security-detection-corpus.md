@@ -140,6 +140,7 @@ Current exceptions: `stage.metadata-mismatch`, `stage.tarball-digest-mismatch` (
 | `diff.bin-added` | deterministic | anchor | no |
 | `diff.credential-file-added` | deterministic | anchor | no |
 | `diff.large-new-file` | deterministic | anchor | no |
+| `file.agent-config` | deterministic | anchor | no |
 | `file.control-bytes` | deterministic | anchor | no |
 | `file.embedded-zip` | deterministic | anchor | no |
 | `file.large-binary` | deterministic | anchor | no |
@@ -236,6 +237,7 @@ What each family fires on and leaves quiet, with the pinning fixture: [`detectio
 | Install-root positions are relative only | Absolute paths, `~`, `process.env.INIT_CWD`, `os.homedir()`, `require.resolve`, `module.paths`, unmodeled path functions, and hook-run shell files (`sh link.sh`) are not placed; they still fire when the source names `node_modules`. Read-outside-write-inside hooks also fire; a write into `node_modules/.cache` reads the same as rewriting a neighbour. The finding is a reviewer signal at high, never an automatic rejection. |
 | Behavior chains are regex co-occurrence | Credential + egress in one file escalates without proving flow; only key material is traced. |
 | Key-material trace is lexical and bounded | Ignores shadowing, callbacks, `push`/`join` accumulation, `Object.assign`, image-beacon `src`, `exec` of a variable command, other files; minifier renames break helper resolution; encrypt-then-also-exfiltrate is missed; budget exhaustion → no finding; gives up on JSX and TS generic arrows. |
+| Agent config is matched by known paths | `file.agent-config` knows Claude Code, Codex, Gemini CLI, Cursor/VS Code MCP and `.mcp.json` layouts; other agents' files raise only `file.secret-content` on a recognized secret. Hooks and MCP commands in shipped config are not analyzed as executable. |
 | JS credential access reads names, not values | `process.env.CONFIG` holding a secret, `const { env } = process`, and `.npmrc` reads raise nothing; `process.env[key]` loops (`EnvironmentPlugin`) and `spawn(…, { env: { ...process.env } })` are known false positives. |
 | Decode gate is per file | A decode in one module executed from another is missed. |
 | Prompt detection is phrase-based | Paraphrased, encoded, non-English, or > 4 KiB-split phrases fall to the advisory AI reviewer. |

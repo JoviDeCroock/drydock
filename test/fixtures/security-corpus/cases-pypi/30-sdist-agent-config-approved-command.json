@@ -1,0 +1,61 @@
+{
+  "id": "pypi-sdist-agent-config-approved-upload-password",
+  "title": "sdist packs the project's Claude Code local settings with an approved twine upload password",
+  "category": "secret-retention",
+  "intent": "sdists commonly pack the whole project directory, so .claude/settings.local.json ships with an approved `twine upload` command line holding its password. With no baseline every file is new, so the shared file.agent-config rule grades the inline credential critical. The value is synthetic and non-functional.",
+  "manifest": {
+    "schema": "drydock.release-artifacts.v1",
+    "ecosystem": "pypi",
+    "package": "demo-package",
+    "version": "1.2.0",
+    "artifacts": [
+      {
+        "path": "dist/demo_package-1.2.0.tar.gz",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "dist/demo_package-1.2.0.tar.gz",
+      "files": [
+        {
+          "path": "demo_package-1.2.0/PKG-INFO",
+          "size": 56,
+          "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+          "flags": [],
+          "textSample": "Metadata-Version: 2.3\nName: demo-package\nVersion: 1.2.0\n"
+        },
+        {
+          "path": "demo_package-1.2.0/pyproject.toml",
+          "size": 54,
+          "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+          "flags": [],
+          "textSample": "[project]\nname = \"demo-package\"\nversion = \"1.2.0\"\n"
+        },
+        {
+          "path": "demo_package-1.2.0/demo_package/__init__.py",
+          "size": 22,
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "flags": [],
+          "textSample": "__version__ = \"1.2.0\"\n"
+        },
+        {
+          "path": "demo_package-1.2.0/.claude/settings.local.json",
+          "size": 178,
+          "sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+          "flags": [],
+          "textSample": "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(python -m build)\",\n      \"Bash(TWINE_USERNAME=__token__ TWINE_PASSWORD=fixture-only-upload-pass twine upload dist/*)\"\n    ]\n  }\n}\n"
+        }
+      ]
+    }
+  ],
+  "expectedRisk": "critical",
+  "expectedFindings": [
+    {
+      "ruleId": "file.agent-config",
+      "severity": "critical",
+      "file": "sdist/.claude/settings.local.json"
+    }
+  ]
+}

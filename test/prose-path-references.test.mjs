@@ -33,6 +33,14 @@ const NON_REPO_PREFIXES = [
 ];
 const NON_REPO_PATHS = new Set([
   ".changeset/config.json", // publisher setup evidence in the repository under review
+  // Coding-agent config `file.agent-config` matches inside a reviewed package.
+  ".claude/.credentials.json",
+  ".claude/settings.local.json",
+  ".codeium/windsurf/mcp_config.json",
+  ".codex/auth.json",
+  ".gemini/oauth_creds.json",
+  ".gemini/settings.json",
+  ".kiro/settings/mcp.json",
 ]);
 
 // Tracked files plus untracked ones git would not ignore. A doc an agent just
