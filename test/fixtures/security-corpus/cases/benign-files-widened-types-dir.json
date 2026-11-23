@@ -1,0 +1,62 @@
+{
+  "id": "benign-files-widened-types-dir",
+  "title": "Release adds a types directory to the files allowlist",
+  "category": "benign-control",
+  "intent": "Hard negative for package-json.files-widened: widening files to publish a new declarations directory that no install hook or runtime entrypoint loads is routine and raises nothing.",
+  "previousPackageJson": {
+    "name": "csv-lite",
+    "version": "2.0.0",
+    "main": "dist/index.js",
+    "files": ["dist"]
+  },
+  "stagedPackageJson": {
+    "name": "csv-lite",
+    "version": "2.1.0",
+    "main": "dist/index.js",
+    "types": "types/index.d.ts",
+    "files": ["dist", "types"]
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 77,
+      "sha256": "5d9575735169bd1aab565a4fdf8a6f0ac55a3aa506bda328afbe0e3099484fa3",
+      "flags": [],
+      "textSample": "{\"name\":\"csv-lite\",\"version\":\"2.0.0\",\"main\":\"dist/index.js\",\"files\":[\"dist\"]}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 92,
+      "sha256": "7bd1b4280c428081279306c9323f6438694af2c9e2c2ec5d2cfdacf503ef2899",
+      "flags": [],
+      "textSample": "'use strict';\nexports.parse = function parse(input) {\n  return String(input).split(',');\n};\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 112,
+      "sha256": "28c1aa344995252c6eded6a9b6ee6f108c19faeb9ae32120a9a573b213504c7b",
+      "flags": [],
+      "textSample": "{\"name\":\"csv-lite\",\"version\":\"2.1.0\",\"main\":\"dist/index.js\",\"types\":\"types/index.d.ts\",\"files\":[\"dist\",\"types\"]}"
+    },
+    {
+      "path": "dist/index.js",
+      "size": 92,
+      "sha256": "7bd1b4280c428081279306c9323f6438694af2c9e2c2ec5d2cfdacf503ef2899",
+      "flags": [],
+      "textSample": "'use strict';\nexports.parse = function parse(input) {\n  return String(input).split(',');\n};\n"
+    },
+    {
+      "path": "types/index.d.ts",
+      "size": 56,
+      "sha256": "e3c6d101ea207406c42dadda951957205db8d9247c66453cedf3dfd06563245f",
+      "flags": [],
+      "textSample": "export declare function parse(input: string): string[];\n"
+    }
+  ],
+  "expectedRisk": "low",
+  "expectedFindings": [],
+  "expectedReleaseRisk": "low",
+  "expectedReleaseFindings": []
+}

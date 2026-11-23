@@ -10,7 +10,12 @@ import {
   type ContentArticleSection,
 } from "../../features/public-content/ContentArticle";
 import { packageDiffPath } from "../../lib/package-diff-path";
-import { incidentCaseSeoByPath, type IncidentCasePath, PageSeo } from "../../lib/seo";
+import {
+  incidentCaseSeoByPath,
+  type IncidentCasePath,
+  PageSeo,
+  trustedPublishingReplaySeo,
+} from "../../lib/seo";
 import { MarketingHeaderActions } from "../MarketingHeaderActions";
 import { useAuthedSession } from "../useAuthedSession";
 
@@ -111,6 +116,11 @@ export default function IncidentCasePage() {
       title: `${INCIDENT_CASES[incidentPath].packageName} ${INCIDENT_CASES[incidentPath].toVersion}`,
       description: incidentCaseSeoByPath[incidentPath].description,
     })),
+    {
+      href: trustedPublishingReplaySeo.path,
+      title: "bee-js and WPPConnect, November 2026",
+      description: trustedPublishingReplaySeo.description,
+    },
     {
       href: "/diff",
       title: "Diff a package",

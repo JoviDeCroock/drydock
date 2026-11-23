@@ -36,10 +36,22 @@ export function githubRunResponse(request: Request, runAttempt = 1): Response | 
  */
 export function githubRunStateResponse(
   request: Request,
-  state: { runAttempt?: number; artifacts?: StubRunArtifact[] } = {},
+  state: {
+    runAttempt?: number;
+    artifacts?: StubRunArtifact[];
+    /** Commit each tag names now; a missing name answers 404 (deleted tag). */
+    tags?: Record<string, string>;
+  } = {},
 ): Response | null {
   const run = githubRunResponse(request, state.runAttempt ?? 1);
   if (run) return run;
+  const tagRef = new URL(request.url).pathname.match(/\/git\/ref\/tags\/(.+)$/);
+  if (tagRef && state.tags) {
+    const sha = state.tags[decodeURIComponent(tagRef[1])];
+    return sha
+      ? Response.json({ object: { type: "commit", sha } })
+      : Response.json({ message: "Not Found" }, { status: 404 });
+  }
   if (!/\/actions\/runs\/\d+\/artifacts$/.test(new URL(request.url).pathname)) return null;
   const artifacts = state.artifacts ?? SEEDED_REVIEW_ARTIFACTS;
   return Response.json({

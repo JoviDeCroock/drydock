@@ -85,6 +85,11 @@
     <changefreq>yearly</changefreq>
     <priority>0.7</priority>
   </url>
+  <url>
+    <loc>https://drydock.org/incidents/trusted-publishing-november-2026</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.7</priority>
+  </url>
   <!-- Curated package diff pages. Each resolves to that package's latest
        published pair, so the entry stays valid across releases. Kept in
        sync with CURATED_DIFF_PACKAGES by test/prerender-routes.test.ts. -->

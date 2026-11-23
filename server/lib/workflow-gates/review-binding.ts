@@ -12,6 +12,7 @@ import { getInstallationAccessToken } from "../github-app/api";
 import { collectRunArtifacts, fetchWorkflowRunAttempt } from "../github-app/artifacts";
 import type { GithubAppConfig } from "../github-app/config";
 import { getInstallationExternalId } from "../github-app/persistence";
+import { resolveTagCommit } from "./release-source";
 import type { WorkflowGateRecord } from "../github-app/webhook-gates";
 
 /**
@@ -22,6 +23,7 @@ import type { WorkflowGateRecord } from "../github-app/webhook-gates";
 export const GATE_STALE_REVIEW_REASONS = [
   "run_attempt_changed",
   "artifacts_changed",
+  "tag_moved",
   // Reviewed before bindings were recorded; nothing to compare against.
   "review_unbound",
 ] as const;
@@ -46,6 +48,11 @@ export interface GateReviewBinding {
   artifactName: string | null;
   artifactNamePrefix: string | null;
   artifacts: ReviewedArtifactRef[];
+  /**
+   * The tag a tag-started run was built from and the commit it named at review.
+   * A tag moved or deleted before approval no longer names the reviewed release.
+   */
+  releaseTag?: { name: string; commitSha: string | null };
 }
 
 export function readGateReviewBinding(
@@ -67,13 +74,23 @@ export function readGateReviewBinding(
       digest: typeof digest === "string" ? digest : null,
     });
   }
+  const releaseTag = readReleaseTag(record.releaseTag);
   return {
     runAttempt,
     artifactName: typeof record.artifactName === "string" ? record.artifactName : null,
     artifactNamePrefix:
       typeof record.artifactNamePrefix === "string" ? record.artifactNamePrefix : null,
     artifacts,
+    ...(releaseTag ? { releaseTag } : {}),
   };
+}
+
+function readReleaseTag(value: unknown): GateReviewBinding["releaseTag"] | null {
+  if (!value || typeof value !== "object") return null;
+  const { name, commitSha } = value as Record<string, unknown>;
+  if (typeof name !== "string" || !name) return null;
+  if (commitSha !== null && typeof commitSha !== "string") return null;
+  return { name, commitSha };
 }
 
 /** Null when the current run state is exactly what was reviewed. */
@@ -123,5 +140,10 @@ export async function checkGateReviewBinding(
     binding.artifactNamePrefix ?? undefined,
   );
   const reason = compareGateReviewBinding(binding, { runAttempt, artifacts });
-  return reason ? { ok: false, reason } : { ok: true };
+  if (reason) return { ok: false, reason };
+  if (binding.releaseTag) {
+    const now = await resolveTagCommit(token, gate.repositoryFullName, binding.releaseTag.name);
+    if (now !== binding.releaseTag.commitSha) return { ok: false, reason: "tag_moved" };
+  }
+  return { ok: true };
 }

@@ -1,7 +1,15 @@
 import { firstMatchingLine } from "../../platform/text-utils";
 import { compilePackageFilesAllowlist } from "../package-files";
 import type { FileRecord, Finding } from "../types";
-import { containsSecretLikeText, firstSecretLine, safeJson, tag, testScope } from "./helpers";
+import { isRecord } from "../../platform/guards";
+import {
+  containsSecretLikeText,
+  firstJsonPropertyLine,
+  firstSecretLine,
+  safeJson,
+  tag,
+  testScope,
+} from "./helpers";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
 import { isDocumentationPath, isPythonMetadataPath, isTypeDeclarationPath } from "./file-types";
 import { normalizeCodeForScanning } from "./normalize";
@@ -120,15 +128,25 @@ export function metadataFindings(ctx: RuleContext): Finding[] {
 }
 
 function filesOutsideAllowlist(ctx: RuleContext): FileRecord[] {
+  const allowlist = stagedFilesAllowlist(ctx);
+  const present = ctx.files.filter((file) => ctx.diffByPath.get(file.path)?.status !== "removed");
+  const outside = allowlist?.outsidePaths(present.map((file) => file.path));
+  return outside ? present.filter((file) => outside.has(file.path)) : [];
+}
+
+// The staged manifest's allowlist, optionally with its `files` field swapped
+// for another one so two allowlists differ only in `files`.
+function stagedFilesAllowlist(ctx: RuleContext, filesOverride?: string[]) {
   const bundledManifests = new Map<string, string>();
   for (const file of ctx.files) {
     if (file.textSample && /^node_modules\/.*\/package\.json$/i.test(file.path)) {
       bundledManifests.set(file.path.toLowerCase(), file.textSample);
     }
   }
-  const allowlist = compilePackageFilesAllowlist(
-    ctx.packageJson,
-    ctx.packageJsonFile?.textSample ? safeJson(ctx.packageJsonFile.textSample) : null,
+  const raw = ctx.packageJsonFile?.textSample ? safeJson(ctx.packageJsonFile.textSample) : null;
+  return compilePackageFilesAllowlist(
+    filesOverride ? { ...ctx.packageJson, files: filesOverride } : ctx.packageJson,
+    filesOverride && isRecord(raw) ? { ...raw, files: filesOverride } : raw,
     {
       packedManifest: (path) => {
         const text = bundledManifests.get(path);
@@ -136,9 +154,82 @@ function filesOutsideAllowlist(ctx: RuleContext): FileRecord[] {
       },
     },
   );
-  const present = ctx.files.filter((file) => ctx.diffByPath.get(file.path)?.status !== "removed");
-  const outside = allowlist?.outsidePaths(present.map((file) => file.path));
-  return outside ? present.filter((file) => outside.has(file.path)) : [];
+}
+
+/**
+ * A release whose `files` change newly ships a file that an install hook or a
+ * declared entrypoint then runs (the bee-js 13.3.0 shape: `files` gained
+ * `scripts` so the tarball now carried the loader its new postinstall ran).
+ *
+ * "Newly shipped" means added in this release AND outside the allowlist the
+ * staged manifest would have had with the baseline's `files`, so a new `bin`
+ * or `main` target (always packed regardless of `files`) is not credited to a
+ * `files` change. Adding a published directory is routine, so only reach makes
+ * this a finding: install-hook reach is medium (it runs on every consumer that
+ * takes the dependency), entrypoint-only reach is low context.
+ */
+export function filesWidenedFindings(ctx: RuleContext): Finding[] {
+  // npm-packlist semantics; a non-npm artifact carrying a root package.json
+  // does not pack by its `files` field.
+  if (ctx.entrypointResolution !== "npm") return [];
+  const previousManifest = ctx.previousByPath.get("package.json")?.textSample;
+  const previous = previousManifest ? safeJson(previousManifest) : null;
+  if (!isRecord(previous) || !Array.isArray(previous.files)) return [];
+  const previousFiles = previous.files.filter(
+    (entry): entry is string => typeof entry === "string",
+  );
+  const stagedFiles = ctx.packageJson?.files;
+  if (
+    Array.isArray(stagedFiles) &&
+    JSON.stringify(stagedFiles) === JSON.stringify(previous.files)
+  ) {
+    return [];
+  }
+  // An unparseable or empty baseline `files` packs everything; nothing is newly allowed.
+  const baselineAllowlist = stagedFilesAllowlist(ctx, previousFiles);
+  if (!baselineAllowlist) return [];
+  const stagedAllowlist = stagedFilesAllowlist(ctx);
+
+  const added = ctx.files.filter((file) => ctx.diffByPath.get(file.path)?.status === "added");
+  const outsideBaseline = baselineAllowlist.outsidePaths(added.map((file) => file.path));
+  const outsideStaged = stagedAllowlist?.outsidePaths(added.map((file) => file.path));
+  const installReached: string[] = [];
+  const entrypointReached: string[] = [];
+  for (const file of added) {
+    if (!outsideBaseline.has(file.path) || outsideStaged?.has(file.path)) continue;
+    const reachPath = normalizeReachabilityPath(file.path);
+    if (ctx.installReachable.has(reachPath)) installReached.push(file.path);
+    else if (ctx.consumerReachable.has(reachPath)) entrypointReached.push(file.path);
+  }
+  const reached = installReached.length ? installReached : entrypointReached;
+  if (!reached.length) return [];
+
+  const previousSet = new Set(previousFiles);
+  const addedEntries = Array.isArray(stagedFiles)
+    ? stagedFiles.filter((entry) => !previousSet.has(entry))
+    : [];
+  const change = Array.isArray(stagedFiles)
+    ? addedEntries.length
+      ? // The manifest is hostile; evidence names a bounded slice of it.
+        `files gained ${addedEntries
+          .slice(0, 3)
+          .map((entry) => JSON.stringify(entry.slice(0, 80)))
+          .join(", ")}${addedEntries.length > 3 ? ` (+${addedEntries.length - 3} more)` : ""}`
+      : "files entries changed"
+    : "files field removed";
+  const more = reached.length > 1 ? ` (+${reached.length - 1} more)` : "";
+  const install = installReached.length > 0;
+  return [
+    tag("packageJsonFilesWidened", {
+      severity: install ? "medium" : "low",
+      file: "package.json",
+      line: firstJsonPropertyLine(ctx.packageJsonFile?.textSample, "files"),
+      evidence: `${change}; newly shipped ${reached[0].slice(0, 200)}${more} is ${install ? "run by a consumer install hook" : "reachable from a declared entrypoint"}`,
+      reason: install
+        ? "the release widened the published files to ship code an install hook runs on every consumer, which the previous tarball did not contain"
+        : "the release widened the published files to ship code a declared entrypoint loads, which the previous tarball did not contain",
+    }),
+  ];
 }
 
 // Documentation files outside the allowlist that could run as code. Docs are

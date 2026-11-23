@@ -1,4 +1,8 @@
-import { DISCOVERY_GUIDE_PATHS, INCIDENT_CASE_PATHS } from "./public-content-routes.ts";
+import {
+  DISCOVERY_GUIDE_PATHS,
+  INCIDENT_CASE_PATHS,
+  INCIDENT_REPLAY_PATHS,
+} from "./public-content-routes.ts";
 
 const HYDRATED_PRERENDER_ROUTES = [
   "/",
@@ -12,6 +16,7 @@ const HYDRATED_PRERENDER_ROUTES = [
   "/benchmarks/shai-hulud-nx",
   ...DISCOVERY_GUIDE_PATHS,
   ...INCIDENT_CASE_PATHS,
+  ...INCIDENT_REPLAY_PATHS,
 ] as const;
 
 const DASHBOARD_SHELL_ROUTES = [
@@ -36,6 +41,7 @@ export const ADDITIONAL_PRERENDER_ROUTES = [
   "/benchmarks/shai-hulud-nx",
   ...DISCOVERY_GUIDE_PATHS,
   ...INCIDENT_CASE_PATHS,
+  ...INCIDENT_REPLAY_PATHS,
   ...DASHBOARD_SHELL_ROUTES,
 ] as const;
 

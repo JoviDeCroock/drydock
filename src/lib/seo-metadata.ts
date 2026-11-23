@@ -41,6 +41,13 @@ export const incidentBenchmarkSeo: PageSeoMetadata = {
   path: "/benchmarks/shai-hulud-nx",
 };
 
+export const trustedPublishingReplaySeo: PageSeoMetadata = {
+  title: "bee-js and WPPConnect: trusted publishing with valid provenance | Drydock",
+  description:
+    "Two November 2026 npm releases shipped malware through the projects' own trusted-publishing workflows. What provenance showed, and what a Drydock workflow gate checks.",
+  path: "/incidents/trusted-publishing-november-2026",
+};
+
 export const discoveryGuideSeoByPath = {
   "/npm-staged-publishing": {
     title: "npm staged publishing security review | Drydock",
@@ -226,6 +233,7 @@ export function getPageSeoMetadata(pathname: string): PageSeoMetadata | undefine
   if (canonicalPathname === "/agents") return agentsPageSeo;
   if (canonicalPathname === "/privacy") return privacyPageSeo;
   if (canonicalPathname === incidentBenchmarkSeo.path) return incidentBenchmarkSeo;
+  if (canonicalPathname === trustedPublishingReplaySeo.path) return trustedPublishingReplaySeo;
   if (canonicalPathname === "/diff") return packageDiffSeo();
   if (canonicalPathname in discoveryGuideSeoByPath) {
     return discoveryGuideSeoByPath[canonicalPathname as DiscoveryGuidePath];

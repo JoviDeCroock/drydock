@@ -430,6 +430,8 @@ workflowGateRoutes.post("/workflow-gates/:gateId/retry", async (c) => {
 const STALE_APPROVAL_ERRORS: Record<GateStaleReviewReason, string> = {
   run_attempt_changed: "the workflow run was re-run since this review; retry the review or reject",
   artifacts_changed: "the run's artifacts changed since this review; retry the review or reject",
+  tag_moved:
+    "the release tag no longer names the commit this review covered; retry the review or reject",
   review_unbound:
     "this review did not record the run's artifacts; retry the review before approving, or reject",
 };

@@ -1360,6 +1360,53 @@ describe("github-app workflow-gate run binding", () => {
     expect(decisionCalls).toHaveLength(0);
   });
 
+  test("refuses approval once the release tag was moved after the review", async () => {
+    const { userId, organizationId, gateId, scanId } = await seedReviewedGate();
+    const reviewed = "a".repeat(40);
+    await createDb(env.DB)
+      .update(schema.githubWorkflowGates)
+      .set({
+        reviewedArtifactsJson: {
+          ...seededReviewBinding().reviewedArtifactsJson,
+          releaseTag: { name: "v2.4.1", commitSha: reviewed },
+        },
+      })
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+    const decisionCalls = stubRun({ tags: { "v2.4.1": "b".repeat(40) } });
+
+    const res = await decide(userId, gateId, scanId, "approved");
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "gate_review_stale",
+      reason: "tag_moved",
+      gate: { status: "pending", failureReason: "tag_moved" },
+    });
+    expect(await packageDecision(scanId)).toBeNull();
+    expect(decisionCalls).toHaveLength(0);
+    const stored = await getGateForOrganization(createDb(env.DB), organizationId, gateId);
+    expect(stored?.reviewBinding?.releaseTag).toEqual({ name: "v2.4.1", commitSha: reviewed });
+  });
+
+  test("approves when the release tag still names the reviewed commit", async () => {
+    const { userId, gateId, scanId } = await seedReviewedGate();
+    const reviewed = "a".repeat(40);
+    await createDb(env.DB)
+      .update(schema.githubWorkflowGates)
+      .set({
+        reviewedArtifactsJson: {
+          ...seededReviewBinding().reviewedArtifactsJson,
+          releaseTag: { name: "v2.4.1", commitSha: reviewed },
+        },
+      })
+      .where(eq(schema.githubWorkflowGates.id, gateId));
+    stubRun({ tags: { "v2.4.1": reviewed } });
+
+    const res = await decide(userId, gateId, scanId, "approved");
+
+    expect(res.status).toBe(200);
+  });
+
   test("refuses approval when the reviewed digest no longer matches", async () => {
     const { userId, gateId, scanId } = await seedReviewedGate();
     stubRun({ artifacts: [{ ...SEEDED_REVIEW_ARTIFACTS[0], digest: "sha256:other" }] });

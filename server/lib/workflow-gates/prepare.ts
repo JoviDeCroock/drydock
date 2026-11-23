@@ -7,6 +7,7 @@ import {
   WorkflowArtifactError,
   processReleaseBundleForGate,
 } from "../github-app/artifacts";
+import { getInstallationAccessToken } from "../github-app/api";
 import { type GithubAppConfig } from "../github-app/config";
 import {
   type WorkflowGateRecord,
@@ -20,6 +21,7 @@ import {
   getWorkflowGateAdapter,
   UnsupportedEcosystemError,
 } from "../ecosystems";
+import { type GateReleaseSource, inspectGateReleaseSource } from "./release-source";
 import { resolveBundleArtifact } from "./resolve";
 import type { GateReviewBinding } from "./review-binding";
 import type { ParsedGateArtifact, PreparedReleaseCandidate, WorkflowGateAdapter } from "./types";
@@ -44,6 +46,8 @@ export interface PreparedGateRelease {
   packages: PreparedGatePackage[];
   /** The run attempt and artifact listing these packages were derived from. */
   binding: GateReviewBinding;
+  /** What GitHub reports about the built commit and tag; null when unreadable. */
+  releaseSource: GateReleaseSource | null;
 }
 
 /**
@@ -133,6 +137,9 @@ export async function prepareReleaseCandidatesForGate(
     input,
   );
 
+  // Runs alongside the bundle download so the extra GitHub reads do not
+  // lengthen the review against GitHub's callback window. Never rejects.
+  const releaseSourceRead = readReleaseSource(input.config, installation.installationId, gate);
   try {
     const retainedSamples = new Map<string, string>();
     const bundle = await processReleaseBundleForGate(
@@ -155,6 +162,7 @@ export async function prepareReleaseCandidatesForGate(
       },
     );
     const packages = prepareBundlePackages(bundle.artifacts);
+    const releaseSource = await releaseSourceRead;
     return {
       gate,
       packages,
@@ -163,7 +171,9 @@ export async function prepareReleaseCandidatesForGate(
         artifactName: artifactName ?? null,
         artifactNamePrefix: artifactNamePrefix ?? null,
         artifacts: bundle.listedArtifacts,
+        ...(releaseSource?.tag ? { releaseTag: releaseSource.tag } : {}),
       },
+      releaseSource,
     };
   } catch (err) {
     const reason =
@@ -267,6 +277,40 @@ function prepareBundlePackages(resolved: ParsedGateArtifact[]): PreparedGatePack
     }
   }
   return packages;
+}
+
+/**
+ * Release-source evidence is advisory input to the review, never a reason to
+ * error the gate: a token or GitHub failure leaves it unknown.
+ */
+async function readReleaseSource(
+  config: GithubAppConfig,
+  installationExternalId: string,
+  gate: WorkflowGateRecord,
+): Promise<GateReleaseSource | null> {
+  try {
+    const token = await getInstallationAccessToken(config, installationExternalId);
+    const source = await inspectGateReleaseSource(
+      token,
+      gate.repositoryFullName,
+      gate.runId,
+      gate.reviewBinding?.releaseTag?.name,
+    );
+    emitOperationalEvent("info", "github_workflow_gate.release_source", {
+      gateId: gate.id,
+      organizationId: gate.organizationId,
+      outcome: source ? source.protection.status : "unavailable",
+      tagRun: Boolean(source?.tag),
+    });
+    return source;
+  } catch (err) {
+    emitOperationalEvent("warn", "github_workflow_gate.release_source_failed", {
+      gateId: gate.id,
+      organizationId: gate.organizationId,
+      error: describeOperationalError(err),
+    });
+    return null;
+  }
 }
 
 async function markGateErroredSafe(db: AppDb, gateId: string, reason: string): Promise<void> {

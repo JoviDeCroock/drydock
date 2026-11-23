@@ -91,6 +91,7 @@ export const DETERMINISTIC_RULES = {
   },
   packageJsonParseFailed: { id: "package-json.parse-failed", risk: "anchor" },
   packageJsonEntrypointMissing: { id: "package-json.entrypoint-missing", risk: "anchor" },
+  packageJsonFilesWidened: { id: "package-json.files-widened", risk: "anchor" },
   diffCredentialFileAdded: { id: "diff.credential-file-added", risk: "anchor" },
   diffLargeNewFile: { id: "diff.large-new-file", risk: "anchor" },
   diffBinAdded: { id: "diff.bin-added", risk: "anchor" },
@@ -128,6 +129,11 @@ export const DETERMINISTIC_RULES = {
     id: "release.provenance-publisher-changed",
     risk: "anchor",
   },
+  // Workflow-gate release source (server/lib/workflow-gates/release-source.ts):
+  // what GitHub says about the commit and tag the gated run built, read with
+  // the installation token before review.
+  releaseUnprotectedCommit: { id: "release.unprotected-commit", risk: "anchor" },
+  releaseTagMismatch: { id: "release.tag-mismatch", risk: "anchor" },
 } as const satisfies Record<string, DeterministicRuleSpec>;
 
 export type DeterministicRuleKey = keyof typeof DETERMINISTIC_RULES;

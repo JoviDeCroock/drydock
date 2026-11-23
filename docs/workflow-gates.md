@@ -47,7 +47,7 @@ All gate API paths below have prefix `/api/v1/github-app`; their owner is `serve
 | Pending failed batch without package decisions | Schedule retry (queue or inline); `202` | Retry route |
 | Run attempt or listed artifacts differ from the review binding, or no binding recorded | Approval `409 { code: "gate_review_stale", reason }`; gate stays pending with that `failureReason`; rejection and retry stay available | Decision route, before any package decision or step-up |
 | GitHub cannot confirm the run during approval | `503 { code: "gate_binding_unavailable" }`; nothing recorded | Decision route |
-| Stale review (`run_attempt_changed`, `artifacts_changed`, `review_unbound`) | Retry allowed even after package decisions; discards and re-reviews the batch | Retry route |
+| Stale review (`run_attempt_changed`, `artifacts_changed`, `tag_moved`, `review_unbound`) | Retry allowed even after package decisions; discards and re-reviews the batch | Retry route |
 | Superseded gate | `409` for every decision; read-only in the workbench | Decision route |
 | Already decided, wrong package, partial-batch approval, non-retryable batch | `409` | Decision/retry routes |
 
@@ -140,6 +140,20 @@ jobs:
       - run: npx @vscode/vsce publish --packagePath dist/*.vsix
 ```
 
+### Release source
+
+Read with the installation token while the gate is prepared (`server/lib/workflow-gates/release-source.ts`), added to every package scan in the batch as `release.*` findings on `<release-process>`, and pinned by `test/workflow-gate-release-source.test.ts`. Provenance names the commit a release was built from; these checks ask whether anything reviewed that commit.
+
+| Check | Contract |
+| --- | --- |
+| `release.unprotected-commit` | Run `head_sha` is not `identical`/`behind` any protected branch tip, compared by commit id so a same-named tag cannot stand in (GitHub `compare`, page 2 so the file list is omitted; 404 = no shared history = not contained). Medium. When the repository protects no branch the default branch is the only candidate, and missing it is low. An unprotected default branch does not count once any branch is protected. |
+| `release.tag-mismatch` | Run started from a tag (event `release`, or a `head_branch` that is a tag and not a branch) whose tag now names another commit, or a `release` run whose tag is gone. High. |
+| Approval re-check | The binding records `releaseTag: { name, commitSha }`; approval and delivery resolve the tag again and refuse with `tag_moved` when it changed. A GitHub error throws (fail closed), like the run re-check. A retried review keeps the earlier binding's tag, so a tag deleted after review stays a high mismatch. A transient tag-read failure on a `release` run binds the tag at the run's commit; a denied read (401/403) binds nothing. |
+| Unknown | Missing **Contents: read**, a GitHub error, a body over 1 MiB, more than 10 protected branches, or an unreadable run: no finding, `github_workflow_gate.release_source` / `release_source_failed`. A deleted tag on a first review of a non-`release` run cannot be told from a deleted branch and stays unknown. A writer who can create a branch matching a protection pattern can make the commit read as protected. |
+| Not checked | Whether the commit came through a pull request (release-tool version commits never do), signatures, or Environment reviewers: Drydock is the gate Environment's reviewer, and setup status checks its rule and admin bypass. |
+
+Replay of the November 2026 bee-js and WPPConnect releases: `/incidents/trusted-publishing-november-2026` (`src/pages/Incidents/TrustedPublishingReplay.tsx`).
+
 ### Workbench
 
 | Surface / limit | Contract | Owner |
@@ -180,7 +194,7 @@ jobs:
 | PyPI baseline over budget | Bounded download | `comparisonSkipped: "baseline-too-large"`; findings `unknown` package context; `manual_review` recommendation | Review with missing comparison disclosed |
 | PyPI baseline metadata absent / no comparable release | Supported empty comparison | No-baseline review | Inspect disclosed baseline reason |
 | PyPI acquisition throws | Unhandled download/parse failure | Review fails; no automatic approval | Inspect error, retry |
-| Approval refused as stale | Run re-run, artifact uploaded/deleted/expired, or digest changed after review | Gate pending with the stale `failureReason`; `github_workflow_gate.review_stale` | Retry the review, or reject |
+| Approval refused as stale | Run re-run, artifact uploaded/deleted/expired, digest changed, or release tag moved/deleted after review | Gate pending with the stale `failureReason`; `github_workflow_gate.review_stale` | Retry the review, or reject |
 | Approval withdrawn before delivery | Run changed between decision and callback | No callback; gate pending, package approvals cleared; `github_workflow_gate.approval_withdrawn` | Retry the review, or reject |
 | Deploying migration 0046 | Backfill marks every decided gate delivered, including ones whose callback was still being retried | Those retries become no-ops; GitHub holds such jobs until its callback window lapses and rejects them | Before deploying, let pending callback retries drain; afterwards re-run any held job |
 | Concurrent delivery withdrew the approval after GitHub accepted it | Two deliveries raced; gate shows pending though the job continued | Delivery is not stamped; `github_workflow_gate.delivery_raced_withdrawal` at error | Inspect the run in GitHub |

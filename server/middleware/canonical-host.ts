@@ -1,7 +1,11 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { isPackageDiffDetailPath, rewritePackageDiffMetadata } from "../lib/public-diff/page";
 import type { Bindings, Variables } from "../types";
-import { DISCOVERY_GUIDE_PATHS, INCIDENT_CASE_PATHS } from "../../src/lib/public-content-routes";
+import {
+  DISCOVERY_GUIDE_PATHS,
+  INCIDENT_CASE_PATHS,
+  INCIDENT_REPLAY_PATHS,
+} from "../../src/lib/public-content-routes";
 
 type AppEnv = { Bindings: Bindings; Variables: Variables };
 
@@ -15,6 +19,7 @@ const CANONICAL_STATIC_PATHS = new Set<string>([
   "/privacy",
   ...DISCOVERY_GUIDE_PATHS,
   ...INCIDENT_CASE_PATHS,
+  ...INCIDENT_REPLAY_PATHS,
 ]);
 // Stated once more in test/e2e/worker-routes.mjs for the local harness;
 // test/dev-server-route-parity.test.mjs keeps the two lists equal.

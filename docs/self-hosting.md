@@ -170,7 +170,7 @@ Keep the `*/15 * * * *` cron trigger: it runs staged-publish discovery, the publ
 
 ### Workflow gates
 
-Needs a GitHub App with deployment-protection webhooks and the GitHub App secrets and vars above; map repositories and environments in Settings. The publish workflow builds artifacts before the gate and publishes the reviewed bundle after approval ([workflow-gates.md](./workflow-gates.md)).
+Needs a GitHub App with deployment-protection webhooks and the GitHub App secrets and vars above; map repositories and environments in Settings. The publish workflow builds artifacts before the gate and publishes the reviewed bundle after approval ([workflow-gates.md](./workflow-gates.md)). The release-source checks (protected-branch and tag) also need **Contents: read**; without it they stay quiet.
 
 ### Dependency review
 
