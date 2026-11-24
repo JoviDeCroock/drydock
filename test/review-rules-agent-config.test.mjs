@@ -495,6 +495,23 @@ describe("file.agent-config", () => {
     expect(after.textSample).toContain("deploy:[REDACTED_NPM_TOKEN][REDACTED_CREDENTIAL]");
   });
 
+  test.each([
+    [
+      "a PEM key",
+      "-----BEGIN RSA PRIVATE KEY-----\nMIIEfixtureonlyQ8zr4JkBwY6P2sFgT9hR5\n-----END RSA PRIVATE KEY-----",
+      "MIIEfixtureonly",
+    ],
+    [
+      "a JWT longer than one value read",
+      `eyJhbGciOiJIUzI1NiJ9.eyJ${"a".repeat(5000)}.sig_${"Q".repeat(40)}`,
+      "QQQQ",
+    ],
+  ])("generic redaction still masks %s in agent config whole", (_label, secret, fragment) => {
+    const mcp = JSON.stringify({ env: { PRIVATE_KEY: secret, ACCESS_TOKEN: secret } });
+    const [redacted] = redactFileRecords([file(".mcp.json", mcp)]);
+    expect(redacted.textSample).not.toContain(fragment);
+  });
+
   test("a value the generic redactor only partly recognises is masked whole", () => {
     const text = settingsWith(["Bash(PGPASSWORD=sk_live_9Fr68QnD3PPvB6mr-Arbor74! psql)"]);
     const [redacted] = redactFileRecords([file(".claude/settings.local.json", text)]);

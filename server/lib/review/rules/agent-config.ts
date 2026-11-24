@@ -81,11 +81,13 @@ function agentConfigFor(path: string) {
 // quoting), or a bare run. A quote that opens or closes on whitespace or spans
 // a pipe is the edge of a neighbouring argument, as in
 // `grep 'PASSWORD=' . | grep -v 'x'`. A bare run may not start with regex
-// syntax or a redaction marker (`[`), so `PASSWORD=[A-Za-z]{16}` is a search.
+// syntax (`[`), so `PASSWORD=[A-Za-z]{16}` is a search; it may start with a
+// redaction marker, so the masking pass over a redacted sample still reaches a
+// value the generic patterns only partly covered.
 const LIMIT = 4096;
 const SINGLE_QUOTED = String.raw`\\?'(?![\s|])[^'\n\\|]{4,${LIMIT}}(?<!\s)'`;
 const DOUBLE_QUOTED = String.raw`\\?"(?![\s|])[^"\n\\|]{4,${LIMIT}}(?<!\s)\\?"`;
-const BARE = String.raw`(?![[\]])[^\s"'\\$<>{}()*,;%\x60]{4,${LIMIT}}`;
+const BARE = String.raw`(?!\[(?!REDACTED_)|\])[^\s"'\\$<>{}()*,;%\x60]{4,${LIMIT}}`;
 const VALUE = String.raw`(${SINGLE_QUOTED}|${DOUBLE_QUOTED}|(?:\\?["'])?${BARE})`;
 const VALUE_AT = new RegExp(VALUE, "dy");
 const UNDASHED_VALUE_AT = new RegExp(String.raw`(?!\\?["']?-)${VALUE}`, "dy");
@@ -119,7 +121,7 @@ const AUTHORIZATION = new RegExp(
 // ends the string the command lives in. Every item is one character or one
 // quoted run, so the lazy span has a single parse per position.
 function commandPatterns(json: boolean): RegExp[] {
-  const redirect = String.raw`(?<=>)&|&(?=>)`;
+  const redirect = String.raw`&(?=>)|(?<=>)&(?!>)`;
   const quoted = json
     ? String.raw`\\"[^"\n\\]{0,256}\\"|'[^'\n]{0,256}'|[^\n;&|)'"\\]|\\(?!")|${redirect}`
     : String.raw`"[^"\n]{0,256}"|'[^'\n]{0,256}'|[^\n;&|)'"]|${redirect}`;
@@ -313,32 +315,26 @@ function scanCredentials(text: string, path: string): CredentialScan {
 const REDACTION_MARKER = /\[REDACTED_[A-Z_]+\]/g;
 
 // Masks the credentials this rule finds before a sample is stored, shown in a
-// public diff or handed to AI review. Scans the raw text, so a generic marker
-// cannot cut a value short and leave its tail visible. Each value goes through
-// the generic redactor first: one it recognises keeps that specific marker (so
-// a rotation to a differently shaped secret stays a visible change for other
-// rules' release attribution) and every other piece of the value is masked.
-// The caller still runs the generic redactor over the whole result. Returns
-// the same string when nothing matched, so clean files keep sharing the text.
-export function redactAgentConfigCredentials(
-  path: string,
-  text: string,
-  redactGeneric: (value: string) => string = (value) => value,
-): string {
+// public diff or handed to AI review. Runs over the generically redacted text,
+// so a secret those patterns cover (a PEM key, a JWT longer than a value read)
+// stays masked whole. A value they only partly covered keeps their marker and
+// has every other piece masked, so `[REDACTED_STRIPE_KEY]-Arbor74!` loses its
+// tail and a rotation to a differently shaped secret stays a visible change for
+// other rules' release attribution. Returns the same string when nothing
+// matched, so clean files keep sharing the text.
+export function redactAgentConfigCredentials(path: string, text: string): string {
   if (!agentConfigFor(path)) return text;
   const spans = scanCredentials(text, path).spans.sort((a, b) => a[0] - b[0]);
   if (spans.length === 0) return text;
   const mask = (value: string) => {
-    const generic = redactGeneric(value);
-    if (generic === value) return "[REDACTED_CREDENTIAL]";
     let out = "";
     let cursor = 0;
-    for (const marker of generic.matchAll(REDACTION_MARKER)) {
+    for (const marker of value.matchAll(REDACTION_MARKER)) {
       if (marker.index > cursor) out += "[REDACTED_CREDENTIAL]";
       out += marker[0];
       cursor = marker.index + marker[0].length;
     }
-    return cursor < generic.length ? `${out}[REDACTED_CREDENTIAL]` : out;
+    return cursor < value.length ? `${out}[REDACTED_CREDENTIAL]` : out;
   };
   let out = "";
   let cursor = 0;
