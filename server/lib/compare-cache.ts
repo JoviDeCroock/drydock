@@ -11,7 +11,8 @@ export interface CachedCompare {
   cachedAt: string;
 }
 
-const CACHE_PREFIX = "compare:v3:";
+// v4: agent-config credentials are masked in cached samples.
+const CACHE_PREFIX = "compare:v4:";
 const CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
 // Compare payloads are immutable once written (the key is content-addressed
 // by scope + registry + tarball URL), so repeat reads — browsing a diff issues

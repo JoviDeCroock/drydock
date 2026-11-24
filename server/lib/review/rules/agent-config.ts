@@ -72,22 +72,23 @@ function agentConfigFor(path: string) {
 
 // Every pattern starts at an anchored token (lookbehind or a literal command
 // name) and spans bounded runs, so a hostile multi-megabyte config scans in
-// linear time.
+// linear time. Key and flag names are matched on their own and the value read
+// with a sticky pattern only for a credential name, so a non-credential value
+// (a hook's `"command": "env PGPASSWORD=… psql"`) is never consumed whole.
 //
-// VALUE's one capture group is the credential, in one of three forms: single-
-// quoted (shell-literal, so `$` is kept), double-quoted (a JSON string, spaces
-// allowed), or a bare run. A quote that opens or closes on whitespace or spans
+// A value is single-quoted (shell-literal, so `$` is kept), double-quoted (a
+// JSON or TOML string, spaces allowed; escaped `\"` inside a JSON file is shell
+// quoting), or a bare run. A quote that opens or closes on whitespace or spans
 // a pipe is the edge of a neighbouring argument, as in
-// `grep 'PASSWORD=' . | grep -v 'x'`. Regex syntax (`[`, `]`) ends a bare run so
-// a search pattern such as `PASSWORD=[A-Za-z]{16}` is not read as a value.
-const SINGLE_QUOTED = String.raw`\\?'(?![\s|])[^'\n\\|]{4,1024}(?<!\s)'`;
-const DOUBLE_QUOTED = String.raw`\\?"(?![\s|])[^"\n\\|]{4,1024}(?<!\s)\\?"`;
-const BARE = String.raw`[^\s"'\\$<>{}()[\]*,;%\x60]{4,1024}`;
+// `grep 'PASSWORD=' . | grep -v 'x'`. A bare run may not start with regex
+// syntax or a redaction marker (`[`), so `PASSWORD=[A-Za-z]{16}` is a search.
+const LIMIT = 4096;
+const SINGLE_QUOTED = String.raw`\\?'(?![\s|])[^'\n\\|]{4,${LIMIT}}(?<!\s)'`;
+const DOUBLE_QUOTED = String.raw`\\?"(?![\s|])[^"\n\\|]{4,${LIMIT}}(?<!\s)\\?"`;
+const BARE = String.raw`(?![[\]])[^\s"'\\$<>{}()*,;%\x60]{4,${LIMIT}}`;
 const VALUE = String.raw`(${SINGLE_QUOTED}|${DOUBLE_QUOTED}|(?:\\?["'])?${BARE})`;
-// A command's own arguments: the span after a command name stops at the end of
-// a permission entry (`)`), a chain (`;`, `&&`, `|`) or the line, so the next
-// command's `-p 3000:3000` is not this one's password.
-const SPAN = String.raw`(?:[^\n;&|)]|&(?!&)){0,512}?`;
+const VALUE_AT = new RegExp(VALUE, "dy");
+const UNDASHED_VALUE_AT = new RegExp(String.raw`(?!\\?["']?-)${VALUE}`, "dy");
 
 // The name a key/value pattern captured must end in a credential word, so
 // `MAX_OUTPUT_TOKENS`, `TOKEN_FILE`, `tokenizer` and `--password-stdin` stay
@@ -96,70 +97,50 @@ const CREDENTIAL_NAME =
   /(?:password|passwd|(?:^|[-_])pass|(?:^|[-_])pwd|token|secret|(?:secret|api|access|auth|private|role|service)[-_]?key|apikey|[-_]pat|credentials?)$/i;
 const NON_CREDENTIAL_NAME = /(?:page|next|continuation|sync|cursor)[-_]?token$/i;
 
-type Pattern = { regex: RegExp; nameGroup?: number; valueGroup: number; basicGroup?: number };
-const PATTERNS: Pattern[] = [
-  // `PGPASSWORD=…`, `"API_KEY": "…"`, `api_key = "…"` (TOML), `X-API-Key: …`
-  {
-    regex: new RegExp(
-      String.raw`(?<![A-Za-z0-9_-])([A-Za-z_][A-Za-z0-9_-]{0,63})\\?["']?\s{0,16}[:=]\s{0,16}${VALUE}`,
-      "dg",
-    ),
-    nameGroup: 1,
-    valueGroup: 2,
-  },
-  // `--password=…`, `--db-token …`, and JSON arrays: `"--api-key", "…"`. A
-  // value starting with `-` is the next flag, left for its own match.
-  {
-    regex: new RegExp(
-      String.raw`(?<![A-Za-z0-9-])--([A-Za-z][A-Za-z0-9-]{0,40})(?:=|\s{1,4}|\\?["']\s{0,4},\s{0,16})(?!\\?["']?-)${VALUE}`,
-      "dg",
-    ),
-    nameGroup: 1,
-    valueGroup: 2,
-  },
-  // `Authorization: Bearer …` in a curl header, a JSON `headers` object or a
-  // TOML `http_headers` table
-  {
-    regex: new RegExp(
-      String.raw`(?<![A-Za-z0-9-])Authorization\\?["']?\s{0,16}[:=]\s{0,16}\\?["']?(Bearer|Basic|token)\s{1,4}(${BARE})`,
-      "dgi",
-    ),
-    basicGroup: 1,
-    valueGroup: 2,
-  },
-  // `curl -u user:pass`; scoped to curl because `-u` means a uid elsewhere.
-  {
-    regex: new RegExp(
-      String.raw`\bcurl\b${SPAN}\s(?:-u|--user)(?:\s{1,4}|=)(?:\\?["'])?[^\s:"'\\]{1,128}:([^\s@"'\\$<>{}()*]{3,256})`,
-      "dg",
-    ),
-    valueGroup: 1,
-  },
-  // `mysql -pS3cret`, `mysql -p'S3cret'`: the password is glued to the flag.
-  {
-    regex: new RegExp(
-      String.raw`\b(?:mysql|mysqldump|mysqladmin|mariadb)\b${SPAN}\s-p${VALUE}`,
-      "dg",
-    ),
-    valueGroup: 1,
-  },
-  { regex: new RegExp(String.raw`\bsshpass\s{1,4}-p\s{0,4}${VALUE}`, "dg"), valueGroup: 1 },
-  // `docker login -u me -p …`, `twine upload -u __token__ -p …`
-  {
-    regex: new RegExp(
-      String.raw`\b(?:(?:docker|podman)\s{1,4}login|twine\s{1,4}upload)\b${SPAN}\s-p\s{1,4}${VALUE}`,
-      "dg",
-    ),
-    valueGroup: 1,
-  },
-  { regex: new RegExp(String.raw`\bredis-cli\b${SPAN}\s-a\s{1,4}${VALUE}`, "dg"), valueGroup: 1 },
-];
+// `PGPASSWORD=…`, `"API_KEY": "…"`, `api_key = "…"` (TOML), `X-API-Key: …`
+const KEY_NAME = /(?<![A-Za-z0-9_-])([A-Za-z_][A-Za-z0-9_-]{0,63})\\?["']?\s{0,16}[:=]\s{0,16}/g;
+// `--password=…`, `--db-token …`, and JSON arrays: `"--api-key", "…"`. A value
+// after a space or array separator that starts with `-` is the next flag; after
+// `=` it is bound to this one (`--db-password=-6tF…`).
+const FLAG_NAME =
+  /(?<![A-Za-z0-9-])--([A-Za-z][A-Za-z0-9-]{0,40})(=|\s{1,4}|\\?["']\s{0,4},\s{0,16})/g;
+// `Authorization: Bearer …` in a curl header, a JSON `headers` object or a
+// TOML `http_headers` table.
+const AUTHORIZATION = new RegExp(
+  String.raw`(?<![A-Za-z0-9-])Authorization\\?["']?\s{0,16}[:=]\s{0,16}\\?["']?(Bearer|Basic|token)\s{1,4}(${BARE})`,
+  "dgi",
+);
+
+// A command's own arguments: quoted arguments are read whole (they may hold
+// `)` or `&`); otherwise the span stops at the end of a permission entry
+// (`)`), a chain or background (`;`, `&`, `|`) or the line, so the next
+// command's `-p 3000:3000` is not this one's password. In a JSON file a bare
+// `"` ends the string the command lives in.
+function commandPatterns(json: boolean): RegExp[] {
+  const quoted = json
+    ? String.raw`\\"[^"\n\\]{0,256}\\"|'[^'\n]{0,256}'|[^\n;&|)'"\\]|\\(?!")`
+    : String.raw`"[^"\n]{0,256}"|'[^'\n]{0,256}'|[^\n;&|)'"]`;
+  const span = String.raw`(?:${quoted}){0,128}?`;
+  return [
+    // `curl -u user:pass`; scoped to curl because `-u` means a uid elsewhere.
+    String.raw`\bcurl\b${span}\s(?:-u|--user)(?:\s{1,4}|=)(?:\\?["'])?[^\s:"'\\]{1,128}:([^\s@"'\\$<>{}()*]{3,256})`,
+    // `mysql -pS3cret`, `mysql -p'S3cret'`: the password is glued to the flag.
+    String.raw`\b(?:mysql|mysqldump|mysqladmin|mariadb)\b${span}\s-p${VALUE}`,
+    String.raw`\bsshpass\s{1,4}-p\s{0,4}${VALUE}`,
+    // `docker login -u me -p …`, `twine upload -u __token__ -p …`
+    String.raw`\b(?:(?:docker|podman)\s{1,4}login|twine\s{1,4}upload)\b${span}\s-p\s{1,4}${VALUE}`,
+    String.raw`\bredis-cli\b${span}\s-a\s{1,4}${VALUE}`,
+  ].map((source) => new RegExp(source, "dg"));
+}
+const JSON_COMMANDS = commandPatterns(true);
+const TEXT_COMMANDS = commandPatterns(false);
 
 // Template and documentation values: whole-word stand-ins, fill-in markers
 // anywhere in the value (`API_KEY_HERE`, `ghp_your_token_here`, `sk_test_xxxx`,
-// `sk-proj-...`), and prose (`"GitHub personal access token"`).
+// `sk-proj-...`), redaction markers, and prose in a config string
+// (`"GitHub personal access token"`).
 const PLACEHOLDER_VALUE =
-  /^(?:redacted|test|todo|secret|password|passwd|pass|token|null|undefined|true|false|none|postgres|root|admin|guest|include|omit|same-origin)$/i;
+  /^(?:redacted|test|todo|secret|password|passwd|pass|token|null|undefined|true|false|none|postgres|root|admin|guest|include|omit|same-origin|\[REDACTED_[A-Z_]+\])$/i;
 const PLACEHOLDER_PART =
   /x{4,}|\.{3,}|\*{3,}|12345678|abcdef|example|placeholder|change[-_]?me|replace|dummy|fake|sample|your|(?:^|[^a-z])(?:my|insert|enter|here)(?:[^a-z]|$)/i;
 const PROSE = /^[A-Za-z][A-Za-z'-]*(?: [A-Za-z'-]+){2,}[.!?]?$/;
@@ -170,12 +151,12 @@ const PROSE = /^[A-Za-z][A-Za-z'-]*(?: [A-Za-z'-]+){2,}[.!?]?$/;
 const REFERENCE_VALUE =
   /^(?:%|<|(?:env|input|vault|secret):|op:\/\/|process\.env\b|os\.environ\b|[a-z][a-z0-9_-]*=[^=]|(?:~|\.{1,2})?\/[\w./-]*$|\.[\w.-]+$|-{1,2}[a-z][a-z0-9-]*$|[\d:.]+$)/i;
 
-// A variable's own name stands in for its value: `GITHUB_TOKEN` (word-shaped
-// segments, unlike a generated `P9V0_5N7J_K4Q2`) or a snake- or camel-case
-// identifier ending in a credential word (`McpServer_AUTH_TOKEN`, `apiKey`), as
-// in Codex's `env_http_headers`.
+// A variable's own name stands in for its value: `GITHUB_TOKEN`,
+// `OPENROUTER_API_KEY_2` (word-shaped, unlike a generated `P9V0_5N7J_K4Q2`) or
+// a snake- or camel-case identifier ending in a credential word
+// (`McpServer_AUTH_TOKEN`, `apiKey`), as in Codex's `env_http_headers`.
 function isVariableName(value: string): boolean {
-  if (/^[A-Z][A-Z0-9]*(?:_[A-Z][A-Z0-9]*)+$/.test(value) && /[A-Z]{3,}/.test(value)) return true;
+  if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(value) && /[A-Z]{3,}/.test(value)) return true;
   return (
     /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) &&
     /_|[a-z][A-Z]/.test(value) &&
@@ -183,26 +164,41 @@ function isVariableName(value: string): boolean {
   );
 }
 
-function credentialValue(raw: string): string | null {
-  const singleQuoted = /^\\?'/.test(raw);
-  const value = raw.replace(/^\\?["']/, "").replace(/\\?["']$/, "");
+type FileKind = "json" | "toml" | "text";
+
+function fileKind(path: string): FileKind {
+  if (/\.json$/i.test(path)) return "json";
+  return /\.toml$/i.test(path) ? "toml" : "text";
+}
+
+function credentialValue(raw: string, kind: FileKind): string | null {
+  const quote = /^\\?["']/.exec(raw)?.[0] ?? "";
+  // Shell quoting: single quotes keep `$` literal, double quotes expand it. A
+  // bare `"` in JSON or TOML is a config string instead; an escaped `\"` in a
+  // JSON file is shell quoting inside a stored command.
+  const shellSingle = quote.endsWith("'");
+  const shellDouble = quote === '\\"' || (quote === '"' && kind === "text");
+  const configString = quote === '"' && kind !== "text";
+  const value = raw.slice(quote.length).replace(/\\?["']$/, "");
   if (value.length < 3) return null;
-  if (PLACEHOLDER_VALUE.test(value) || PLACEHOLDER_PART.test(value) || PROSE.test(value)) {
-    return null;
-  }
-  // Shell single quotes keep `$` literal; anywhere else it is an expansion.
-  if (value.includes("${") || (!singleQuoted && value.startsWith("$"))) return null;
+  if (PLACEHOLDER_VALUE.test(value) || PLACEHOLDER_PART.test(value)) return null;
+  if (configString && PROSE.test(value)) return null;
+  if (value.includes("${")) return null;
+  if (!shellSingle && value.startsWith("$")) return null;
+  if (shellDouble && /\$[A-Za-z_(]/.test(value)) return null;
   if (isVariableName(value) || REFERENCE_VALUE.test(value)) return null;
   return value;
 }
 
-// Basic auth is base64 of `user:pass`; judge the password, so a scaffolded
-// `admin:admin` stays a dev default rather than a strong-looking base64 run.
-function decodedBasicPassword(value: string): string | null {
+// Basic auth is base64 of `user:pass`; judge the password, or the user when the
+// password is empty (`sk_live_…:`), so a scaffolded `admin:admin` stays a dev
+// default rather than a strong-looking base64 run.
+function decodedBasicCredential(value: string): string | null {
   try {
     const decoded = atob(value);
     const colon = decoded.indexOf(":");
-    return colon === -1 ? null : decoded.slice(colon + 1);
+    if (colon === -1) return null;
+    return decoded.slice(colon + 1) || decoded.slice(0, colon);
   } catch {
     return null;
   }
@@ -214,79 +210,102 @@ function strongValue(value: string): boolean {
 }
 
 interface InlineCredential {
-  /** Offsets of the credential text itself, quotes excluded. */
-  start: number;
-  end: number;
   /** Identifies the credential across releases. */
   value: string;
   strong: boolean;
   line: number;
 }
 
-// Bounds the memory a match-dense hostile file can cost. A file past the cap is
-// already reported; credentials beyond it only miss line attribution and
-// redaction, and fail open to release delta on the baseline side.
-const MAX_CREDENTIALS = 256;
+interface CredentialScan {
+  /** First occurrence of each distinct credential, in text order. */
+  credentials: InlineCredential[];
+  /** Every occurrence's offsets, quotes excluded, for redaction. */
+  spans: Array<[number, number]>;
+}
 
-function scanCredentials(text: string, limit = MAX_CREDENTIALS): InlineCredential[] {
-  const found: Array<Omit<InlineCredential, "line">> = [];
+// Bound the memory a match-dense hostile file can cost: distinct credentials
+// for grading, occurrences for redaction. Repeats of one value never crowd out
+// a new one. Past either cap a file is still reported; later credentials miss
+// grading or masking only.
+const MAX_DISTINCT = 256;
+const MAX_SPANS = 16_384;
+
+function scanCredentials(text: string, path: string): CredentialScan {
+  const kind = fileKind(path);
+  const firstByValue = new Map<string, { start: number; strong: boolean }>();
+  const spans: Array<[number, number]> = [];
   const taken = new Set<number>();
-  scan: for (const { regex, nameGroup, valueGroup, basicGroup } of PATTERNS) {
+  const record = (raw: string, offset: number, judged: string | null, identity?: string) => {
+    if (spans.length >= MAX_SPANS) return;
+    const value = judged === null ? null : credentialValue(judged, kind);
+    if (value === null) return;
+    const lead = /^\\?["']/.exec(raw)?.[0].length ?? 0;
+    const trail = /\\?["']$/.exec(raw)?.[0].length ?? 0;
+    const start = offset + lead;
+    if (taken.has(start)) return;
+    taken.add(start);
+    spans.push([start, offset + raw.length - trail]);
+    const key = identity ?? value;
+    if (!firstByValue.has(key) && firstByValue.size < MAX_DISTINCT) {
+      firstByValue.set(key, { start, strong: strongValue(value) });
+    }
+  };
+  const named = (nameRegex: RegExp, dashed: (separator: string) => boolean) => {
+    nameRegex.lastIndex = 0;
+    for (const match of text.matchAll(nameRegex)) {
+      const name = match[1] ?? "";
+      if (!CREDENTIAL_NAME.test(name) || NON_CREDENTIAL_NAME.test(name)) continue;
+      const valueAt = dashed(match[2] ?? "") ? VALUE_AT : UNDASHED_VALUE_AT;
+      valueAt.lastIndex = match.index + match[0].length;
+      const value = valueAt.exec(text);
+      if (value?.[1] !== undefined) record(value[1], value.index, value[1]);
+    }
+  };
+  named(KEY_NAME, () => true);
+  named(FLAG_NAME, (separator) => separator === "=");
+  AUTHORIZATION.lastIndex = 0;
+  for (const match of text.matchAll(AUTHORIZATION)) {
+    const raw = match[2] ?? "";
+    const basic = /^basic$/i.test(match[1] ?? "");
+    const offset = match.indices?.[2]?.[0];
+    if (offset === undefined) continue;
+    record(raw, offset, basic ? decodedBasicCredential(raw) : raw, basic ? raw : undefined);
+  }
+  for (const regex of kind === "json" ? JSON_COMMANDS : TEXT_COMMANDS) {
     regex.lastIndex = 0;
     for (const match of text.matchAll(regex)) {
-      if (found.length >= limit) break scan;
-      if (nameGroup !== undefined) {
-        const name = match[nameGroup] ?? "";
-        if (!CREDENTIAL_NAME.test(name) || NON_CREDENTIAL_NAME.test(name)) continue;
-      }
-      const raw = match[valueGroup] ?? "";
-      const span = match.indices?.[valueGroup];
-      if (!span) continue;
-      const basic = basicGroup !== undefined && /^basic$/i.test(match[basicGroup] ?? "");
-      const judged = basic ? decodedBasicPassword(raw) : raw;
-      const value = judged === null ? null : credentialValue(judged);
-      if (value === null) continue;
-      const lead = /^\\?["']/.exec(raw)?.[0].length ?? 0;
-      const trail = /\\?["']$/.exec(raw)?.[0].length ?? 0;
-      const start = span[0] + lead;
-      if (taken.has(start)) continue;
-      taken.add(start);
-      found.push({
-        start,
-        end: span[1] - trail,
-        value: basic ? raw : value,
-        strong: strongValue(value),
-      });
+      const offset = match.indices?.[1]?.[0];
+      if (offset !== undefined) record(match[1] ?? "", offset, match[1] ?? "");
     }
   }
-  found.sort((a, b) => a.start - b.start);
-  // One pass over the text for every line number: no per-line index array, so a
-  // newline-dense file costs no more memory than a sparse one.
+
+  const ordered = [...firstByValue.entries()].sort((a, b) => a[1].start - b[1].start);
+  // Each newline is visited once across all credentials, so line numbers cost
+  // O(text) however the matches are laid out.
   let line = 1;
-  let cursor = 0;
-  return found.map((credential) => {
-    for (
-      let next = text.indexOf("\n", cursor);
-      next !== -1 && next < credential.start;
-      next = text.indexOf("\n", next + 1)
-    ) {
+  let lineEnd = text.indexOf("\n");
+  const credentials = ordered.map(([value, { start, strong }]) => {
+    while (lineEnd !== -1 && lineEnd < start) {
       line += 1;
-      cursor = next + 1;
+      lineEnd = text.indexOf("\n", lineEnd + 1);
     }
-    return { ...credential, line };
+    return { value, strong, line };
   });
+  return { credentials, spans };
 }
 
 // Masks the credentials this rule finds before a sample is stored, shown in a
-// public diff or handed to AI review. Returns the same string when nothing
-// matched, so redaction keeps sharing the raw text for clean files.
+// public diff or handed to AI review. Runs after the generic redaction, so a
+// value both redact keeps its specific marker (and stays distinguishable from
+// its predecessor for other rules' release attribution). Returns the same
+// string when nothing matched, so clean files keep sharing the raw text.
 export function redactAgentConfigCredentials(path: string, text: string): string {
   if (!agentConfigFor(path)) return text;
-  const credentials = scanCredentials(text, 4096);
-  if (credentials.length === 0) return text;
+  const spans = scanCredentials(text, path).spans.sort((a, b) => a[0] - b[0]);
+  if (spans.length === 0) return text;
   let out = "";
   let cursor = 0;
-  for (const { start, end } of credentials) {
+  for (const [start, end] of spans) {
     if (start < cursor) continue;
     out += `${text.slice(cursor, start)}[REDACTED_CREDENTIAL]`;
     cursor = end;
@@ -306,7 +325,9 @@ export function agentConfigFindings(ctx: RuleContext): Finding[] {
     baselineValues ??= new Set(
       [...ctx.previousByPath.values()]
         .filter((file) => agentConfigFor(file.path) && file.textSample)
-        .flatMap((file) => scanCredentials(file.textSample!).map(({ value }) => value)),
+        .flatMap((file) =>
+          scanCredentials(file.textSample!, file.path).credentials.map(({ value }) => value),
+        ),
     );
     return baselineValues;
   };
@@ -317,7 +338,7 @@ export function agentConfigFindings(ctx: RuleContext): Finding[] {
     const changed = ctx.diffByPath.get(file.path)?.status;
     if (changed === "removed") continue;
     const fresh = changed === "added" || changed === "modified";
-    const credentials = scanCredentials(file.textSample || "");
+    const { credentials } = scanCredentials(file.textSample || "", file.path);
     const isNew = (credential: InlineCredential) =>
       fresh && !previousValues().has(credential.value);
     // Shared config is what templates ship, filled with stand-ins

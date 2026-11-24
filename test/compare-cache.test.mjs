@@ -67,7 +67,7 @@ describe("compare cache key", () => {
       "https://registry.npmjs.org/acme/-/acme-1.0.0.tgz",
       "org:a",
     );
-    expect(key.startsWith("compare:v3:")).toBe(true);
+    expect(key.startsWith("compare:v4:")).toBe(true);
   });
 });
 
@@ -82,7 +82,7 @@ describe("compare cache reads", () => {
         },
       },
     };
-    await readCompareCache(env, "compare:v3:abc");
+    await readCompareCache(env, "compare:v4:abc");
     expect(calls).toHaveLength(1);
     expect(calls[0].options.type).toBe("json");
     expect(calls[0].options.cacheTtl).toBeGreaterThanOrEqual(60);

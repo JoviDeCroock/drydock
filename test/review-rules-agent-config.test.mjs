@@ -441,4 +441,133 @@ describe("file.agent-config", () => {
     expect(performance.now() - started).toBeLessThan(15_000);
     expect(finding.line).toBe(2_000_001);
   });
+
+  test("an alternate comparison baseline re-judges release scope by line diff", () => {
+    const text = settingsWith(["Bash(PGPASSWORD=correcthorsebatterystaple psql)"]);
+    const staged = [file(".claude/settings.local.json", text)];
+    const [finding] = deterministicFindings(staged, createPackageDiff([], staged), null, {
+      previousFiles: [],
+    });
+    const [annotated] = annotateFindingsWithDiffStatus(
+      [finding],
+      createPackageDiff(staged, staged),
+      {
+        previousFiles: redactFileRecords(staged),
+        stagedFiles: redactFileRecords(staged),
+        findingsMatchBaseline: false,
+      },
+    );
+    expect(annotated).toMatchObject({ severity: "critical", releaseDelta: false });
+  });
+
+  test("redaction keeps a generic secret's own marker so its rotation still shows", () => {
+    const mcp = (value) => JSON.stringify({ env: { AWS_ACCESS_KEY: value } }, null, 2);
+    const [before] = redactFileRecords([file(".mcp.json", mcp("ArborVault!92"))]);
+    const [after] = redactFileRecords([file(".mcp.json", mcp("AKIAAZ47HDC04YNM6VRS"))]);
+    expect(before.textSample).toContain("[REDACTED_CREDENTIAL]");
+    expect(after.textSample).toContain("[REDACTED_AWS_ACCESS_KEY]");
+  });
+
+  test("a rotation after a bracket in the password is new and fully masked", () => {
+    const local = (value) =>
+      file(".claude/settings.local.json", settingsWith([`Bash(PGPASSWORD=${value} psql)`]));
+    const [finding] = agentFindings(
+      [local("RainNightingale7![part2]")],
+      [local("RainNightingale7![part1]")],
+    );
+    expect(finding.severity).toBe("critical");
+    const [redacted] = redactFileRecords([local("RainNightingale7![part2]")]);
+    expect(redacted.textSample).not.toContain("part2");
+  });
+
+  test("a long token is masked whole", () => {
+    const tail = "Zq9".repeat(150);
+    const token = `Fx9-${"a1B2".repeat(300)}${tail}`;
+    const [redacted] = redactFileRecords([
+      file(".mcp.json", JSON.stringify({ env: { ACCESS_TOKEN: token } })),
+    ]);
+    expect(redacted.textSample).not.toContain(tail);
+  });
+
+  test("repeats of an old credential do not crowd out a new one", () => {
+    const old = Array.from(
+      { length: 300 },
+      (_, i) => `Bash(PGPASSWORD=orchidlantern psql -c 'select ${i}')`,
+    );
+    const before = file(".claude/settings.local.json", settingsWith(old));
+    const after = file(
+      ".claude/settings.local.json",
+      settingsWith([...old, "Bash(PGPASSWORD=embermeadow psql)"]),
+    );
+    const findings = agentFindings([after], [before]);
+    expect(findings.map((finding) => finding.severity)).toEqual(["critical"]);
+  });
+
+  test("a credential inside a hook command is found and masked", () => {
+    const text = JSON.stringify({
+      hooks: {
+        SessionStart: [
+          { hooks: [{ type: "command", command: "env PGPASSWORD=CedarKite74! psql" }] },
+        ],
+      },
+    });
+    const [finding] = agentFindings([file(".claude/settings.json", text)], []);
+    expect(finding.severity).toBe("critical");
+    const [redacted] = redactFileRecords([file(".claude/settings.json", text)]);
+    expect(redacted.textSample).not.toContain("CedarKite74!");
+  });
+
+  test.each([
+    [
+      "background operator",
+      "Bash(docker login ghcr.io & docker run -p 127.0.0.1:8432:8432/tcp demo)",
+    ],
+    ["shell-expanded double quotes", 'Bash(PGPASSWORD="db-$DB_PASS" psql)'],
+  ])("reads no credential in local settings: %s", (_label, command) => {
+    expect(addedLocalSettings(command)).toMatchObject({ severity: "medium" });
+  });
+
+  test.each([
+    [
+      "quoted argument with a parenthesis",
+      "Bash(curl -A 'CI (Linux)' -u deploy:orchidlantern https://x.invalid)",
+    ],
+    ["single-quoted passphrase", "Bash(PGPASSWORD='birch zebra leaf moon' psql)"],
+  ])("finds the credential in local settings: %s", (_label, command) => {
+    expect(addedLocalSettings(command)).toMatchObject({ severity: "critical" });
+  });
+
+  test.each([
+    [
+      "Basic header with the key as username",
+      ".mcp.json",
+      JSON.stringify({ headers: { Authorization: `Basic ${btoa("Svrkey-5hPNvD73K6bQ:")}` } }),
+      "critical",
+    ],
+    [
+      "flag bound to a dash-leading password",
+      ".mcp.json",
+      JSON.stringify({ args: ["--db-password=-6tF7n95S3D!Px"] }),
+      "critical",
+    ],
+    [
+      "numbered env header name",
+      ".codex/config.toml",
+      '[mcp_servers.x]\nenv_http_headers = { "X-API-Key" = "OPENROUTER_API_KEY_2" }\n',
+      "low",
+    ],
+  ])("grades %s", (_label, path, text, severity) => {
+    const [finding] = agentFindings([file(path, text)], []);
+    expect(finding.severity).toBe(severity);
+  });
+
+  test("many credentials on one minified line stay linear", () => {
+    const line = Array.from({ length: 40_000 }, (_, i) => `"K${i}_TOKEN":"Fx9-only-${i}-Tk"`).join(
+      ",",
+    );
+    const started = performance.now();
+    redactFileRecords([file(".mcp.json", `{${line}}`)]);
+    agentFindings([file(".mcp.json", `{${line}}`)], []);
+    expect(performance.now() - started).toBeLessThan(15_000);
+  });
 });
