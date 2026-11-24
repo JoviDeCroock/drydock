@@ -218,6 +218,8 @@ describe("file.agent-config", () => {
   test.each([
     ["credential-word runs", `"${"-TOKEN".repeat(170_000)}"`],
     ["repeated curl flags", `"${"curl -u ".repeat(130_000)}"`],
+    ["repeated curl redirections", `"${"curl 2>&1 ".repeat(100_000)}"`],
+    ["curl words in one argument", `"${"curl/".repeat(200_000)}"`],
     ["repeated mysql", `"${"mysql ".repeat(170_000)}"`],
     ["long identifiers", `${"A".repeat(1_000_000)}=x`],
   ])("scans a megabyte of hostile config in linear time: %s", (_label, text) => {
@@ -458,6 +460,110 @@ describe("file.agent-config", () => {
       },
     );
     expect(annotated).toMatchObject({ severity: "critical", releaseDelta: false });
+  });
+
+  test("an alternate comparison baseline leaves dynamic-load release scope to its severity", () => {
+    const finding = {
+      ruleId: "code.dynamic-load",
+      severity: "high",
+      file: "index.js",
+      line: 1,
+      evidence: "Module._extensions",
+      reason: "loader",
+      source: "deterministic",
+    };
+    const staged = [file("index.js", "Module._extensions['.ext'] = Module._extensions['.js'];")];
+    const [annotated] = annotateFindingsWithDiffStatus(
+      [finding],
+      createPackageDiff(staged, staged),
+      {
+        previousFiles: staged,
+        stagedFiles: staged,
+        findingsMatchBaseline: false,
+      },
+    );
+    expect(annotated.releaseDelta).toBe(true);
+  });
+
+  test("a generic secret rotation inside a credential span stays a visible change", () => {
+    const text = (secret) => settingsWith([`Bash(curl -u deploy:${secret} https://x.invalid)`]);
+    const [before] = redactFileRecords([file(".claude/settings.json", text("VioletBay82!"))]);
+    const [after] = redactFileRecords([
+      file(".claude/settings.json", text("npm_Q8zr4JkBwY6P2sFgT9hR5Tq-tail")),
+    ]);
+    expect(before.textSample).toContain("deploy:[REDACTED_CREDENTIAL]");
+    expect(after.textSample).toContain("deploy:[REDACTED_NPM_TOKEN][REDACTED_CREDENTIAL]");
+  });
+
+  test("a value the generic redactor only partly recognises is masked whole", () => {
+    const text = settingsWith(["Bash(PGPASSWORD=sk_live_9Fr68QnD3PPvB6mr-Arbor74! psql)"]);
+    const [redacted] = redactFileRecords([file(".claude/settings.local.json", text)]);
+    expect(redacted.textSample).toContain(
+      "PGPASSWORD=[REDACTED_STRIPE_KEY][REDACTED_CREDENTIAL] psql",
+    );
+    expect(redacted.textSample).not.toContain("Arbor74");
+  });
+
+  test.each([
+    ["a redirection before the flag", "Bash(curl 2>&1 -u deploy:CedarKite74! https://x.invalid)"],
+    ["an &> redirection", "Bash(curl &>/dev/null -u deploy:CedarKite74! https://x.invalid)"],
+    [
+      "a long URL before the flag",
+      `Bash(curl https://x.invalid/${"segment/".repeat(40)} -u deploy:CedarKite74!)`,
+    ],
+  ])("reads a curl password past %s", (_label, command) => {
+    const text = settingsWith([command]);
+    const [finding] = agentFindings([file(".claude/settings.json", text)], []);
+    expect(finding.severity).toBe("critical");
+    const [redacted] = redactFileRecords([file(".claude/settings.json", text)]);
+    expect(redacted.textSample).not.toContain("CedarKite74");
+  });
+
+  test("a background & still ends the command", () => {
+    const text = settingsWith(["Bash(curl https://x.invalid & docker run -u deploy:CedarKite74!)"]);
+    const [finding] = agentFindings([file(".claude/settings.json", text)], []);
+    expect(finding.severity).toBe("low");
+  });
+
+  test.each([
+    [
+      "a generated key with digit-led segments",
+      '{"headers":{"X-API-Key":"KMR4_7A9X_B2Q8"}}',
+      "critical",
+    ],
+    [
+      "an env name with a numeric suffix",
+      '{"headers":{"X-API-Key":"OPENROUTER_API_KEY_2"}}',
+      "low",
+    ],
+  ])("grades %s in shared MCP config", (_label, text, severity) => {
+    const [finding] = agentFindings([file(".mcp.json", text)], []);
+    expect(finding.severity).toBe(severity);
+  });
+
+  test.each([
+    [
+      "a regex search for a token shape",
+      "Bash(grep -E 'TOKEN=gh[pousr]_[A-Za-z0-9]+' sample.env)",
+      "low",
+    ],
+    ["a negated class", "Bash(grep -E 'TOKEN=[^ ]+' sample.env)", "low"],
+    [
+      "a password with a bracketed literal",
+      "Bash(PGPASSWORD=RainNightingale7![part2] psql)",
+      "critical",
+    ],
+  ])("grades %s", (_label, command, severity) => {
+    const [finding] = agentFindings([file(".claude/settings.json", settingsWith([command]))], []);
+    expect(finding.severity).toBe(severity);
+  });
+
+  test("a value made of credential-name runs is read once", () => {
+    const text = JSON.stringify({ note: "DBTOKEN=".repeat(500_000) });
+    const started = performance.now();
+    redactFileRecords([file(".mcp.json", text)]);
+    agentFindings([file(".mcp.json", text)], []);
+    expect(performance.now() - started).toBeLessThan(15_000);
   });
 
   test("redaction keeps a generic secret's own marker so its rotation still shows", () => {

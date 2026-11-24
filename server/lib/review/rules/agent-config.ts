@@ -114,13 +114,16 @@ const AUTHORIZATION = new RegExp(
 // A command's own arguments: quoted arguments are read whole (they may hold
 // `)` or `&`); otherwise the span stops at the end of a permission entry
 // (`)`), a chain or background (`;`, `&`, `|`) or the line, so the next
-// command's `-p 3000:3000` is not this one's password. In a JSON file a bare
-// `"` ends the string the command lives in.
+// command's `-p 3000:3000` is not this one's password. An `&` touching `>` is a
+// redirection (`2>&1`, `&>log`), not a background. In a JSON file a bare `"`
+// ends the string the command lives in. Every item is one character or one
+// quoted run, so the lazy span has a single parse per position.
 function commandPatterns(json: boolean): RegExp[] {
+  const redirect = String.raw`(?<=>)&|&(?=>)`;
   const quoted = json
-    ? String.raw`\\"[^"\n\\]{0,256}\\"|'[^'\n]{0,256}'|[^\n;&|)'"\\]|\\(?!")`
-    : String.raw`"[^"\n]{0,256}"|'[^'\n]{0,256}'|[^\n;&|)'"]`;
-  const span = String.raw`(?:${quoted}){0,128}?`;
+    ? String.raw`\\"[^"\n\\]{0,256}\\"|'[^'\n]{0,256}'|[^\n;&|)'"\\]|\\(?!")|${redirect}`
+    : String.raw`"[^"\n]{0,256}"|'[^'\n]{0,256}'|[^\n;&|)'"]|${redirect}`;
+  const span = String.raw`(?:${quoted}){0,512}?`;
   return [
     // `curl -u user:pass`; scoped to curl because `-u` means a uid elsewhere.
     String.raw`\bcurl\b${span}\s(?:-u|--user)(?:\s{1,4}|=)(?:\\?["'])?[^\s:"'\\]{1,128}:([^\s@"'\\$<>{}()*]{3,256})`,
@@ -144,6 +147,10 @@ const PLACEHOLDER_VALUE =
 const PLACEHOLDER_PART =
   /x{4,}|\.{3,}|\*{3,}|12345678|abcdef|example|placeholder|change[-_]?me|replace|dummy|fake|sample|your|(?:^|[^a-z])(?:my|insert|enter|here)(?:[^a-z]|$)/i;
 const PROSE = /^[A-Za-z][A-Za-z'-]*(?: [A-Za-z'-]+){2,}[.!?]?$/;
+// A regex character class with a range or negation (`gh[pousr]_[A-Za-z0-9]+`)
+// makes the value a search pattern; a bracketed literal (`Rain7![part2]`) does
+// not.
+const REGEX_CLASS = /\[\^|\[[^\]]{0,64}[A-Za-z0-9]-[A-Za-z0-9][^\]]{0,64}\]/;
 // References resolved elsewhere: `%VAR%`, `<token>`, `env:NAME`, `op://…`, a
 // nested `key=value` option (`--secret id=npmrc`), and values whose whole shape
 // is a path, dotfile, flag or port. A generated password may start with `/`,
@@ -152,11 +159,14 @@ const REFERENCE_VALUE =
   /^(?:%|<|(?:env|input|vault|secret):|op:\/\/|process\.env\b|os\.environ\b|[a-z][a-z0-9_-]*=[^=]|(?:~|\.{1,2})?\/[\w./-]*$|\.[\w.-]+$|-{1,2}[a-z][a-z0-9-]*$|[\d:.]+$)/i;
 
 // A variable's own name stands in for its value: `GITHUB_TOKEN`,
-// `OPENROUTER_API_KEY_2` (word-shaped, unlike a generated `P9V0_5N7J_K4Q2`) or
+// `OPENROUTER_API_KEY_2` (letter-led segments or a numeric suffix, unlike a
+// generated `P9V0_5N7J_K4Q2` or `KMR4_7A9X_B2Q8`) or
 // a snake- or camel-case identifier ending in a credential word
 // (`McpServer_AUTH_TOKEN`, `apiKey`), as in Codex's `env_http_headers`.
 function isVariableName(value: string): boolean {
-  if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(value) && /[A-Z]{3,}/.test(value)) return true;
+  if (/^[A-Z][A-Z0-9]*(?:_(?:[A-Z][A-Z0-9]*|\d+))+$/.test(value) && /[A-Z]{3,}/.test(value)) {
+    return true;
+  }
   return (
     /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) &&
     /_|[a-z][A-Z]/.test(value) &&
@@ -186,7 +196,7 @@ function credentialValue(raw: string, kind: FileKind): string | null {
   if (value.includes("${")) return null;
   if (!shellSingle && value.startsWith("$")) return null;
   if (shellDouble && /\$[A-Za-z_(]/.test(value)) return null;
-  if (isVariableName(value) || REFERENCE_VALUE.test(value)) return null;
+  if (isVariableName(value) || REFERENCE_VALUE.test(value) || REGEX_CLASS.test(value)) return null;
   return value;
 }
 
@@ -250,15 +260,21 @@ function scanCredentials(text: string, path: string): CredentialScan {
       firstByValue.set(key, { start, strong: strongValue(value) });
     }
   };
+  // After a credential name, the scan resumes past the value it read, so a
+  // value made of name-shaped runs (`DBTOKEN=DBTOKEN=…`) is read once rather
+  // than once per run. A non-credential name never consumes its value: a hook's
+  // `"command": "env PGPASSWORD=… psql"` is still scanned inside.
   const named = (nameRegex: RegExp, dashed: (separator: string) => boolean) => {
     nameRegex.lastIndex = 0;
-    for (const match of text.matchAll(nameRegex)) {
+    for (let match = nameRegex.exec(text); match; match = nameRegex.exec(text)) {
       const name = match[1] ?? "";
       if (!CREDENTIAL_NAME.test(name) || NON_CREDENTIAL_NAME.test(name)) continue;
       const valueAt = dashed(match[2] ?? "") ? VALUE_AT : UNDASHED_VALUE_AT;
       valueAt.lastIndex = match.index + match[0].length;
       const value = valueAt.exec(text);
-      if (value?.[1] !== undefined) record(value[1], value.index, value[1]);
+      if (value?.[1] === undefined) continue;
+      record(value[1], value.index, value[1]);
+      nameRegex.lastIndex = Math.max(nameRegex.lastIndex, value.index + value[0].length);
     }
   };
   named(KEY_NAME, () => true);
@@ -294,20 +310,41 @@ function scanCredentials(text: string, path: string): CredentialScan {
   return { credentials, spans };
 }
 
+const REDACTION_MARKER = /\[REDACTED_[A-Z_]+\]/g;
+
 // Masks the credentials this rule finds before a sample is stored, shown in a
-// public diff or handed to AI review. Runs after the generic redaction, so a
-// value both redact keeps its specific marker (and stays distinguishable from
-// its predecessor for other rules' release attribution). Returns the same
-// string when nothing matched, so clean files keep sharing the raw text.
-export function redactAgentConfigCredentials(path: string, text: string): string {
+// public diff or handed to AI review. Scans the raw text, so a generic marker
+// cannot cut a value short and leave its tail visible. Each value goes through
+// the generic redactor first: one it recognises keeps that specific marker (so
+// a rotation to a differently shaped secret stays a visible change for other
+// rules' release attribution) and every other piece of the value is masked.
+// The caller still runs the generic redactor over the whole result. Returns
+// the same string when nothing matched, so clean files keep sharing the text.
+export function redactAgentConfigCredentials(
+  path: string,
+  text: string,
+  redactGeneric: (value: string) => string = (value) => value,
+): string {
   if (!agentConfigFor(path)) return text;
   const spans = scanCredentials(text, path).spans.sort((a, b) => a[0] - b[0]);
   if (spans.length === 0) return text;
+  const mask = (value: string) => {
+    const generic = redactGeneric(value);
+    if (generic === value) return "[REDACTED_CREDENTIAL]";
+    let out = "";
+    let cursor = 0;
+    for (const marker of generic.matchAll(REDACTION_MARKER)) {
+      if (marker.index > cursor) out += "[REDACTED_CREDENTIAL]";
+      out += marker[0];
+      cursor = marker.index + marker[0].length;
+    }
+    return cursor < generic.length ? `${out}[REDACTED_CREDENTIAL]` : out;
+  };
   let out = "";
   let cursor = 0;
   for (const [start, end] of spans) {
     if (start < cursor) continue;
-    out += `${text.slice(cursor, start)}[REDACTED_CREDENTIAL]`;
+    out += text.slice(cursor, start) + mask(text.slice(start, end));
     cursor = end;
   }
   return out + text.slice(cursor);

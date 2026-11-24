@@ -13,7 +13,7 @@ export function redactFileRecords(files: FileRecord[]): FileRecord[] {
   return files.map((file) => ({
     ...file,
     textSample: file.textSample
-      ? redactAgentConfigCredentials(file.path, redactText(file.textSample))
+      ? redactText(redactAgentConfigCredentials(file.path, file.textSample, redactText))
       : file.textSample,
   }));
 }

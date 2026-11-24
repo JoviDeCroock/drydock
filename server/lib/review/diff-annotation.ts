@@ -154,9 +154,8 @@ function annotateFindings<
       diffStatus,
       releaseDelta:
         lifecycleCommandReleaseDelta(finding, previousByPath, stagedByPath) ??
-        (options.findingsMatchBaseline === false
-          ? null
-          : (dynamicLoadReleaseDelta(finding) ?? agentConfigReleaseDelta(finding))) ??
+        dynamicLoadReleaseDelta(finding) ??
+        (options.findingsMatchBaseline === false ? null : agentConfigReleaseDelta(finding)) ??
         (isReleaseScopedFinding(finding) ||
           isNewlyEnabledImplicitNodeGypFinding(finding, previousByPath, stagedByPath) ||
           ((CAPABILITY_RULE_IDS.has(finding.ruleId ?? "") ||
