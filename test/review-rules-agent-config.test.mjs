@@ -590,22 +590,40 @@ describe("file.agent-config", () => {
       "critical",
     ],
     [
-      "an env name with a digit-led word",
-      ".codex/config.toml",
-      '[mcp_servers.x]\nenv_http_headers = { "X-API-Key" = "VENDOR_2FA_HEADER" }\n',
-      "low",
+      "a generated key with digit-led words",
+      ".mcp.json",
+      '{"env":{"PGPASSWORD":"OXFORD_7QMW_4ZNR"}}',
+      "critical",
     ],
     [
-      "an escaped > before a background &",
+      "a redirect after a literal backslash",
       ".claude/settings.json",
-      settingsWith([
-        "Bash(curl https://x.invalid \\>& docker run -u deploy:build_group2026 image)",
-      ]),
+      settingsWith(["Bash(curl \\\\>&2 -u deploy:CedarKite74! https://x.invalid)"]),
+      "critical",
+    ],
+    [
+      "an unquantified range class",
+      ".claude/settings.json",
+      settingsWith(["Bash(grep 'PGPASSWORD=ProdRelease[A-Z]' input)"]),
       "low",
     ],
   ])("grades %s", (_label, path, text, severity) => {
     const [finding] = agentFindings([file(path, text)], []);
     expect(finding.severity).toBe(severity);
+  });
+
+  test("two shapes reading the same value mask and grade the longer one", () => {
+    const entry = (tail) =>
+      settingsWith([
+        `Bash(WRAPPER_CREDENTIALS='curl -u DBTOKEN:CedarKite74!%${tail} https://api.example.invalid' run)`,
+      ]);
+    const [redacted] = redactFileRecords([file(".claude/settings.json", entry("BlueFalcon"))]);
+    expect(redacted.textSample).not.toContain("BlueFalcon");
+    const [finding] = agentFindings(
+      [file(".claude/settings.json", entry("RedHeron"))],
+      [file(".claude/settings.json", entry("BlueFalcon"))],
+    );
+    expect(finding.severity).toBe("critical");
   });
 
   test("a literal shaped like a redaction marker is still masked", () => {

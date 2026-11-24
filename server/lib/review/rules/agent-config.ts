@@ -122,7 +122,7 @@ const AUTHORIZATION = new RegExp(
 // ends the string the command lives in. Every item is one character or one
 // quoted run, so the lazy span has a single parse per position.
 function commandPatterns(json: boolean): RegExp[] {
-  const redirect = String.raw`&(?=>)|(?<=[^\\]>)&(?!>)`;
+  const redirect = String.raw`&(?=>)|(?<=>)&(?!>)`;
   const quoted = json
     ? String.raw`\\"[^"\n\\]{0,256}\\"|'[^'\n]{0,256}'|[^\n;&|)'"\\]|\\(?!")|${redirect}`
     : String.raw`"[^"\n]{0,256}"|'[^'\n]{0,256}'|[^\n;&|)'"]|${redirect}`;
@@ -150,10 +150,10 @@ const PLACEHOLDER_VALUE =
 const PLACEHOLDER_PART =
   /x{4,}|\.{3,}|\*{3,}|12345678|abcdef|example|placeholder|change[-_]?me|replace|dummy|fake|sample|your|(?:^|[^a-z])(?:my|insert|enter|here)(?:[^a-z]|$)/i;
 const PROSE = /^[A-Za-z][A-Za-z'-]*(?: [A-Za-z'-]+){2,}[.!?]?$/;
-// A quantified regex character class with a range or negation
-// (`gh[pousr]_[A-Za-z0-9]+`, `[^ ]+`) makes the value a search pattern; a
-// bracketed literal (`Rain7![part2]`, `Kite74![part-1]`) does not.
-const REGEX_CLASS = /\[(?:\^|[^\]]{0,64}(?:[a-z]-[a-z]|[A-Z]-[A-Z]|\d-\d))[^\]]{0,64}\][+*?{]/;
+// A regex character class with a same-kind range or a negation
+// (`gh[pousr]_[A-Za-z0-9]+`, `Release[A-Z]`, `[^ ]+`) makes the value a search
+// pattern; a bracketed literal (`Rain7![part2]`, `Kite74![part-1]`) does not.
+const REGEX_CLASS = /\[(?:\^|[^\]]{0,64}(?:[a-z]-[a-z]|[A-Z]-[A-Z]|\d-\d))[^\]]{0,64}\]/;
 // References resolved elsewhere: `%VAR%`, `<token>`, `env:NAME`, `op://…`, a
 // nested `key=value` option (`--secret id=npmrc`), and values whose whole shape
 // is a path, dotfile, flag or port. A generated password may start with `/`,
@@ -162,12 +162,13 @@ const REFERENCE_VALUE =
   /^(?:%|<|(?:env|input|vault|secret):|op:\/\/|process\.env\b|os\.environ\b|[a-z][a-z0-9_-]*=[^=]|(?:~|\.{1,2})?\/[\w./-]*$|\.[\w.-]+$|-{1,2}[a-z][a-z0-9-]*$|[\d:.]+$)/i;
 
 // A variable's own name stands in for its value: `GITHUB_TOKEN`,
-// `OPENROUTER_API_KEY_2`, `VENDOR_2FA_HEADER` (segments letter-led or digits
-// then letters, unlike a generated `P9V0_5N7J_K4Q2` or `KMR4_7A9X_B2Q8`) or
+// `OPENROUTER_API_KEY_2` (segments letter-led or all digits, unlike a generated
+// `KMR4_7A9X_B2Q8` or `OXFORD_7QMW_4ZNR`; a `VENDOR_2FA_HEADER` name is masked
+// and graded as a literal rather than risk leaking one of those) or
 // a snake- or camel-case identifier ending in a credential word
 // (`McpServer_AUTH_TOKEN`, `apiKey`), as in Codex's `env_http_headers`.
 function isVariableName(value: string): boolean {
-  if (/^[A-Z][A-Z0-9]*(?:_(?:[A-Z][A-Z0-9]*|\d+[A-Z]*))+$/.test(value) && /[A-Z]{3,}/.test(value)) {
+  if (/^[A-Z][A-Z0-9]*(?:_(?:[A-Z][A-Z0-9]*|\d+))+$/.test(value) && /[A-Z]{3,}/.test(value)) {
     return true;
   }
   return (
@@ -247,7 +248,9 @@ function scanCredentials(text: string, path: string): CredentialScan {
   const kind = fileKind(path);
   const firstByValue = new Map<string, { start: number; strong: boolean }>();
   const spans: Array<[number, number]> = [];
-  const taken = new Set<number>();
+  // Span index by start offset: two shapes reading the same value (a nested
+  // `DBTOKEN:` key and its `curl -u`) keep the longer span.
+  const taken = new Map<number, number>();
   /** False when the value is not a credential. */
   const record = (raw: string, offset: number, judged: string | null, identity?: string) => {
     if (spans.length >= MAX_SPANS) return true;
@@ -256,9 +259,14 @@ function scanCredentials(text: string, path: string): CredentialScan {
     const lead = /^\\?["']/.exec(raw)?.[0].length ?? 0;
     const trail = /\\?["']$/.exec(raw)?.[0].length ?? 0;
     const start = offset + lead;
-    if (taken.has(start)) return true;
-    taken.add(start);
-    spans.push([start, offset + raw.length - trail]);
+    const end = offset + raw.length - trail;
+    const existing = taken.get(start);
+    if (existing === undefined) {
+      taken.set(start, spans.length);
+      spans.push([start, end]);
+    } else {
+      spans[existing]![1] = Math.max(spans[existing]![1], end);
+    }
     const key = identity ?? value;
     if (!firstByValue.has(key) && firstByValue.size < MAX_DISTINCT) {
       firstByValue.set(key, { start, strong: strongValue(value) });
