@@ -220,6 +220,7 @@ describe("file.agent-config", () => {
     ["repeated curl flags", `"${"curl -u ".repeat(130_000)}"`],
     ["repeated curl redirections", `"${"curl 2>&1 ".repeat(100_000)}"`],
     ["curl words in one argument", `"${"curl/".repeat(200_000)}"`],
+    ["rejected credential-name runs", `"${"DBTOKEN=...".repeat(100_000)}"`],
     ["repeated mysql", `"${"mysql ".repeat(170_000)}"`],
     ["long identifiers", `${"A".repeat(1_000_000)}=x`],
   ])("scans a megabyte of hostile config in linear time: %s", (_label, text) => {
@@ -573,6 +574,44 @@ describe("file.agent-config", () => {
   ])("grades %s", (_label, command, severity) => {
     const [finding] = agentFindings([file(".claude/settings.json", settingsWith([command]))], []);
     expect(finding.severity).toBe(severity);
+  });
+
+  test.each([
+    [
+      "a bracketed literal with a dash",
+      ".mcp.json",
+      '{"env":{"PGPASSWORD":"CedarKite74![part-1]"}}',
+      "critical",
+    ],
+    [
+      "a credential nested in a rejected value",
+      ".claude/settings.json",
+      settingsWith(["Bash(WRAPPER_CREDENTIALS='PGPASSWORD=CedarKite74!' db-wrapper)"]),
+      "critical",
+    ],
+    [
+      "an env name with a digit-led word",
+      ".codex/config.toml",
+      '[mcp_servers.x]\nenv_http_headers = { "X-API-Key" = "VENDOR_2FA_HEADER" }\n',
+      "low",
+    ],
+    [
+      "an escaped > before a background &",
+      ".claude/settings.json",
+      settingsWith([
+        "Bash(curl https://x.invalid \\>& docker run -u deploy:build_group2026 image)",
+      ]),
+      "low",
+    ],
+  ])("grades %s", (_label, path, text, severity) => {
+    const [finding] = agentFindings([file(path, text)], []);
+    expect(finding.severity).toBe(severity);
+  });
+
+  test("a literal shaped like a redaction marker is still masked", () => {
+    const mcp = '{"env":{"PGPASSWORD":"[REDACTED_VKTEGSNHHQVZMXZP]!"}}';
+    const [redacted] = redactFileRecords([file(".mcp.json", mcp)]);
+    expect(redacted.textSample).not.toContain("VKTEG");
   });
 
   test("a value made of credential-name runs is read once", () => {

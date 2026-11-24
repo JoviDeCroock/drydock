@@ -1,6 +1,7 @@
 import type { Finding } from "../types";
 import { tag, testScope } from "./helpers";
 import { changedPrefix, isUnreachableTestFile, type RuleContext } from "./context";
+import { SECRET_PATTERNS } from "./patterns";
 
 // Coding-agent configuration shipped in a release. Approving a command with
 // "don't ask again" stores the exact command line in the agent's settings, so
@@ -121,7 +122,7 @@ const AUTHORIZATION = new RegExp(
 // ends the string the command lives in. Every item is one character or one
 // quoted run, so the lazy span has a single parse per position.
 function commandPatterns(json: boolean): RegExp[] {
-  const redirect = String.raw`&(?=>)|(?<=>)&(?!>)`;
+  const redirect = String.raw`&(?=>)|(?<=[^\\]>)&(?!>)`;
   const quoted = json
     ? String.raw`\\"[^"\n\\]{0,256}\\"|'[^'\n]{0,256}'|[^\n;&|)'"\\]|\\(?!")|${redirect}`
     : String.raw`"[^"\n]{0,256}"|'[^'\n]{0,256}'|[^\n;&|)'"]|${redirect}`;
@@ -149,10 +150,10 @@ const PLACEHOLDER_VALUE =
 const PLACEHOLDER_PART =
   /x{4,}|\.{3,}|\*{3,}|12345678|abcdef|example|placeholder|change[-_]?me|replace|dummy|fake|sample|your|(?:^|[^a-z])(?:my|insert|enter|here)(?:[^a-z]|$)/i;
 const PROSE = /^[A-Za-z][A-Za-z'-]*(?: [A-Za-z'-]+){2,}[.!?]?$/;
-// A regex character class with a range or negation (`gh[pousr]_[A-Za-z0-9]+`)
-// makes the value a search pattern; a bracketed literal (`Rain7![part2]`) does
-// not.
-const REGEX_CLASS = /\[\^|\[[^\]]{0,64}[A-Za-z0-9]-[A-Za-z0-9][^\]]{0,64}\]/;
+// A quantified regex character class with a range or negation
+// (`gh[pousr]_[A-Za-z0-9]+`, `[^ ]+`) makes the value a search pattern; a
+// bracketed literal (`Rain7![part2]`, `Kite74![part-1]`) does not.
+const REGEX_CLASS = /\[(?:\^|[^\]]{0,64}(?:[a-z]-[a-z]|[A-Z]-[A-Z]|\d-\d))[^\]]{0,64}\][+*?{]/;
 // References resolved elsewhere: `%VAR%`, `<token>`, `env:NAME`, `op://…`, a
 // nested `key=value` option (`--secret id=npmrc`), and values whose whole shape
 // is a path, dotfile, flag or port. A generated password may start with `/`,
@@ -161,12 +162,12 @@ const REFERENCE_VALUE =
   /^(?:%|<|(?:env|input|vault|secret):|op:\/\/|process\.env\b|os\.environ\b|[a-z][a-z0-9_-]*=[^=]|(?:~|\.{1,2})?\/[\w./-]*$|\.[\w.-]+$|-{1,2}[a-z][a-z0-9-]*$|[\d:.]+$)/i;
 
 // A variable's own name stands in for its value: `GITHUB_TOKEN`,
-// `OPENROUTER_API_KEY_2` (letter-led segments or a numeric suffix, unlike a
-// generated `P9V0_5N7J_K4Q2` or `KMR4_7A9X_B2Q8`) or
+// `OPENROUTER_API_KEY_2`, `VENDOR_2FA_HEADER` (segments letter-led or digits
+// then letters, unlike a generated `P9V0_5N7J_K4Q2` or `KMR4_7A9X_B2Q8`) or
 // a snake- or camel-case identifier ending in a credential word
 // (`McpServer_AUTH_TOKEN`, `apiKey`), as in Codex's `env_http_headers`.
 function isVariableName(value: string): boolean {
-  if (/^[A-Z][A-Z0-9]*(?:_(?:[A-Z][A-Z0-9]*|\d+))+$/.test(value) && /[A-Z]{3,}/.test(value)) {
+  if (/^[A-Z][A-Z0-9]*(?:_(?:[A-Z][A-Z0-9]*|\d+[A-Z]*))+$/.test(value) && /[A-Z]{3,}/.test(value)) {
     return true;
   }
   return (
@@ -247,25 +248,29 @@ function scanCredentials(text: string, path: string): CredentialScan {
   const firstByValue = new Map<string, { start: number; strong: boolean }>();
   const spans: Array<[number, number]> = [];
   const taken = new Set<number>();
+  /** False when the value is not a credential. */
   const record = (raw: string, offset: number, judged: string | null, identity?: string) => {
-    if (spans.length >= MAX_SPANS) return;
+    if (spans.length >= MAX_SPANS) return true;
     const value = judged === null ? null : credentialValue(judged, kind);
-    if (value === null) return;
+    if (value === null) return false;
     const lead = /^\\?["']/.exec(raw)?.[0].length ?? 0;
     const trail = /\\?["']$/.exec(raw)?.[0].length ?? 0;
     const start = offset + lead;
-    if (taken.has(start)) return;
+    if (taken.has(start)) return true;
     taken.add(start);
     spans.push([start, offset + raw.length - trail]);
     const key = identity ?? value;
     if (!firstByValue.has(key) && firstByValue.size < MAX_DISTINCT) {
       firstByValue.set(key, { start, strong: strongValue(value) });
     }
+    return true;
   };
-  // After a credential name, the scan resumes past the value it read, so a
-  // value made of name-shaped runs (`DBTOKEN=DBTOKEN=…`) is read once rather
-  // than once per run. A non-credential name never consumes its value: a hook's
-  // `"command": "env PGPASSWORD=… psql"` is still scanned inside.
+  // After a credential value, the scan resumes past it. A rejected value is
+  // scanned inside (`CREDS='PGPASSWORD=…'`), as is a non-credential name's (a
+  // hook's `"command": "env PGPASSWORD=… psql"`), until rejected reads have
+  // cost a few passes over the text; past that budget a run of name-shaped
+  // values (`DBTOKEN=DBTOKEN=…`) is skipped whole, keeping the scan linear.
+  let rescanBudget = text.length * 4 + 65_536;
   const named = (nameRegex: RegExp, dashed: (separator: string) => boolean) => {
     nameRegex.lastIndex = 0;
     for (let match = nameRegex.exec(text); match; match = nameRegex.exec(text)) {
@@ -275,7 +280,10 @@ function scanCredentials(text: string, path: string): CredentialScan {
       valueAt.lastIndex = match.index + match[0].length;
       const value = valueAt.exec(text);
       if (value?.[1] === undefined) continue;
-      record(value[1], value.index, value[1]);
+      if (!record(value[1], value.index, value[1])) {
+        rescanBudget -= value[0].length;
+        if (rescanBudget > 0) continue;
+      }
       nameRegex.lastIndex = Math.max(nameRegex.lastIndex, value.index + value[0].length);
     }
   };
@@ -312,7 +320,20 @@ function scanCredentials(text: string, path: string): CredentialScan {
   return { credentials, spans };
 }
 
-const REDACTION_MARKER = /\[REDACTED_[A-Z_]+\]/g;
+// Only markers the generic redactor emits, so a literal value shaped like one
+// is still masked.
+const REDACTION_MARKER = new RegExp(
+  [
+    ...new Set(
+      SECRET_PATTERNS.flatMap(
+        ([, replacement]) => replacement.match(/\[REDACTED_[A-Z_]+\]/g) ?? [],
+      ),
+    ),
+  ]
+    .map((marker) => marker.replace(/[[\]]/g, "\\$&"))
+    .join("|"),
+  "g",
+);
 
 // Masks the credentials this rule finds before a sample is stored, shown in a
 // public diff or handed to AI review. Runs over the generically redacted text,
