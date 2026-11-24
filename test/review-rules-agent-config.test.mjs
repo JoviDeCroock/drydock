@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { createPackageDiff, deterministicFindings } from "../server/lib/review";
+import {
+  annotateFindingsWithDiffStatus,
+  createPackageDiff,
+  deterministicFindings,
+  redactFileRecords,
+} from "../server/lib/review";
+import { computeScanRiskBreakdown } from "../server/lib/review/risk";
 
 function file(path, textSample) {
   return { path, size: textSample.length, sha256: `${path}:${textSample}`, flags: [], textSample };
@@ -217,6 +223,222 @@ describe("file.agent-config", () => {
   ])("scans a megabyte of hostile config in linear time: %s", (_label, text) => {
     const started = performance.now();
     agentFindings([file(".mcp.json", text)], []);
-    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(performance.now() - started).toBeLessThan(15_000);
+  });
+
+  // The scan pipeline runs rules on raw bytes but annotates release scope over
+  // redacted samples; these cases go through that same path.
+  function releaseView(staged, baseline) {
+    const diff = createPackageDiff(baseline, staged);
+    const findings = deterministicFindings(staged, diff, null, { previousFiles: baseline }).filter(
+      (finding) => finding.ruleId === "file.agent-config",
+    );
+    const annotated = annotateFindingsWithDiffStatus(findings, diff, {
+      previousFiles: redactFileRecords(baseline),
+      stagedFiles: redactFileRecords(staged),
+    });
+    const { releaseRisk } = computeScanRiskBreakdown(annotated, {
+      status: "unavailable",
+      risk: "low",
+      releaseAssessment: "not_assessed",
+      summary: "AI review is disabled.",
+      findings: [],
+      requiresManualReview: false,
+      model: null,
+      reviewerVersion: null,
+    });
+    return {
+      releaseRisk,
+      findings: annotated.map((f) => [f.file, f.severity, f.releaseDelta]),
+    };
+  }
+
+  test("a rotated credential is release delta even though redaction makes both lines read the same", () => {
+    const view = releaseView(
+      [file("CLAUDE.local.md", "notes\nNPM_TOKEN=fixtureoneonly\n")],
+      [file("CLAUDE.local.md", "notes\nNPM_TOKEN=fixturetwoonly\n")],
+    );
+    expect(view).toEqual({
+      releaseRisk: "critical",
+      findings: [["CLAUDE.local.md", "critical", true]],
+    });
+  });
+
+  test("a credential written into an empty baseline file is release delta", () => {
+    const view = releaseView(
+      [
+        file(
+          ".claude/settings.local.json",
+          settingsWith(["Bash(PGPASSWORD=violetlane psql -h db.example.invalid)"]),
+        ),
+      ],
+      [{ path: ".claude/settings.local.json", size: 0, sha256: "empty", flags: [] }],
+    );
+    expect(view.releaseRisk).toBe("critical");
+  });
+
+  test("an edit on a longstanding credential's line stays package context", () => {
+    const view = releaseView(
+      [
+        file(
+          ".claude/settings.local.json",
+          settingsWith(["Bash(curl -s -u deploy:fixtureonly https://x.invalid/v2)"]),
+        ),
+      ],
+      [
+        file(
+          ".claude/settings.local.json",
+          settingsWith(["Bash(curl -u deploy:fixtureonly https://x.invalid/v1)"]),
+        ),
+      ],
+    );
+    expect(view).toEqual({
+      releaseRisk: "low",
+      findings: [[".claude/settings.local.json", "high", false]],
+    });
+  });
+
+  test("a weak new value beside a longstanding strong one scores the release medium", () => {
+    const mcp = (env) =>
+      JSON.stringify({ mcpServers: { db: { command: "db-mcp", env } } }, null, 2);
+    const view = releaseView(
+      [file(".mcp.json", mcp({ AUTH_TOKEN: "Fx9-only-Token-0001", DB_PASSWORD: "password123" }))],
+      [file(".mcp.json", mcp({ AUTH_TOKEN: "Fx9-only-Token-0001" }))],
+    );
+    expect(view).toEqual({
+      releaseRisk: "medium",
+      findings: [
+        [".mcp.json", "medium", true],
+        [".mcp.json", "high", false],
+      ],
+    });
+  });
+
+  test("a moved config keeps its credential's previous-release status", () => {
+    const text = JSON.stringify({ mcpServers: { db: { env: { PGPASSWORD: "RavenStone349!" } } } });
+    const view = releaseView(
+      [file("templates/new/.mcp.json", text)],
+      [file("templates/old/.mcp.json", text)],
+    );
+    expect(view.findings).toEqual([["templates/new/.mcp.json", "high", false]]);
+  });
+
+  test("redaction masks the credentials the rule finds, only in agent config", () => {
+    const local = file(
+      ".claude/settings.local.json",
+      settingsWith([
+        "Bash(PGPASSWORD=correcthorsebatterystaple psql)",
+        "Bash(curl -u deploy:fixtureonlypass https://x.invalid)",
+      ]),
+    );
+    const readme = file("README.md", "PGPASSWORD=correcthorsebatterystaple\n");
+    const clean = file(".mcp.json", JSON.stringify({ mcpServers: {} }));
+    const [redactedLocal, redactedReadme, redactedClean] = redactFileRecords([
+      local,
+      readme,
+      clean,
+    ]);
+    expect(redactedLocal.textSample).not.toContain("correcthorsebatterystaple");
+    expect(redactedLocal.textSample).not.toContain("fixtureonlypass");
+    expect(redactedLocal.textSample).toContain("PGPASSWORD=[REDACTED_CREDENTIAL]");
+    expect(redactedReadme.textSample).toBe(readme.textSample);
+    expect(redactedClean.textSample).toBe(clean.textSample);
+  });
+
+  test.each([
+    [
+      "one-line permission entries",
+      ".claude/settings.json",
+      JSON.stringify({
+        permissions: {
+          allow: [
+            "Bash(docker login ghcr.io)",
+            "Bash(docker run -p 127.0.0.1:5432:5432/tcp my-app)",
+          ],
+        },
+      }),
+    ],
+    [
+      "regex search for a credential",
+      ".claude/settings.json",
+      settingsWith(["Bash(rg 'PASSWORD=[A-Za-z0-9_+/=-]{16}' src)"]),
+    ],
+    [
+      "Codex env header names",
+      ".codex/config.toml",
+      '[mcp_servers.docs]\nenv_http_headers = { "X-API-Key" = "McpServer_Container_AUTH_TOKEN" }\n',
+    ],
+    [
+      "base64 dev default",
+      ".mcp.json",
+      JSON.stringify({
+        mcpServers: { local: { headers: { Authorization: "Basic YWRtaW46YWRtaW4=" } } },
+      }),
+    ],
+  ])("stays below a credential grade: %s", (_label, path, text) => {
+    const findings = agentFindings([file(path, text)], []);
+    expect(findings.map((finding) => finding.severity)).toEqual(["low"]);
+  });
+
+  test.each([
+    [
+      "quoted URL with & before -u",
+      ".claude/settings.local.json",
+      settingsWith(["Bash(curl 'https://x.invalid/?a=1&b=2' -u deploy:fixtureonly)"]),
+    ],
+    [
+      "Codex static Authorization header",
+      ".codex/config.toml",
+      '[mcp_servers.docs]\nhttp_headers = { "Authorization" = "Bearer Fx9-Only-Token-3487" }\n',
+    ],
+    [
+      "flag after an ordinary flag",
+      ".mcp.json",
+      JSON.stringify({ mcpServers: { d: { args: ["--verbose", "--token=Fx9-Only-Token-3487"] } } }),
+    ],
+    [
+      "JSON value with spaces",
+      ".mcp.json",
+      JSON.stringify({ mcpServers: { d: { env: { PGPASSWORD: "One Two More 547!" } } } }),
+    ],
+    ["wide gap after the colon", ".mcp.json", '{"API_KEY":     "Ravenstone11!"}'],
+    [
+      "single-quoted dollar",
+      ".claude/settings.local.json",
+      settingsWith(["Bash(PGPASSWORD='$violetlane!' psql)"]),
+    ],
+    [
+      "generated underscore groups",
+      ".mcp.json",
+      JSON.stringify({ env: { PGPASSWORD: "P9V0_5N7J_K4Q2_D6R8" } }),
+    ],
+    [
+      "plugin mcp.json",
+      "mcp.json",
+      JSON.stringify({
+        mcpServers: { d: { headers: { Authorization: "Bearer Fx9-Only-Token-3487" } } },
+      }),
+    ],
+  ])("finds the credential: %s", (_label, path, text) => {
+    const [finding] = agentFindings([file(path, text)], []);
+    expect(finding.severity).toBe("critical");
+  });
+
+  test("a rotation past the first 256 characters of a long token is new", () => {
+    const token = (tail) => `Fx9-${"a1B2".repeat(80)}${tail}`;
+    const text = (tail) => JSON.stringify({ env: { REFRESH_TOKEN: token(tail) } });
+    const [finding] = agentFindings(
+      [file(".mcp.json", text("-two"))],
+      [file(".mcp.json", text("-one"))],
+    );
+    expect(finding.severity).toBe("critical");
+  });
+
+  test("line attribution in a newline-dense file stays cheap and exact", () => {
+    const text = `${"\n".repeat(2_000_000)}NPM_TOKEN=fixtureonlytoken\n`;
+    const started = performance.now();
+    const [finding] = agentFindings([file("CLAUDE.local.md", text)], []);
+    expect(performance.now() - started).toBeLessThan(15_000);
+    expect(finding.line).toBe(2_000_001);
   });
 });

@@ -2,7 +2,7 @@
   "id": "agent-config-local-settings-shipped",
   "title": "Release adds Claude Code local settings and an MCP config next to a long-shipped Codex auth file",
   "category": "secret-retention",
-  "intent": "Tier grading without a recognized credential: newly shipped local settings are medium, shared MCP config with a ${VAR} reference is low disclosure, and a Codex credential store holding a refresh token is high even when unchanged from the baseline. Values are synthetic.",
+  "intent": "Tier grading without a recognized credential: newly shipped local settings are medium, shared MCP config with a ${VAR} reference is low disclosure, and a Codex credential store holding a refresh token is high even when unchanged from the baseline. Values are synthetic. Release risk is medium: the long-shipped refresh token is package context.",
   "previousPackageJson": {
     "name": "agent-config-local-settings-shipped",
     "version": "0.4.0",
@@ -80,6 +80,19 @@
       "severity": "high",
       "file": ".codex/auth.json"
     },
+    {
+      "ruleId": "file.agent-config",
+      "severity": "medium",
+      "file": ".claude/settings.local.json"
+    },
+    {
+      "ruleId": "file.agent-config",
+      "severity": "low",
+      "file": ".mcp.json"
+    }
+  ],
+  "expectedReleaseRisk": "medium",
+  "expectedReleaseFindings": [
     {
       "ruleId": "file.agent-config",
       "severity": "medium",
