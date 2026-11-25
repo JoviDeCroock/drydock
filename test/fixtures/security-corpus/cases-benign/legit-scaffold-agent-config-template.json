@@ -1,0 +1,78 @@
+{
+  "id": "legit-scaffold-agent-config-template",
+  "title": "create-* scaffolder ships project agent config in its template",
+  "ecosystem": "npm",
+  "verdict": "benign",
+  "threatClass": "legit-agent-config-template",
+  "source": "benign-popular",
+  "intent": "Project scaffolders copy a template that intentionally includes .claude/settings.json, .mcp.json and .cursor/mcp.json with ${VAR}/$VAR references, wildcard allow rules <placeholder> values and README-style fill-ins (xoxb-your-bot-token, sk_test_xxxxxxxx). file.agent-config discloses them at low and the release must stay low.",
+  "expectMinRisk": "low",
+  "expectAnyRule": [],
+  "previousPackageJson": {
+    "name": "create-fixture-app",
+    "version": "3.1.0",
+    "bin": {
+      "create-fixture-app": "cli.js"
+    }
+  },
+  "stagedPackageJson": {
+    "name": "create-fixture-app",
+    "version": "3.2.0",
+    "bin": {
+      "create-fixture-app": "cli.js"
+    }
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 91,
+      "sha256": "c4576f9964620c4ba75bc220e0e414f128e7ddefc03b009e08a3a9d8db989abe",
+      "flags": [],
+      "textSample": "{\"name\": \"create-fixture-app\", \"version\": \"3.1.0\", \"bin\": {\"create-fixture-app\": \"cli.js\"}}"
+    },
+    {
+      "path": "cli.js",
+      "size": 186,
+      "sha256": "3c548e43c232ee5c938c87b438d458e16991a98ca688ae40322cede1a9cc5c6f",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\nconst { cpSync } = require('node:fs');\nconst path = require('node:path');\ncpSync(path.join(__dirname, 'template'), process.argv[2] || 'my-app', { recursive: true });\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 91,
+      "sha256": "20dcad133e9d3f2abdac93d4fca8a673920d64346088dc6c3a45a44c2b97715e",
+      "flags": [],
+      "textSample": "{\"name\": \"create-fixture-app\", \"version\": \"3.2.0\", \"bin\": {\"create-fixture-app\": \"cli.js\"}}"
+    },
+    {
+      "path": "cli.js",
+      "size": 186,
+      "sha256": "3c548e43c232ee5c938c87b438d458e16991a98ca688ae40322cede1a9cc5c6f",
+      "flags": [],
+      "textSample": "#!/usr/bin/env node\nconst { cpSync } = require('node:fs');\nconst path = require('node:path');\ncpSync(path.join(__dirname, 'template'), process.argv[2] || 'my-app', { recursive: true });\n"
+    },
+    {
+      "path": "template/.claude/settings.json",
+      "size": 227,
+      "sha256": "fa15bf7d4739591e07bbabc7a90e7fd323195a0e388f056811736bfdb89f033e",
+      "flags": [],
+      "textSample": "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(npm run lint)\",\n      \"Bash(npm run test:*)\",\n      \"Bash(npx tsc --noEmit)\"\n    ],\n    \"deny\": [\n      \"Read(./.env)\"\n    ]\n  },\n  \"env\": {\n    \"API_KEY\": \"<your-api-key>\"\n  }\n}\n"
+    },
+    {
+      "path": "template/.mcp.json",
+      "size": 665,
+      "sha256": "c493d11ee9f071627e44dd6ffd0539dae90a0f61de7aefa12b3260b00f024319",
+      "flags": [],
+      "textSample": "{\n  \"mcpServers\": {\n    \"github\": {\n      \"command\": \"npx\",\n      \"args\": [\n        \"-y\",\n        \"github-mcp\"\n      ],\n      \"env\": {\n        \"GITHUB_TOKEN\": \"${GITHUB_TOKEN}\"\n      }\n    },\n    \"db\": {\n      \"command\": \"db-mcp\",\n      \"args\": [\n        \"--token\",\n        \"$DB_TOKEN\"\n      ]\n    },\n    \"slack\": {\n      \"command\": \"npx\",\n      \"args\": [\n        \"-y\",\n        \"slack-mcp\"\n      ],\n      \"env\": {\n        \"SLACK_BOT_TOKEN\": \"xoxb-your-bot-token\",\n        \"SLACK_TEAM_ID\": \"T01234567\"\n      }\n    },\n    \"stripe\": {\n      \"command\": \"npx\",\n      \"args\": [\n        \"-y\",\n        \"stripe-mcp\",\n        \"--api-key=sk_test_xxxxxxxx\"\n      ]\n    }\n  }\n}\n"
+    },
+    {
+      "path": "template/.cursor/mcp.json",
+      "size": 170,
+      "sha256": "27d2a345ffd4c8fba47f5c5ef1932c6b9c077f38dcf7e972f6ac326f071a0937",
+      "flags": [],
+      "textSample": "{\n  \"mcpServers\": {\n    \"docs\": {\n      \"url\": \"https://docs.example.invalid/mcp\",\n      \"headers\": {\n        \"Authorization\": \"Bearer ${DOCS_TOKEN}\"\n      }\n    }\n  }\n}\n"
+    }
+  ]
+}

@@ -53,4 +53,10 @@ export interface FindingAnnotationOptions {
   persistedAnnotations?: Map<string, FindingDiffAnnotation>;
   codePatternSet?: CodePatternSet;
   baselineComparisonSkipped?: boolean;
+  /**
+   * False when the findings were computed against a different baseline than
+   * the one being annotated (a scan compared with another version). Rules that
+   * encode release scope in severity are then re-judged by line diff.
+   */
+  findingsMatchBaseline?: boolean;
 }

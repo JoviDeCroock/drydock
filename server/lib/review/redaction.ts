@@ -1,3 +1,4 @@
+import { redactAgentConfigCredentials } from "./rules/agent-config";
 import { SECRET_PATTERNS } from "./rules/patterns";
 import type { FileRecord, Finding } from "./types";
 
@@ -11,7 +12,9 @@ export function redactText(text: string): string {
 export function redactFileRecords(files: FileRecord[]): FileRecord[] {
   return files.map((file) => ({
     ...file,
-    textSample: file.textSample ? redactText(file.textSample) : file.textSample,
+    textSample: file.textSample
+      ? redactAgentConfigCredentials(file.path, redactText(file.textSample))
+      : file.textSample,
   }));
 }
 

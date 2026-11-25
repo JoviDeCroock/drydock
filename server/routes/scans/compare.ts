@@ -246,6 +246,7 @@ function buildCompareFindingAnnotations(
   return annotateFindingsWithDiffStatus(findings, diff, {
     previousFiles,
     stagedFiles,
+    findingsMatchBaseline: false,
   }).map((finding) => ({
     id: finding.id,
     diffStatus: finding.diffStatus,

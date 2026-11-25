@@ -1,0 +1,107 @@
+{
+  "id": "agent-config-local-settings-shipped",
+  "title": "Release adds Claude Code local settings and an MCP config next to a long-shipped Codex auth file",
+  "category": "secret-retention",
+  "intent": "Tier grading without a recognized credential: newly shipped local settings are medium, shared MCP config with a ${VAR} reference is low disclosure, and a Codex credential store holding a refresh token is high even when unchanged from the baseline. Values are synthetic. Release risk is medium: the long-shipped refresh token is package context.",
+  "previousPackageJson": {
+    "name": "agent-config-local-settings-shipped",
+    "version": "0.4.0",
+    "main": "index.js"
+  },
+  "stagedPackageJson": {
+    "name": "agent-config-local-settings-shipped",
+    "version": "0.5.0",
+    "main": "index.js"
+  },
+  "previousFiles": [
+    {
+      "path": "package.json",
+      "size": 87,
+      "sha256": "d2007a2765565996f57848b7d857e383b5152bde3197b73b5560b781103ba56b",
+      "flags": [],
+      "textSample": "{\"name\": \"agent-config-local-settings-shipped\", \"version\": \"0.4.0\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 55,
+      "sha256": "c48563b4d0817bd275c3d7106422fa0d453969b2218c9cf7ded1585c687ce57a",
+      "flags": [],
+      "textSample": "module.exports = function add(a, b) { return a + b; };\n"
+    },
+    {
+      "path": ".codex/auth.json",
+      "size": 139,
+      "sha256": "020a5eff0ee11534fc077f88187a322bfacd205224b9f26d1f72c1539eb4cbee",
+      "flags": [],
+      "textSample": "{\n  \"OPENAI_API_KEY\": null,\n  \"tokens\": {\n    \"refresh_token\": \"fixture-only-refresh-0000\"\n  },\n  \"last_refresh\": \"2026-01-01T00:00:00Z\"\n}\n"
+    }
+  ],
+  "stagedFiles": [
+    {
+      "path": "package.json",
+      "size": 87,
+      "sha256": "30fd9add5c59a6ddd45fe12f8cdad78f8c3bcc9dc6e61f9f4aff842df9369d74",
+      "flags": [],
+      "textSample": "{\"name\": \"agent-config-local-settings-shipped\", \"version\": \"0.5.0\", \"main\": \"index.js\"}"
+    },
+    {
+      "path": "index.js",
+      "size": 55,
+      "sha256": "c48563b4d0817bd275c3d7106422fa0d453969b2218c9cf7ded1585c687ce57a",
+      "flags": [],
+      "textSample": "module.exports = function add(a, b) { return a + b; };\n"
+    },
+    {
+      "path": ".codex/auth.json",
+      "size": 139,
+      "sha256": "020a5eff0ee11534fc077f88187a322bfacd205224b9f26d1f72c1539eb4cbee",
+      "flags": [],
+      "textSample": "{\n  \"OPENAI_API_KEY\": null,\n  \"tokens\": {\n    \"refresh_token\": \"fixture-only-refresh-0000\"\n  },\n  \"last_refresh\": \"2026-01-01T00:00:00Z\"\n}\n"
+    },
+    {
+      "path": ".claude/settings.local.json",
+      "size": 139,
+      "sha256": "0b8228eda6d03166b637755e2648561e77de7629e65b2d51fb719d17d1fb4ea4",
+      "flags": [],
+      "textSample": "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(npm test)\",\n      \"Bash(git status)\",\n      \"WebFetch(domain:example.invalid)\"\n    ]\n  }\n}\n"
+    },
+    {
+      "path": ".mcp.json",
+      "size": 189,
+      "sha256": "51dea9bf891f0283aa64a07bad2cbd0191868864683f9293e7b91935fb9ad647",
+      "flags": [],
+      "textSample": "{\n  \"mcpServers\": {\n    \"docs\": {\n      \"command\": \"npx\",\n      \"args\": [\n        \"-y\",\n        \"docs-mcp\"\n      ],\n      \"env\": {\n        \"DOCS_TOKEN\": \"${DOCS_TOKEN}\"\n      }\n    }\n  }\n}\n"
+    }
+  ],
+  "expectedRisk": "high",
+  "expectedFindings": [
+    {
+      "ruleId": "file.agent-config",
+      "severity": "high",
+      "file": ".codex/auth.json"
+    },
+    {
+      "ruleId": "file.agent-config",
+      "severity": "medium",
+      "file": ".claude/settings.local.json"
+    },
+    {
+      "ruleId": "file.agent-config",
+      "severity": "low",
+      "file": ".mcp.json"
+    }
+  ],
+  "expectedReleaseRisk": "medium",
+  "expectedReleaseFindings": [
+    {
+      "ruleId": "file.agent-config",
+      "severity": "medium",
+      "file": ".claude/settings.local.json"
+    },
+    {
+      "ruleId": "file.agent-config",
+      "severity": "low",
+      "file": ".mcp.json"
+    }
+  ]
+}

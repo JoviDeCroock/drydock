@@ -155,6 +155,7 @@ function annotateFindings<
       releaseDelta:
         lifecycleCommandReleaseDelta(finding, previousByPath, stagedByPath) ??
         dynamicLoadReleaseDelta(finding) ??
+        (options.findingsMatchBaseline === false ? null : agentConfigReleaseDelta(finding)) ??
         (isReleaseScopedFinding(finding) ||
           isNewlyEnabledImplicitNodeGypFinding(finding, previousByPath, stagedByPath) ||
           ((CAPABILITY_RULE_IDS.has(finding.ruleId ?? "") ||
@@ -396,6 +397,21 @@ function dynamicLoadReleaseDelta(finding: {
 }): boolean | null {
   if (finding.ruleId !== DETERMINISTIC_RULE_IDS.codeDynamicLoad) return null;
   return finding.severity === "high";
+}
+
+// The rule compares credentials against the whole previous release in raw
+// bytes and encodes the answer in severity (rules/agent-config.ts): critical
+// and medium are new, high is a credential the previous release shipped. The
+// annotator only sees redacted samples, where a rotated credential and its
+// predecessor read the same, so it does not re-diff the line.
+function agentConfigReleaseDelta(finding: {
+  ruleId?: string | null;
+  severity?: string | null;
+}): boolean | null {
+  if (finding.ruleId !== DETERMINISTIC_RULE_IDS.fileAgentConfig) return null;
+  if (finding.severity === "critical" || finding.severity === "medium") return true;
+  if (finding.severity === "high") return false;
+  return null;
 }
 
 function isNewlyEnabledImplicitNodeGypFinding(

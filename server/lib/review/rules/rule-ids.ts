@@ -66,6 +66,9 @@ export const DETERMINISTIC_RULES = {
     standingDanger: true,
   },
   fileSecretContent: { id: "file.secret-content", risk: "anchor", standingDanger: true },
+  // A packaging leak, not compromise evidence: a previously approved release
+  // that already shipped the same config may be discounted by release memory.
+  fileAgentConfig: { id: "file.agent-config", risk: "anchor" },
   filePromptInjection: { id: "file.prompt-injection", risk: "anchor" },
   fileReviewManipulation: {
     id: "file.review-manipulation",
